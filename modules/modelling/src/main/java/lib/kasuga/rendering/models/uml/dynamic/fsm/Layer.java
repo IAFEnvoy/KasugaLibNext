@@ -3,8 +3,11 @@ package lib.kasuga.rendering.models.uml.dynamic.fsm;
 import lib.kasuga.rendering.models.uml.math.Transform;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -20,6 +23,7 @@ public final class Layer<Owner> {
     final String id;
     final List<State<Owner>> states = new ArrayList<>();
     final List<Transition<Owner>> transitions = new ArrayList<>();
+    private Map<State<Owner>, List<Transition<Owner>>> transitionsByFrom;
     State<Owner> initial;
 
     // runtime
@@ -155,6 +159,12 @@ public final class Layer<Owner> {
     void start() {
         active = initial != null ? initial : (states.isEmpty() ? null : states.get(0));
         stateElapsedTicks = 0;
+
+        Map<State<Owner>, List<Transition<Owner>>> byFrom = new IdentityHashMap<>();
+        for (Transition<Owner> transition : transitions) {
+            byFrom.computeIfAbsent(transition.from, k -> new ArrayList<>()).add(transition);
+        }
+        this.transitionsByFrom = Collections.unmodifiableMap(byFrom);
     }
 
     boolean tick(StateMachine<Owner> machine, float dt, long tickCount) {
@@ -189,13 +199,13 @@ public final class Layer<Owner> {
                 && active.hasDuration()
                 && stateElapsedTicks >= active.durationTicks;
 
-        for (Transition<Owner> transition : transitions) {
-            if (transition.from != active) {
-                continue;
-            }
-            if (transition.fires(ctx, sourceComplete)) {
-                fire(transition, ctx);
-                break;
+        List<Transition<Owner>> candidates = transitionsByFrom.get(active);
+        if (candidates != null) {
+            for (Transition<Owner> transition : candidates) {
+                if (transition.fires(ctx, sourceComplete)) {
+                    fire(transition, ctx);
+                    break;
+                }
             }
         }
         stateElapsedTicks++;

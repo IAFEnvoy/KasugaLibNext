@@ -1,6 +1,8 @@
 package lib.kasuga.rendering.models.uml.dynamic.multiplexer;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +35,7 @@ public final class Multiplexer<C extends Context, V extends Variant<V>> {
     private final List<V> variants;
     private final Map<String, V> variantsById;
     private final List<Transition<C, V>> transitions;
+    private final Map<V, List<Transition<C, V>>> transitionsByFrom;
     private final V initial;
 
     public Multiplexer(List<V> variants, List<Transition<C, V>> transitions, V initial) {
@@ -43,6 +46,13 @@ public final class Multiplexer<C extends Context, V extends Variant<V>> {
         }
         this.variantsById = Map.copyOf(byId);
         this.transitions = List.copyOf(transitions);
+
+        Map<V, List<Transition<C, V>>> byFrom = new IdentityHashMap<>();
+        for (Transition<C, V> transition : this.transitions) {
+            byFrom.computeIfAbsent(transition.from(), k -> new ArrayList<>()).add(transition);
+        }
+        this.transitionsByFrom = Collections.unmodifiableMap(byFrom);
+
         this.initial = initial;
     }
 
@@ -83,10 +93,11 @@ public final class Multiplexer<C extends Context, V extends Variant<V>> {
         if (state.inTransition()) {
             return state.to();
         }
-        for (Transition<C, V> transition : transitions) {
-            if (transition.from() != state.current()) {
-                continue;
-            }
+        List<Transition<C, V>> candidates = transitionsByFrom.get(state.current());
+        if (candidates == null) {
+            return state.current();
+        }
+        for (Transition<C, V> transition : candidates) {
             if (transition.guard().test(context)) {
                 return transition.to();
             }
@@ -107,10 +118,11 @@ public final class Multiplexer<C extends Context, V extends Variant<V>> {
                 return;
             }
         }
-        for (Transition<C, V> transition : transitions) {
-            if (transition.from() != state.current()) {
-                continue;
-            }
+        List<Transition<C, V>> candidates = transitionsByFrom.get(state.current());
+        if (candidates == null) {
+            return;
+        }
+        for (Transition<C, V> transition : candidates) {
             if (!transition.guard().test(context)) {
                 continue;
             }

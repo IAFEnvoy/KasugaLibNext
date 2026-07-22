@@ -59,6 +59,18 @@ sourceSets {
         compileClasspath += sourceSets.main.compileClasspath
         runtimeClasspath += sourceSets.main.runtimeClasspath
     }
+
+    jmh {
+        java {
+            srcDir 'src/jmh/java'
+        }
+
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+
+        compileClasspath += sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.runtimeClasspath
+    }
 }
 
 
@@ -167,6 +179,9 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.7.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
+    jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+
     compileOnly("org.projectlombok:lombok:1.18.42")
     annotationProcessor("org.projectlombok:lombok:1.18.42")
 
@@ -179,6 +194,21 @@ dependencies {
     runtimeOnly("libs:iris:neoforge-mc1.21.1-1.8.12")
     runtimeOnly("libs:sodium:neoforge-mc1.21.1-0.6.13")
     implementation("libs:sodium:neoforge-mc1.21.1-0.6.13")
+}
+
+tasks.register('jmhMkdir', Exec) {
+    description = 'Creates the JMH reports directory.'
+    group = 'verification'
+    commandLine 'mkdir', '-p', 'build/reports/jmh'
+}
+
+tasks.register('jmhRun', JavaExec) {
+    description = 'Runs JMH microbenchmarks from src/jmh and writes JSON results.'
+    group = 'verification'
+    dependsOn 'jmhClasses', 'jmhMkdir'
+    mainClass = 'org.openjdk.jmh.Main'
+    classpath = sourceSets.jmh.runtimeClasspath
+    args '-wi', '2', '-i', '3', '-f', '1', '-rf', 'json', '-rff', 'build/reports/jmh/results.json'
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.
