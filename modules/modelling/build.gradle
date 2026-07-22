@@ -208,7 +208,7 @@ tasks.register('jmhRun', JavaExec) {
     dependsOn 'jmhClasses', 'jmhMkdir'
     mainClass = 'org.openjdk.jmh.Main'
     classpath = sourceSets.jmh.runtimeClasspath
-    args '-wi', '2', '-i', '3', '-f', '1', '-rf', 'json', '-rff', 'build/reports/jmh/results.json'
+    args '-wi', '5', '-i', '10', '-f', '1', '-rf', 'json', '-rff', 'build/reports/jmh/results.json'
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.

@@ -50,10 +50,33 @@ def max_instances_event(ns_per_op: float, events_per_second: float) -> int:
     return int(BUDGET_MS * TPS * 1_000_000.0 / (ns_per_op * events_per_second))
 
 
+def extract_metrics(raw: list[dict]) -> dict:
+    metrics = {}
+    for item in raw:
+        name = short_name(item['benchmark'])
+        pm = item['primaryMetric']
+        pct = pm.get('scorePercentiles', {})
+        metrics[name] = {
+            'benchmark': item['benchmark'],
+            'score': pm['score'],
+            'error': pm['scoreError'],
+            'ci_low': pm['scoreConfidence'][0],
+            'ci_high': pm['scoreConfidence'][1],
+            'unit': pm['scoreUnit'],
+            'min': float(pct.get('0.0', pm['score'])),
+            'p50': float(pct.get('50.0', pm['score'])),
+            'p90': float(pct.get('90.0', pm['score'])),
+            'p99': float(pct.get('99.0', pm['score'])),
+            'max': float(pct.get('100.0', pm['score'])),
+            'raw': [v for fork in pm.get('rawData', []) for v in fork],
+        }
+    return metrics
+
+
 def main():
     raw = parse_results(RESULTS_JSON)
 
-    # 提取 JMH 元信息（取第一条）
+    # JMH 环境信息
     meta = raw[0] if raw else {}
     jmh_version = meta.get('jmhVersion', '未知')
     jvm = meta.get('jvm', '未知')
@@ -61,23 +84,14 @@ def main():
     warmup = f"{meta.get('warmupIterations', '?')} x {meta.get('warmupTime', '?')}"
     measurement = f"{meta.get('measurementIterations', '?')} x {meta.get('measurementTime', '?')}"
 
-    metrics = {}
-    for item in raw:
-        name = short_name(item['benchmark'])
-        pm = item['primaryMetric']
-        metrics[name] = {
-            'score': pm['score'],
-            'error': pm['scoreError'],
-            'unit': pm['scoreUnit'],
-            'benchmark': item['benchmark'],
-        }
+    metrics = extract_metrics(raw)
 
     mux_tick = metrics['MultiplexerBenchmark.perTick']
     mux_event = metrics['MultiplexerBenchmark.onEvent']
     fsm_tick = metrics['StateMachineBenchmark.perTick']
     fsm_event = metrics['StateMachineBenchmark.onEvent']
 
-    # 汇总文本（中文）
+    # 文本汇总（中文）
     summary_lines = [
         '======== JMH 基准测试结果 ========',
         f'JMH 版本: {jmh_version}',
@@ -85,13 +99,25 @@ def main():
         f'JDK: {jdk}',
         f'Warmup: {warmup}',
         f'Measurement: {measurement}',
+        '模式: AverageTime（充分 Warmup 后，每次调用的平均耗时）',
         '',
-        '基准测试耗时（ns/op）：',
-        f'  Multiplexer.perTick   = {mux_tick["score"]:.3f} ± {mux_tick["error"]:.3f}',
-        f'  Multiplexer.onEvent   = {mux_event["score"]:.3f} ± {mux_event["error"]:.3f}',
-        f'  StateMachine.perTick  = {fsm_tick["score"]:.3f} ± {fsm_tick["error"]:.3f}',
-        f'  StateMachine.onEvent  = {fsm_event["score"]:.3f} ± {fsm_event["error"]:.3f}',
-        '',
+    ]
+    for name, info in [
+        ('Multiplexer.perTick', mux_tick),
+        ('Multiplexer.onEvent', mux_event),
+        ('StateMachine.perTick', fsm_tick),
+        ('StateMachine.onEvent', fsm_event),
+    ]:
+        summary_lines.extend([
+            f'[{name}]',
+            f'  score ± error: {info["score"]:.3f} ± {info["error"]:.3f} {info["unit"]}',
+            f'  99.9% 置信区间: [{info["ci_low"]:.3f}, {info["ci_high"]:.3f}] {info["unit"]}',
+            f'  分位数: min={info["min"]:.3f}, p50={info["p50"]:.3f}, p90={info["p90"]:.3f}, p99={info["p99"]:.3f}, max={info["max"]:.3f}',
+            f'  原始测量值（每次迭代）: {" ".join(f"{v:.3f}" for v in info["raw"])}',
+            '',
+        ])
+
+    summary_lines.extend([
         f'游戏 TPS = {TPS}，每 tick 预算 = {BUDGET_MS:.1f} ms',
         '',
         '50 ms 预算下最大安全实例数：',
@@ -104,7 +130,7 @@ def main():
         '',
         '不同实例数下的 MSPT 增长：',
         f'{"实例数":>12} | Multiplexer.perTick | Multiplexer.onEvent@1/s | StateMachine.perTick | StateMachine.onEvent@1/s',
-    ]
+    ])
     for n in [100, 1000, 10000, 100000, 500000, 1000000]:
         mt = mspt_per_tick(mux_tick['score'], np.array([n]))[0]
         me1 = mspt_event(mux_event['score'], np.array([n]), 1.0)[0]
@@ -117,12 +143,17 @@ def main():
     print(summary)
     (OUT_DIR / 'tps_mspt.txt').write_text(summary)
 
-    # 多子图中文图表（百分比 of 50 ms tick 预算，更直观）
+    # 多子图中文图表（上方三个场景，下方 JMH 指标表）
     INSTANCES_CHART = [100, 1_000, 10_000, 100_000, 1_000_000]
     x = np.arange(len(INSTANCES_CHART))
     width = 0.35
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 6), sharey=True)
+    fig = plt.figure(figsize=(16, 10))
+    gs = fig.add_gridspec(2, 3, height_ratios=[3, 1.5], hspace=0.28, wspace=0.25)
+
+    axes = [fig.add_subplot(gs[0, i]) for i in range(3)]
+    ax_table = fig.add_subplot(gs[1, :])
+
     scenarios = [
         ('每 tick 调用', 0.0, 'per_tick'),
         ('事件 1/s', 1.0, 'event'),
@@ -157,31 +188,49 @@ def main():
         ax.set_xticklabels([f'{n:,}' for n in INSTANCES_CHART], rotation=30, ha='right')
         ax.grid(axis='y', linestyle='--', alpha=0.4)
 
-        # 在柱顶加数值标签
         ax.bar_label(bars1, labels=[pct_label(v) for v in mux_pct], padding=2, fontsize=8)
         ax.bar_label(bars2, labels=[pct_label(v) for v in fsm_pct], padding=2, fontsize=8)
 
         if ax == axes[0]:
             ax.legend(fontsize=9)
 
-    fig.suptitle('Multiplexer / StateMachine 对 TPS/MSPT 的影响（基于 JMH）', fontsize=15, y=1.02)
+    fig.suptitle('Multiplexer / StateMachine 对 TPS/MSPT 的影响（充分 Warmup 后的 JMH 平均耗时）', fontsize=15, y=0.98)
 
-    # 底部 JMH 信息
-    env_text = (
-        f'JMH {jmh_version}  |  {jvm}  |  JDK {jdk}  |  Warmup {warmup}  |  Measurement {measurement}\n'
-        'Multiplexer.perTick = {0:.3f}±{1:.3f} ns/op  |  Multiplexer.onEvent = {2:.3f}±{3:.3f} ns/op\n'
-        'StateMachine.perTick = {4:.3f}±{5:.3f} ns/op  |  StateMachine.onEvent = {6:.3f}±{7:.3f} ns/op\n'
-        '假设：每 tick/事件调用一次；未计入其它游戏逻辑开销'
-    ).format(
-        mux_tick['score'], mux_tick['error'],
-        mux_event['score'], mux_event['error'],
-        fsm_tick['score'], fsm_tick['error'],
-        fsm_event['score'], fsm_event['error'],
+    # 底部 JMH 指标表
+    table_data = []
+    for key in ['MultiplexerBenchmark.perTick', 'MultiplexerBenchmark.onEvent',
+                'StateMachineBenchmark.perTick', 'StateMachineBenchmark.onEvent']:
+        info = metrics[key]
+        short = key.replace('Benchmark.', '.')
+        table_data.append([
+            short,
+            f'{info["score"]:.3f}',
+            f'{info["error"]:.3f}',
+            f'{info["min"]:.3f}',
+            f'{info["p50"]:.3f}',
+            f'{info["p90"]:.3f}',
+            f'{info["p99"]:.3f}',
+            f'{info["max"]:.3f}',
+            f'{info["ci_low"]:.3f} ~ {info["ci_high"]:.3f}',
+        ])
+    col_labels = ['基准测试', 'score\n(ns/op)', 'error\n(ns/op)', 'min', 'p50', 'p90', 'p99', 'max', '99.9% CI\n(ns/op)']
+
+    ax_table.axis('off')
+    ax_table.set_title(
+        f'JMH 环境：{jmh_version}  |  {jvm}  |  JDK {jdk}  |  Warmup {warmup}  |  Measurement {measurement}',
+        fontsize=10, pad=10
     )
-    fig.text(0.5, -0.06, env_text, ha='center', va='top', fontsize=9,
-             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+    table = ax_table.table(
+        cellText=table_data,
+        colLabels=col_labels,
+        loc='center',
+        cellLoc='center',
+        colColours=['#eeeeee'] * len(col_labels),
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1.15, 1.8)
 
-    fig.tight_layout(rect=[0, 0.06, 1, 1])
     fig.savefig(OUT_DIR / 'tps_mspt_subplots.png', dpi=150, bbox_inches='tight')
     print(f'\n多子图图表已保存至 {OUT_DIR / "tps_mspt_subplots.png"}')
     print(f'汇总文本已保存至 {OUT_DIR / "tps_mspt.txt"}')
