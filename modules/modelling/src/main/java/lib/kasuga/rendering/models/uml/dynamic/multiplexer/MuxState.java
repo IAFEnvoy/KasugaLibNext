@@ -1,24 +1,22 @@
 package lib.kasuga.rendering.models.uml.dynamic.multiplexer;
 
 /**
- * Per-instance runtime state for a {@link Multiplexer}, held EXTERNALLY by the owner. The
- * {@link Multiplexer} definition is stateless and shareable (one per block type); this object is what
- * makes each placed block distinct. Holds the current {@link MuxVariant} plus any in-flight transition.
+ * Per-instance runtime state for a {@link Multiplexer}, held EXTERNALLY by the owner.
  */
-public final class MuxState {
+public final class MuxState<V extends Variant<V>> {
 
-    private MuxVariant current;
-    private MuxVariant transitionFrom;
-    private MuxVariant transitionTo;
+    private V current;
+    private V transitionFrom;
+    private V transitionTo;
     private float elapsed;
     private float duration;
 
-    public MuxState(MuxVariant initial) {
+    public MuxState(V initial) {
         this.current = initial;
     }
 
     /** The settled variant (the {@code from} side while a transition is in progress). */
-    public MuxVariant current() {
+    public V current() {
         return current;
     }
 
@@ -27,12 +25,12 @@ public final class MuxState {
     }
 
     /** Variant being blended away from during a transition (== {@link #current()} when settled). */
-    public MuxVariant from() {
+    public V from() {
         return transitionFrom != null ? transitionFrom : current;
     }
 
     /** Variant being blended toward during a transition (== {@link #current()} when settled). */
-    public MuxVariant to() {
+    public V to() {
         return transitionTo != null ? transitionTo : current;
     }
 
@@ -41,7 +39,7 @@ public final class MuxState {
         return duration <= 0f ? 1f : Math.min(1f, elapsed / duration);
     }
 
-    void startTransition(MuxVariant from, MuxVariant to, float durationSeconds) {
+    void startTransition(V from, V to, float durationSeconds) {
         this.transitionFrom = from;
         this.transitionTo = to;
         this.duration = durationSeconds;
@@ -65,7 +63,7 @@ public final class MuxState {
     }
 
     /** Instant switch (used when a transition's cross-fade is <= 0). */
-    void setCurrentInstant(MuxVariant variant) {
+    void setCurrentInstant(V variant) {
         this.current = variant;
     }
 }

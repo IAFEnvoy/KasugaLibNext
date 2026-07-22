@@ -5,7 +5,7 @@ import java.util.Map;
 
 /**
  * Open, typed key→value store — the user-extension channel for {@code StateContext} (via
- * {@code StateMachine.data()}) and {@code MultiplexerInput}. Add custom data without editing any
+ * {@code StateMachine.data()}) and {@link Context} implementations. Add custom data without editing any
  * framework type. Two key spaces:
  *
  * <ul>

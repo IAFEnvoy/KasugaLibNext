@@ -1,11 +1,11 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import lib.kasuga.rendering.models.mc.multiplexer.McContext;
+import lib.kasuga.rendering.models.mc.multiplexer.McVariant;
 import lib.kasuga.rendering.models.uml.dynamic.data.Blackboard;
 import lib.kasuga.rendering.models.uml.dynamic.multiplexer.Multiplexer;
-import lib.kasuga.rendering.models.uml.dynamic.multiplexer.MultiplexerInput;
-import lib.kasuga.rendering.models.uml.dynamic.multiplexer.MuxPredicateContext;
 import lib.kasuga.rendering.models.uml.dynamic.multiplexer.MuxState;
-import lib.kasuga.rendering.models.uml.dynamic.multiplexer.MuxVariant;
+import lib.kasuga.rendering.models.uml.dynamic.multiplexer.SelectorPredicates;
 import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
  * Verifies the open {@link Blackboard} extension channel: typed/raw keys on {@link StateContext},
- * and custom channels on {@link MultiplexerInput} — no framework type edited to add new data.
+ * and custom channels on {@link McContext} — no framework type edited to add new data.
  */
 class ExtensibilityTest {
 
@@ -52,23 +52,22 @@ class ExtensibilityTest {
         assertEquals("b", machine.layer("l").active().id());
         assertEquals("fast", machine.data().get(MODE));
 
-        // raw (string-named) channel too — for JSON/scripts/dynamic use
         machine.data().put("note", "hello");
         assertEquals("hello", machine.data().get("note"));
     }
 
     @Test
     void multiplexerCustomChannel() {
-        Multiplexer def = Multiplexer.define(mux -> {
-            MuxVariant off = mux.variant("off", v -> v.model(rl("off")));
-            MuxVariant on = mux.variant("on", v -> v.model(rl("on")));
-            mux.transition(off, on, t -> t.when(MuxPredicateContext.dataFlag(ARMED)));
+        Multiplexer<McContext, McVariant> def = Multiplexer.define(McVariant::new, mux -> {
+            McVariant off = mux.variant("off", v -> v.model(rl("off")));
+            McVariant on = mux.variant("on", v -> v.model(rl("on")));
+            mux.transition(off, on, t -> t.when(SelectorPredicates.dataFlag(ARMED)));
             mux.transition(on, off, t -> t.when(in -> !Boolean.TRUE.equals(in.data().get(ARMED))));
             mux.initial(off);
         });
 
-        MuxState state = def.newState();
-        MultiplexerInput input = new MultiplexerInput(
+        MuxState<McVariant> state = def.newState();
+        McContext input = new McContext(
                 Map.of("powered", "false"), List.of(), 0, 0L, Set.of());
 
         input.data().put(ARMED, true);

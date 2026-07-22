@@ -9,34 +9,36 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
- * Stateless variant-graph <b>definition</b>: {@link MuxVariant} nodes + guarded transitions (with
- * optional cross-fade). Holds NO runtime state — one instance can be shared per block type. Per-instance
- * runtime state lives in a {@link MuxState} the owner holds; {@link #advance} walks the transitions and
- * updates that external state. Variants are typed handles (transitions reference handles, not string ids).
+ * Stateless variant-graph <b>definition</b>: typed {@link Variant} nodes + guarded transitions with
+ * optional cross-fade. Holds NO runtime state — one instance can be shared per definition key (e.g. a
+ * block type). Per-instance runtime state lives in a {@link MuxState} that the owner holds.
+ *
+ * <p>The multiplexer is generic over the {@link Context} type (the input snapshot) and the concrete
+ * {@link Variant} type (the selected output). The Minecraft implementation uses {@code McContext} and
+ * {@code McVariant}; the core knows nothing about Minecraft.
  *
  * <pre>{@code
- * Multiplexer def = Multiplexer.define(mux -> {
- *     MuxVariant off = mux.variant("off", v -> v.model(rl("off_model")));
- *     MuxVariant on  = mux.variant("on",  v -> v.model(rl("on_model")));
- *     mux.transition(off, on, t -> t.when(powerAtLeast(1)).crossFade(0.2f));
- *     mux.transition(on, off, t -> t.when(in -> in.redstonePower() < 1).crossFade(0.2f));
+ * Multiplexer<MyContext, MyVariant> def = Multiplexer.define(MyVariant::new, mux -> {
+ *     MyVariant off = mux.variant("off", v -> { });
+ *     MyVariant on  = mux.variant("on",  v -> { });
+ *     mux.transition(off, on, t -> t.when(ctx -> ctx.property("powered").equals("true")).crossFade(0.2f));
  *     mux.initial(off);
  * });
- * MuxState state = def.newState();          // owner holds this
- * def.advance(state, input, dt);            // owner ticks: walks transitions, advances cross-fade
+ * MuxState<MyVariant> state = def.newState();
+ * def.advance(state, context, dt);
  * }</pre>
  */
-public final class Multiplexer {
+public final class Multiplexer<C extends Context, V extends Variant<V>> {
 
-    private final List<MuxVariant> variants;
-    private final Map<String, MuxVariant> variantsById;
-    private final List<Transition> transitions;
-    private final MuxVariant initial;
+    private final List<V> variants;
+    private final Map<String, V> variantsById;
+    private final List<Transition<C, V>> transitions;
+    private final V initial;
 
-    public Multiplexer(List<MuxVariant> variants, List<Transition> transitions, MuxVariant initial) {
+    public Multiplexer(List<V> variants, List<Transition<C, V>> transitions, V initial) {
         this.variants = List.copyOf(variants);
-        Map<String, MuxVariant> byId = new LinkedHashMap<>();
-        for (MuxVariant variant : this.variants) {
+        Map<String, V> byId = new LinkedHashMap<>();
+        for (V variant : this.variants) {
             byId.put(variant.id(), variant);
         }
         this.variantsById = Map.copyOf(byId);
@@ -44,47 +46,59 @@ public final class Multiplexer {
         this.initial = initial;
     }
 
-    public static Builder builder() {
-        return new Builder();
-    }
-
-    /**
-     * Declare a multiplexer in one expression (mirrors the state-machine DSL): variants, transitions,
-     * and the initial variant are stated inside the lambda; variant handles are captured locally so the
-     * whole graph is type-safe and writable as a single declaration.
-     */
-    public static Multiplexer define(Consumer<Builder> config) {
-        Builder builder = builder();
+    public static <C extends Context, V extends Variant<V>> Multiplexer<C, V> define(
+            VariantFactory<V> factory, Consumer<Builder<C, V>> config) {
+        Builder<C, V> builder = new Builder<>(factory);
         config.accept(builder);
         return builder.build();
     }
 
-    public MuxVariant initial() {
+    public V initial() {
         return initial;
     }
 
-    public MuxVariant variant(String id) {
+    public V variant(String id) {
         return variantsById.get(id);
     }
 
-    public List<MuxVariant> variants() {
+    public List<V> variants() {
         return variants;
     }
 
-    public List<Transition> transitions() {
+    public List<Transition<C, V>> transitions() {
         return transitions;
     }
 
     /** Create a fresh per-instance {@link MuxState} starting at the initial variant. */
-    public MuxState newState() {
-        return new MuxState(initial);
+    public MuxState<V> newState() {
+        return new MuxState<>(initial);
     }
 
     /**
-     * Advance the external {@code state}: progress any in-flight cross-fade by {@code dt}, then (once
-     * settled) evaluate transition guards against {@code input} and start/commit a switch.
+     * Given the current state and a context, return the variant the multiplexer would select now
+     * (the target of the first matching transition from the current variant, or the current variant
+     * if none match). This does not mutate state or start a cross-fade.
      */
-    public void advance(MuxState state, MultiplexerInput input, float dt) {
+    public V select(C context, MuxState<V> state) {
+        if (state.inTransition()) {
+            return state.to();
+        }
+        for (Transition<C, V> transition : transitions) {
+            if (transition.from() != state.current()) {
+                continue;
+            }
+            if (transition.guard().test(context)) {
+                return transition.to();
+            }
+        }
+        return state.current();
+    }
+
+    /**
+     * Advance the external {@code state}: progress any in-flight cross-fade by {@code dt}, then
+     * evaluate transition guards against {@code context} and start/commit a switch.
+     */
+    public void advance(MuxState<V> state, C context, float dt) {
         if (state.inTransition()) {
             state.advance(dt);
             if (state.transitionDone()) {
@@ -93,11 +107,11 @@ public final class Multiplexer {
                 return;
             }
         }
-        for (Transition transition : transitions) {
+        for (Transition<C, V> transition : transitions) {
             if (transition.from() != state.current()) {
                 continue;
             }
-            if (!transition.guard().test(input)) {
+            if (!transition.guard().test(context)) {
                 continue;
             }
             if (transition.crossFadeSeconds() <= 0f) {
@@ -113,93 +127,98 @@ public final class Multiplexer {
     }
 
     /** One directed edge: {@code from} → {@code to}, taken when {@code guard} holds. */
-    public record Transition(
-            MuxVariant from,
-            MuxVariant to,
-            Predicate<MultiplexerInput> guard,
+    public record Transition<C extends Context, V extends Variant<V>>(
+            V from,
+            V to,
+            Predicate<C> guard,
             float crossFadeSeconds,
-            Consumer<MuxState> onSwitch
+            Consumer<MuxState<V>> onSwitch
     ) {
 
         public Transition {
             Objects.requireNonNull(from, "transition 'from' required");
             Objects.requireNonNull(to, "transition 'to' required");
             if (guard == null) {
-                guard = in -> true;
+                guard = c -> true;
             }
         }
     }
 
     //region builder
 
-    public static final class Builder {
+    public static final class Builder<C extends Context, V extends Variant<V>> {
 
-        private final List<MuxVariant> variants = new ArrayList<>();
-        private final List<Transition> transitions = new ArrayList<>();
-        private MuxVariant initial;
+        private final VariantFactory<V> factory;
+        private final List<V> variants = new ArrayList<>();
+        private final List<Transition<C, V>> transitions = new ArrayList<>();
+        private V initial;
+
+        Builder(VariantFactory<V> factory) {
+            this.factory = Objects.requireNonNull(factory, "variant factory required");
+        }
 
         /** Define a variant and return its typed handle (capture it to reference in transitions/initial). */
-        public MuxVariant variant(String id, Consumer<MuxVariant> config) {
-            MuxVariant variant = new MuxVariant(id);
+        public V variant(String id, Consumer<V> config) {
+            V variant = factory.create(id);
             config.accept(variant);
             variants.add(variant);
             return variant;
         }
 
-        public Builder transition(MuxVariant from, MuxVariant to, Consumer<TransitionBuilder> config) {
-            TransitionBuilder builder = new TransitionBuilder(from, to);
+        public Builder<C, V> transition(V from, V to, Consumer<TransitionBuilder<C, V>> config) {
+            TransitionBuilder<C, V> builder = new TransitionBuilder<>(from, to);
             config.accept(builder);
             transitions.add(builder.build());
             return this;
         }
 
-        public Builder initial(MuxVariant variant) {
+        public Builder<C, V> initial(V variant) {
             this.initial = variant;
             return this;
         }
 
-        public Multiplexer build() {
+        public Multiplexer<C, V> build() {
             if (variants.isEmpty()) {
                 throw new IllegalStateException("multiplexer needs at least one variant");
             }
             if (initial == null) {
                 initial = variants.get(0);
             }
-            return new Multiplexer(variants, transitions, initial);
+            return new Multiplexer<>(variants, transitions, initial);
         }
     }
 
     /** Fluent transition configurator used inside {@code transition(from, to, t -> ...)}. */
-    public static final class TransitionBuilder {
+    public static final class TransitionBuilder<C extends Context, V extends Variant<V>> {
 
-        private final MuxVariant from;
-        private final MuxVariant to;
-        private Predicate<MultiplexerInput> guard = in -> true;
+        private final V from;
+        private final V to;
+        private Predicate<C> guard = c -> true;
         private float crossFadeSeconds;
-        private Consumer<MuxState> onSwitch;
+        private Consumer<MuxState<V>> onSwitch;
 
-        TransitionBuilder(MuxVariant from, MuxVariant to) {
+        TransitionBuilder(V from, V to) {
             this.from = from;
             this.to = to;
         }
 
-        public TransitionBuilder when(Predicate<MultiplexerInput> guard) {
+        public TransitionBuilder<C, V> when(Predicate<C> guard) {
             this.guard = guard;
             return this;
         }
 
-        public TransitionBuilder crossFade(float seconds) {
+        public TransitionBuilder<C, V> crossFade(float seconds) {
             this.crossFadeSeconds = seconds;
             return this;
         }
 
-        public TransitionBuilder onSwitch(Consumer<MuxState> callback) {
+        public TransitionBuilder<C, V> onSwitch(Consumer<MuxState<V>> callback) {
             this.onSwitch = callback;
             return this;
         }
 
-        Transition build() {
-            return new Transition(from, to, guard, crossFadeSeconds, onSwitch);
+        Transition<C, V> build() {
+            return new Transition<>(from, to, guard, crossFadeSeconds, onSwitch);
         }
     }
 
