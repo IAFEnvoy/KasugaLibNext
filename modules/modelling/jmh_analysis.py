@@ -117,103 +117,73 @@ def main():
     print(summary)
     (OUT_DIR / 'tps_mspt.txt').write_text(summary)
 
-    # 详细图表
-    fig = plt.figure(figsize=(16, 11))
-    gs = fig.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.12)
-    ax = fig.add_subplot(gs[0])
-    ax_table = fig.add_subplot(gs[1])
+    # 多子图中文图表（百分比 of 50 ms tick 预算，更直观）
+    INSTANCES_CHART = [100, 1_000, 10_000, 100_000, 1_000_000]
+    x = np.arange(len(INSTANCES_CHART))
+    width = 0.35
 
-    N = np.geomspace(100, 10_000_000, 150).astype(np.int64)
-
-    series = [
-        ('Multiplexer.perTick', mux_tick, 0, 'per_tick', '#1f77b4', 'Multiplexer 每 tick'),
-        ('StateMachine.perTick', fsm_tick, 0, 'per_tick', '#ff7f0e', 'StateMachine 每 tick'),
-        ('Multiplexer.onEvent@10/s', mux_event, 10.0, 'event', '#2ca02c', 'Multiplexer 事件 10/s'),
-        ('StateMachine.onEvent@10/s', fsm_event, 10.0, 'event', '#d62728', 'StateMachine 事件 10/s'),
+    fig, axes = plt.subplots(1, 3, figsize=(16, 6), sharey=True)
+    scenarios = [
+        ('每 tick 调用', 0.0, 'per_tick'),
+        ('事件 1/s', 1.0, 'event'),
+        ('事件 10/s', 10.0, 'event'),
     ]
 
-    for _, info, events, _, color, label in series:
-        score = info['score']
-        error = info['error']
-        if events == 0:
-            y = mspt_per_tick(score, N)
-            y_low = mspt_per_tick(max(score - error, 1e-9), N)
-            y_high = mspt_per_tick(score + error, N)
+    def pct_label(p: float) -> str:
+        if p < 0.01:
+            return '<0.01%'
+        return f'{p:.2f}%'
+
+    for ax, (title, events, mode) in zip(axes, scenarios):
+        if mode == 'per_tick':
+            mux_vals = mspt_per_tick(mux_tick['score'], np.array(INSTANCES_CHART))
+            fsm_vals = mspt_per_tick(fsm_tick['score'], np.array(INSTANCES_CHART))
         else:
-            y = mspt_event(score, N, events)
-            y_low = mspt_event(max(score - error, 1e-9), N, events)
-            y_high = mspt_event(score + error, N, events)
+            mux_vals = mspt_event(mux_event['score'], np.array(INSTANCES_CHART), events)
+            fsm_vals = mspt_event(fsm_event['score'], np.array(INSTANCES_CHART), events)
 
-        ax.fill_between(N, y_low, y_high, color=color, alpha=0.15)
-        ax.plot(N, y, color=color, linewidth=2.5, marker='', label=label)
+        mux_pct = mux_vals / BUDGET_MS * 100.0
+        fsm_pct = fsm_vals / BUDGET_MS * 100.0
 
-        # 标出跨越 50 ms 的位置
-        if events == 0:
-            n_cross = max_instances_per_tick(score)
-        else:
-            n_cross = max_instances_event(score, events)
-        if 100 <= n_cross <= 10_000_000:
-            y_cross = BUDGET_MS
-            ax.annotate(
-                f'{n_cross:,}',
-                xy=(n_cross, y_cross),
-                xytext=(n_cross * 0.3, y_cross * 2.5),
-                fontsize=9,
-                color=color,
-                arrowprops=dict(arrowstyle='->', color=color, lw=0.8),
-            )
+        bars1 = ax.bar(x - width / 2, mux_pct, width, label='Multiplexer', color='#1f77b4')
+        bars2 = ax.bar(x + width / 2, fsm_pct, width, label='StateMachine', color='#ff7f0e')
 
-    ax.axhline(BUDGET_MS, color='red', linestyle='--', linewidth=1.5, label='50 ms tick 预算线')
-    ax.axhspan(BUDGET_MS, BUDGET_MS * 10, color='red', alpha=0.05)
+        ax.axhline(100.0, color='red', linestyle='--', linewidth=1.2, label='50 ms 预算线')
+        ax.set_ylim(0, 120)
+        ax.set_xlabel('实例数', fontsize=11)
+        ax.set_ylabel('占 50 ms 预算百分比（%）', fontsize=11)
+        ax.set_title(title, fontsize=13)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f'{n:,}' for n in INSTANCES_CHART], rotation=30, ha='right')
+        ax.grid(axis='y', linestyle='--', alpha=0.4)
 
-    ax.set_xscale('log')
-    ax.set_yscale('log')
-    ax.set_xlim(100, 10_000_000)
-    ax.set_ylim(0.0005, 200)
-    ax.set_xlabel('活跃实例数（个）', fontsize=12)
-    ax.set_ylabel('每 tick 增加 MSPT（毫秒）', fontsize=12)
-    ax.set_title('Multiplexer / StateMachine 对游戏 TPS/MSPT 的影响评估（基于 JMH）', fontsize=14, pad=12)
-    ax.grid(True, which='both', linestyle='--', alpha=0.4)
-    ax.legend(loc='upper left', fontsize=10)
+        # 在柱顶加数值标签
+        ax.bar_label(bars1, labels=[pct_label(v) for v in mux_pct], padding=2, fontsize=8)
+        ax.bar_label(bars2, labels=[pct_label(v) for v in fsm_pct], padding=2, fontsize=8)
 
-    # 环境信息文本框
+        if ax == axes[0]:
+            ax.legend(fontsize=9)
+
+    fig.suptitle('Multiplexer / StateMachine 对 TPS/MSPT 的影响（基于 JMH）', fontsize=15, y=1.02)
+
+    # 底部 JMH 信息
     env_text = (
-        f'JMH {jmh_version}  |  {jvm}  |  JDK {jdk}\n'
-        f'Warmup {warmup}  |  Measurement {measurement}  |  每条线 ±scoreError 阴影带\n'
+        f'JMH {jmh_version}  |  {jvm}  |  JDK {jdk}  |  Warmup {warmup}  |  Measurement {measurement}\n'
+        'Multiplexer.perTick = {0:.3f}±{1:.3f} ns/op  |  Multiplexer.onEvent = {2:.3f}±{3:.3f} ns/op\n'
+        'StateMachine.perTick = {4:.3f}±{5:.3f} ns/op  |  StateMachine.onEvent = {6:.3f}±{7:.3f} ns/op\n'
         '假设：每 tick/事件调用一次；未计入其它游戏逻辑开销'
+    ).format(
+        mux_tick['score'], mux_tick['error'],
+        mux_event['score'], mux_event['error'],
+        fsm_tick['score'], fsm_tick['error'],
+        fsm_event['score'], fsm_event['error'],
     )
-    ax.text(
-        0.98, 0.02, env_text,
-        transform=ax.transAxes,
-        fontsize=9,
-        verticalalignment='bottom',
-        horizontalalignment='right',
-        bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.85, edgecolor='gray')
-    )
+    fig.text(0.5, -0.06, env_text, ha='center', va='top', fontsize=9,
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
 
-    # 底部 JMH 结果表格
-    table_data = [
-        ['Multiplexer.perTick',  f'{mux_tick["score"]:.3f}',  f'{mux_tick["error"]:.3f}',  f'{max_instances_per_tick(mux_tick["score"]):,}', f'{max_instances_event(mux_tick["score"], 10.0):,}'],
-        ['Multiplexer.onEvent',  f'{mux_event["score"]:.3f}',  f'{mux_event["error"]:.3f}',  f'{max_instances_event(mux_event["score"], 1.0):,}', f'{max_instances_event(mux_event["score"], 10.0):,}'],
-        ['StateMachine.perTick', f'{fsm_tick["score"]:.3f}',  f'{fsm_tick["error"]:.3f}',  f'{max_instances_per_tick(fsm_tick["score"]):,}', f'{max_instances_event(fsm_tick["score"], 10.0):,}'],
-        ['StateMachine.onEvent', f'{fsm_event["score"]:.3f}',  f'{fsm_event["error"]:.3f}',  f'{max_instances_event(fsm_event["score"], 1.0):,}', f'{max_instances_event(fsm_event["score"], 10.0):,}'],
-    ]
-    col_labels = ['基准测试', '耗时 (ns/op)', '误差 (ns/op)', 'perTick 最大实例数', 'event@10/s 最大实例数']
-
-    ax_table.axis('off')
-    table = ax_table.table(
-        cellText=table_data,
-        colLabels=col_labels,
-        loc='center',
-        cellLoc='center',
-        colColours=['#eeeeee'] * len(col_labels),
-    )
-    table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1.2, 1.8)
-
-    fig.savefig(OUT_DIR / 'tps_mspt_detail.png', dpi=150, bbox_inches='tight')
-    print(f'\n详细图表已保存至 {OUT_DIR / "tps_mspt_detail.png"}')
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    fig.savefig(OUT_DIR / 'tps_mspt_subplots.png', dpi=150, bbox_inches='tight')
+    print(f'\n多子图图表已保存至 {OUT_DIR / "tps_mspt_subplots.png"}')
     print(f'汇总文本已保存至 {OUT_DIR / "tps_mspt.txt"}')
 
 
