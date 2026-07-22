@@ -215,6 +215,11 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
             offset += count;
         }
 
+        // PMX stores normals per source vertex, but equivalent vertices can be
+        // duplicated at UV/material seams. Reconcile compatible triangle
+        // corners before the backend flattens every face into its GPU buffer.
+        PmxNormalSmoother.smooth(meshesArray);
+
         Bone[] boneArray = new Bone[bones.size()];
         Bone rootBone = null;
         List<Bone> childOfRoot = new ArrayList<>();

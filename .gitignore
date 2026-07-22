@@ -36,3 +36,9 @@ replay_pid*.log
 
 .internal
 .docs
+
+# local OS/editor and runtime artifacts
+.DS_Store
+**/.DS_Store
+*.log
+logs/

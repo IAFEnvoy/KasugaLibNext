@@ -1,25 +1,47 @@
+# KasugaLib Next
 
-Installation information
-=======
+KasugaLib Next is a Java 21, NeoForge 1.21.1 multi-module library project. The repository contains
+the core mod, modelling and rendering support, scripting integration, Create integration, build
+plugins and the aggregate distribution.
 
-This template repository can be directly cloned to get you started with a new
-mod. Simply create a new repository cloned from this one, by following the
-instructions provided by [GitHub](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
+## Development
 
-Once you have your clone, simply open the repository in the IDE of your choice. The usual recommendation for an IDE is either IntelliJ IDEA or Eclipse.
+Import the Gradle project in IntelliJ IDEA, then use the existing module run configurations or the
+wrapper directly:
 
-If at any point you are missing libraries in your IDE, or you've run into problems you can
-run `gradlew --refresh-dependencies` to refresh the local cache. `gradlew clean` to reset everything 
-{this does not affect your code} and then start the process again.
+```bash
+./gradlew build
+./gradlew :modules:modelling:runClient
+```
 
-Mapping Names:
-============
-By default, the MDK is configured to use the official mapping names from Mojang for methods and fields 
-in the Minecraft codebase. These names are covered by a specific license. All modders should be aware of this
-license. For the latest license text, refer to the mapping file itself, or the reference copy here:
-https://github.com/NeoForged/NeoForm/blob/main/Mojang.md
+The modelling development client includes the existing model tests and the content-testing particle
+and black-hole demonstrations.
 
-Additional Resources: 
-==========
-Community Documentation: https://docs.neoforged.net/  
-NeoForged Discord: https://discord.neoforged.net/
+## Custom rendering
+
+The custom rendering surface includes owner-scoped world pipelines, managed effects,
+post-processing graphs, reload-safe resource/generated shaders, the imperative Java Shader DSL,
+background shader preparation and schema-driven runtime parameters.
+
+See [EFFECT_RENDERING.md](EFFECT_RENDERING.md) for the API behavior, examples and the GLSL-to-Java
+Shader DSL guide.
+
+Run the focused release gate with:
+
+```bash
+./gradlew renderingReleaseCheck
+```
+
+The manual and artifact checks for a release candidate are recorded in
+[RENDERING_RELEASE_CHECKLIST.md](RENDERING_RELEASE_CHECKLIST.md).
+
+## Main modules
+
+- `modules/shader`: typed shader IR, Java DSL, GLSL 150 backend and build-time resource compiler.
+- `modules/modelling`: model rendering, custom pipelines, effects, post-processing and runtime shader
+  management.
+- `modules/gradle-plugin`: Kasuga build plugins, including `builder.kasuga.shader`.
+- `modules/library`: aggregate mod artifact.
+
+Minecraft/Parchment mapping sources remain subject to their upstream terms. See the repository
+license and release metadata for the project distribution terms.
