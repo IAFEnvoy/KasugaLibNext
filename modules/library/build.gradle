@@ -63,6 +63,20 @@ configurations {
 
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+tasks.named('sourcesJar').configure {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    dependsOn(
+            ':modules:core:generateModMetadata',
+            ':modules:scripting:generateModMetadata',
+            ':modules:modelling:generateModMetadata',
+            ':modules:create:generateModMetadata'
+    )
+}
 
 neoForge {
     // Specify the version of NeoForge to use.
@@ -132,6 +146,9 @@ dependencies {
 
     implementation project(":modules:utils")
     shadowLibrary project(":modules:utils")
+
+    api project(":modules:shader")
+    shadowLibrary project(":modules:shader")
 
 
     implementation("cc.tweaked:cc-tweaked-$minecraft_version-forge:$cct_version")
