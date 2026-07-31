@@ -37,6 +37,7 @@ public class RenderState {
     public static final VertexFormatElement BONE_BINDING_TYPE;
 
     public static final VertexFormatElement SDEF_R0, SDEF_R1, SDEF_C;
+    public static final VertexFormatElement TEXTURE_UV, TEXTURE_BOUNDS;
 
     public static final ResourceLocation KSG_LAYER_0 = ResourceLocation.tryBuild(KasugaLib.MODID, "textures/atlas/layer_0.png");
     public static final ResourceLocation KSG_LAYER_1 = ResourceLocation.tryBuild(KasugaLib.MODID, "textures/atlas/layer_1.png");
@@ -114,6 +115,20 @@ public class RenderState {
                 3
         );
 
+        TEXTURE_UV = VertexFormatElement.register(
+                VertexFormatElement.findNextId(), 0,
+                VertexFormatElement.Type.FLOAT,
+                VertexFormatElement.Usage.GENERIC,
+                2
+        );
+
+        TEXTURE_BOUNDS = VertexFormatElement.register(
+                VertexFormatElement.findNextId(), 0,
+                VertexFormatElement.Type.FLOAT,
+                VertexFormatElement.Usage.GENERIC,
+                4
+        );
+
         UML_VERTEX_FORMAT = VertexFormat.builder()
                 .add("Position", VertexFormatElement.POSITION)
                 .add("Color", VertexFormatElement.COLOR)
@@ -128,6 +143,8 @@ public class RenderState {
                 .add("sdefR0", SDEF_R0)
                 .add("sdefR1", SDEF_R1)
                 .add("sdefC", SDEF_C)
+                .add("TextureUV", TEXTURE_UV)
+                .add("TextureBounds", TEXTURE_BOUNDS)
                 .build();
 
         UML_TEXTURE_STATE = new KasugaTextureStateShard(() -> Constants.TEXTURE_BASIC);

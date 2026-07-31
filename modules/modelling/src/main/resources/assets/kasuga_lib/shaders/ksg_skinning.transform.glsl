@@ -5,8 +5,9 @@
 in vec3 Position;
 in vec3 Normal;
 in vec4 Tangent;
-in float BoneBindingType;
-in vec4 BoneIndices;
+// BoneBindingType and BoneIndices are Type.INT in vertex format; must use integer types in GLSL
+in int BoneBindingType;
+in ivec4 BoneIndices;
 in vec4 BoneWeights;
 in vec3 sdefR0;
 in vec3 sdefR1;
@@ -96,6 +97,28 @@ vec3 quat_rotate(vec4 q, vec3 v) {
     return quat_mul(quat_mul(q, vQuat), qConj).xyz;
 }
 
+vec4 quat_slerp(vec4 q0, vec4 q1, float t) {
+    q0 = normalize(q0);
+    q1 = normalize(q1);
+    float cosTheta = dot(q0, q1);
+    if (cosTheta < 0.0) {
+        q1 = -q1;
+        cosTheta = -cosTheta;
+    }
+    if (cosTheta > 0.9995) {
+        return normalize(mix(q0, q1, t));
+    }
+    float theta = acos(clamp(cosTheta, -1.0, 1.0));
+    float sinTheta = sin(theta);
+    return (sin((1.0 - t) * theta) * q0 + sin(t * theta) * q1) / sinTheta;
+}
+
+// Fix (Bug-GPU-1, equivalent to pmx_bugs.md CPU Bug #8):
+// BDEF normal must use the normal matrix of the composite skinning deformation
+// M = T_anim * T_bind^(-1), not just N(T_anim).
+// The boneNormal buffer (offset 6) stores N(T_anim), which is incorrect for skinning.
+// We compute composite3x3 = mat3(absTransform) * mat3(invTransform) and
+// use its inverse-transpose as the correct normal matrix.
 void ksg_applyBdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 tangent) {
     vec4 skinnedPosition = vec4(0.0);
     vec3 skinnedNormal = vec3(0.0);
@@ -106,14 +129,17 @@ void ksg_applyBdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 ta
         if (weight <= 0.0) {
             continue;
         }
-        int boneIndex = int(BoneIndices[i] + 0.5);
+        int boneIndex = BoneIndices[i];
         mat4 invTransform = ksg_readBoneInverseTransform(boneIndex);
         mat4 absTransform = ksg_readBoneAbsTransform(boneIndex);
-        mat3 boneNormal = ksg_readBoneNormalTransform(boneIndex);
         vec4 localPos = invTransform * vec4(position, 1.0);
         skinnedPosition += (absTransform * localPos) * weight;
-        skinnedNormal += (boneNormal * normal) * weight;
-        skinnedTangent += (boneNormal * tangent.xyz) * weight;
+
+        // Compute composite normal matrix: N(T_anim * T_bind^(-1))
+        mat3 composite3x3 = mat3(absTransform) * mat3(invTransform);
+        mat3 compositeNormal = transpose(inverse(composite3x3));
+        skinnedNormal += (compositeNormal * normal) * weight;
+        skinnedTangent += (compositeNormal * tangent.xyz) * weight;
         totalWeight += weight;
     }
     if (totalWeight > 0.0) {
@@ -123,27 +149,33 @@ void ksg_applyBdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 ta
     }
 }
 
+// Fix (Bug-GPU-2, equivalent to pmx_bugs.md CPU Bug #7):
+// Standard DQBS (Dual Quaternion Blend Skinning) formula:
+//   v' = DQ_blend(w_i, DQ(T_anim_i * T_bind_i^(-1))) · v
+// The DQ must be built from the composite skinning matrix M = T_anim * T_bind^(-1),
+// NOT from T_anim alone.
+// The previous code built DQ from absTransform only and blended local-space positions
+// separately, which does not produce correct results even at bind pose.
 void ksg_applyQdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 tangent) {
     vec4 blend_qr = vec4(0.0);
     vec4 blend_qd = vec4(0.0);
-    vec3 blendedLocalPosition = vec3(0.0);
     float totalWeight = 0.0;
     for (int i = 0; i < 4; i++) {
         float weight = BoneWeights[i];
         if (weight <= 0.0) continue;
-        int boneIndex = int(BoneIndices[i] + 0.5);
+        int boneIndex = BoneIndices[i];
         mat4 invTransform = ksg_readBoneInverseTransform(boneIndex);
         mat4 absTransform = ksg_readBoneAbsTransform(boneIndex);
-        vec3 localPosition = (invTransform * vec4(position, 1.0)).xyz;
-        vec4 qr = quat_from_mat3(mat3(absTransform));
-        vec3 t = absTransform[3].xyz;
+        // Build skinning composite M = T_anim * T_bind^(-1)
+        mat4 composite = absTransform * invTransform;
+        vec4 qr = quat_from_mat3(mat3(composite));
+        vec3 t = composite[3].xyz;
         vec4 qd = 0.5 * quat_mul(vec4(t, 0.0), qr);
         if (dot(blend_qr, qr) < 0.0) {
             weight = -weight;
         }
         blend_qr += qr * weight;
         blend_qd += qd * weight;
-        blendedLocalPosition += localPosition * weight;
         totalWeight += weight;
     }
     if (totalWeight <= 0.0) {
@@ -151,7 +183,8 @@ void ksg_applyQdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 ta
     }
     blend_qr = normalize(blend_qr);
     blend_qd -= dot(blend_qr, blend_qd) * blend_qr;
-    vec3 rotatedPos = quat_rotate(blend_qr, blendedLocalPosition / totalWeight);
+    // Apply blended DQ directly to model-space position
+    vec3 rotatedPos = quat_rotate(blend_qr, position);
     vec4 trans4 = 2.0 * quat_mul(blend_qd, quat_conj(blend_qr));
     position = rotatedPos + trans4.xyz;
     normal = normalize(quat_rotate(blend_qr, normal));
@@ -159,50 +192,36 @@ void ksg_applyQdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 ta
 }
 
 void ksg_applySdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 tangent) {
-    vec4 skinnedPos = vec4(0.0);
-    vec3 skinnedNormal = vec3(0.0);
-    vec3 skinnedTangent = vec3(0.0);
-    float totalWeight = 0.0;
-    for (int i = 0; i < 4; i++) {
-        float weight = BoneWeights[i];
-        if (weight <= 0.0) continue;
-        int boneIndex = int(BoneIndices[i] + 0.5);
-        mat4 invBind = ksg_readBoneInverseTransform(boneIndex);
-        mat4 anim = ksg_readBoneAbsTransform(boneIndex);
-        mat3 boneNormal = ksg_readBoneNormalTransform(boneIndex);
-        mat3 invRotBind = mat3(invBind);
-        vec3 localPos = (invBind * vec4(position, 1.0)).xyz;
-        vec3 localC = (invBind * vec4(sdefC, 1.0)).xyz;
-        vec3 localR0 = invRotBind * sdefR0;
-        vec3 localR1 = invRotBind * sdefR1;
-        vec3 localR2 = cross(localR0, localR1);
-        vec3 delta = localPos - localC;
-        float d0 = dot(delta, localR0);
-        float d1 = dot(delta, localR1);
-        float d2 = dot(delta, localR2);
-        vec3 Cw = (anim * vec4(localC, 1.0)).xyz;
-        vec3 R0w = (anim * vec4(localR0, 0.0)).xyz;
-        vec3 R1w = (anim * vec4(localR1, 0.0)).xyz;
-        vec3 R2w = (anim * vec4(localR2, 0.0)).xyz;
-        vec3 deformedPos = Cw + d0 * R0w + d1 * R1w + d2 * R2w;
-        skinnedPos += vec4(deformedPos, 1.0) * weight;
-        skinnedNormal += (boneNormal * normal) * weight;
-        skinnedTangent += (boneNormal * tangent.xyz) * weight;
-        totalWeight += weight;
-    }
-    if (totalWeight > 0.0) {
-        position = skinnedPos.xyz / totalWeight;
-        normal = normalize(skinnedNormal);
-        tangent = vec4(normalize(skinnedTangent), tangent.w);
-    }
+    float totalWeight = BoneWeights.x + BoneWeights.y;
+    if (totalWeight <= 0.0) return;
+
+    float w0 = BoneWeights.x / totalWeight;
+    float w1 = BoneWeights.y / totalWeight;
+    mat4 skin0 = ksg_readBoneAbsTransform(BoneIndices.x)
+            * ksg_readBoneInverseTransform(BoneIndices.x);
+    mat4 skin1 = ksg_readBoneAbsTransform(BoneIndices.y)
+            * ksg_readBoneInverseTransform(BoneIndices.y);
+
+    // PMX stores C/R0/R1 in model space. SDEF rotates the point around the
+    // weighted pivot with the spherical interpolation of both skin rotations.
+    vec4 q0 = normalize(quat_from_mat3(mat3(skin0)));
+    vec4 q1 = normalize(quat_from_mat3(mat3(skin1)));
+    vec4 rotation = quat_slerp(q0, q1, w1);
+    vec3 weightedR = sdefR0 * w0 + sdefR1 * w1;
+    vec3 pivot0 = (skin0 * vec4(sdefC + sdefR0, 1.0)).xyz;
+    vec3 pivot1 = (skin1 * vec4(sdefC + sdefR1, 1.0)).xyz;
+
+    position = quat_rotate(rotation, position - sdefC - weightedR)
+            + pivot0 * w0 + pivot1 * w1;
+    normal = normalize(quat_rotate(rotation, normal));
+    tangent.xyz = normalize(quat_rotate(rotation, tangent.xyz));
 }
 
 void ksg_applyGpuSkinning(inout vec3 position, inout vec3 normal, inout vec4 tangent) {
-    int type = int(BoneBindingType + 0.5);
-    if (type == 2) {
+    if (BoneBindingType == 2) {
         ksg_applyQdefSkinning(position, normal, tangent);
         return;
-    } else if (type == 1) {
+    } else if (BoneBindingType == 1) {
         ksg_applySdefSkinning(position, normal, tangent);
         return;
     }

@@ -10,12 +10,14 @@ in vec2 UV0;
 in ivec2 UV1;
 in ivec2 UV2;
 in vec4 Tangent;
-in float BoneBindingType;
-in vec4 BoneIndices;
+in int BoneBindingType;
+in ivec4 BoneIndices;
 in vec4 BoneWeights;
 in vec3 sdefR0;
 in vec3 sdefR1;
 in vec3 sdefC;
+in vec2 TextureUV;
+in vec4 TextureBounds;
 
 uniform mat4 ModelViewMat;
 uniform mat4 ProjMat;
@@ -38,6 +40,8 @@ out vec4 vertexColor;
 out vec4 lightMapColor;
 out vec4 overlayColor;
 out vec2 texCoord0;
+out vec2 textureUV;
+flat out vec4 textureBounds;
 out vec3 viewPos;
 out vec3 viewNormal;
 out mat3 TBN;
@@ -60,6 +64,8 @@ void main() {
     overlayColor = texelFetch(Sampler1, ksg_PackedOverlay, 0);
 
     texCoord0 = UV0;
+    textureUV = TextureUV;
+    textureBounds = TextureBounds;
     vec4 viewPos4 = ModelViewMat * posWorld;
     viewPos = viewPos4.xyz;
     vertexDistance = fog_distance(viewPos, FogShape);

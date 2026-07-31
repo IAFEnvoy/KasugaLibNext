@@ -11,6 +11,7 @@ import lombok.NonNull;
 import lombok.Setter;
 
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.Queue;
 
 @Getter
@@ -53,8 +54,14 @@ public class Skeleton {
 
     public void getInverse() {
         if (!boneTransforms.isEmpty()) return;
-        Queue<Pair<Bone, Transform>> queue = new java.util.LinkedList<>();
-        queue.add(Pair.of(root, getTransform()));
+        Queue<Pair<Bone, Transform>> queue = new LinkedList<>();
+        // Fix (Bug #2): 根骨骼的绑定变换应包含其自身局部变换。
+        // 原代码: queue.add(Pair.of(root, getTransform()));
+        // 问题: 仅使用 skeleton.transform 作为根骨骼的父变换，忽略了 root.getTransform()，
+        //       导致根骨骼的位移/旋转在整个骨骼层级中被丢失。
+        // 修复: 根骨骼的绑定绝对变换 = skeleton.transform * root.getTransform()。
+        Transform rootWorldTransform = getTransform().copy().mul(root.getTransform());
+        queue.add(Pair.of(root, rootWorldTransform));
         recursiveUpdate(queue);
     }
 

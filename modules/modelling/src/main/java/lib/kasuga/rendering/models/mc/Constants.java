@@ -1,12 +1,28 @@
 package lib.kasuga.rendering.models.mc;
 
 import com.google.gson.JsonObject;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import lib.kasuga.KasugaLib;
+import lib.kasuga.client.loading.LoadingIndicator;
 import lib.kasuga.mixins.client.AccessorOnRegisterRenderTypesEvent;
+import lib.kasuga.rendering.effect.WorldRenderPipelineContext;
+import lib.kasuga.rendering.effect.WorldRenderPipelineDispatcher;
+import lib.kasuga.rendering.effect.RegisterRenderPipelinesEvent;
+import lib.kasuga.rendering.effect.RenderPipelineRegistrar;
+import lib.kasuga.rendering.effect.RenderPipelineScope;
+import lib.kasuga.rendering.effect.builtin.BillboardEffects;
+import lib.kasuga.rendering.effect.builtin.blackhole.BlackHoleEffects;
+import lib.kasuga.rendering.effect.debug.EffectDiagnosticsScreen;
+import lib.kasuga.rendering.effect.debug.ShaderParameterCommands;
+import lib.kasuga.rendering.effect.pipeline.RenderPhase;
+import lib.kasuga.rendering.effect.pipeline.RenderPipelineDescriptor;
+import lib.kasuga.rendering.effect.shader.RenderShaderRegistry;
+import lib.kasuga.rendering.effect.shader.ShaderPreparationScheduler;
+import lib.kasuga.rendering.effect.shader.ShaderParameterPersistence;
 import lib.kasuga.rendering.models.mc.backend.*;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.ui.UIBackend;
@@ -28,39 +44,42 @@ import lib.kasuga.rendering.models.mc.source.model.str.StrModelSourceManager;
 import lib.kasuga.rendering.models.mc.source.texture.CombinedTextureManager;
 import lib.kasuga.rendering.models.mc.source.texture.FileTextureSource;
 import lib.kasuga.rendering.models.mc.source.texture.JarTextureSource;
+import lib.kasuga.rendering.models.mc.source.texture.bake.PbrBakeCoordinator;
+import lib.kasuga.rendering.models.mc.source.texture.bake.PbrBakeState;
 import lib.kasuga.rendering.models.mc.typo.KsgPmxLoader;
 import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipHelper;
 import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipResource;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
 import lib.kasuga.rendering.models.uml.loaders.sources.SourceType;
-import lib.kasuga.rendering.models.uml.math.QuaternionHelper;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
-import net.minecraft.client.Camera;
-import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.AlertScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.*;
-import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceProvider;
 import net.minecraft.world.phys.Vec3;
+import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.ModLoader;
+import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.RenderTypeGroup;
 import net.neoforged.neoforge.client.event.*;
-import org.joml.Matrix4f;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 import static lib.kasuga.rendering.models.mc.backend.RenderState.UML_VERTEX_FORMAT;
 
-@EventBusSubscriber
+@EventBusSubscriber(value = Dist.CLIENT)
 public class Constants {
 
     public static ModelPipeLine BE_PIPELINE, OBJ_PIPELINE, MMD_PIPELINE, JE_PIPELINE;
@@ -71,12 +90,39 @@ public class Constants {
     public static UIBackend UI_BACKEND;
 
     public static ModelInstance currentInstance;
+    private static final RenderPipelineScope CLIENT_RENDER_PIPELINES = RenderPipelineScope.create(
+            ResourceLocation.fromNamespaceAndPath(KasugaLib.MODID, "client_render_lifetime")
+    );
+    private static boolean renderPipelineRegistrationPosted;
 
     @SubscribeEvent
-    public static void onClientSetup(net.neoforged.fml.event.lifecycle.FMLClientSetupEvent event) {
+    public static void onClientSetup(FMLClientSetupEvent event) {
+        ShaderPreparationScheduler.configureFromSystemProperty();
+        ShaderPreparationScheduler.prestartWorkers();
+        ShaderParameterPersistence.initialize();
         if (UI_BACKEND == null) {
             UI_BACKEND = new UIBackend();
         }
+        if (!renderPipelineRegistrationPosted) {
+            renderPipelineRegistrationPosted = true;
+            ModLoader.postEvent(new RegisterRenderPipelinesEvent(CLIENT_RENDER_PIPELINES));
+        }
+    }
+
+    @SubscribeEvent
+    public static void onRegisterRenderPipelines(RegisterRenderPipelinesEvent event) {
+        RenderPipelineRegistrar pipelines = event.registrar(
+                ResourceLocation.fromNamespaceAndPath(KasugaLib.MODID, "builtin_rendering")
+        );
+        BillboardEffects.initialize(pipelines);
+        BlackHoleEffects.initialize(pipelines);
+        RenderPipelineDescriptor descriptor = RenderPipelineDescriptor.builder(
+                        ResourceLocation.fromNamespaceAndPath(KasugaLib.MODID, "models"),
+                        RenderPhase.AFTER_ENTITIES
+                )
+                .priority(0)
+                .build();
+        pipelines.world(descriptor, Constants::renderModels);
     }
 
     @SubscribeEvent
@@ -194,6 +240,7 @@ public class Constants {
         } catch (IOException e) {
             throw new RuntimeException("Failed to load shader 'ksglib_main'", e);
         }
+        RenderShaderRegistry.registerShaders(event);
     }
 
     @SubscribeEvent
@@ -253,6 +300,83 @@ public class Constants {
     }
 
     @SubscribeEvent
+    public static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
+        event.getDispatcher().register(Commands.literal("kasuga_effects")
+                .executes(context -> {
+                    Minecraft.getInstance().execute(EffectDiagnosticsScreen::open);
+                    return 1;
+                })
+                .then(Commands.literal("preload").executes(context -> {
+                    int queued = RenderShaderRegistry.preloadPending();
+                    context.getSource().sendSuccess(
+                            () -> Component.literal("Queued " + queued + " Kasuga shaders for preload"),
+                            false
+                    );
+                    return queued;
+                }))
+                .then(Commands.literal("workers")
+                        .then(Commands.argument("count", IntegerArgumentType.integer(0))
+                                .executes(context -> {
+                                    int requested = IntegerArgumentType.getInteger(context, "count");
+                                    ShaderPreparationScheduler.configureWorkers(requested);
+                                    int workers = ShaderPreparationScheduler.workerCount();
+                                    context.getSource().sendSuccess(
+                                            () -> Component.literal("Shader preparation workers: " + workers
+                                                    + (requested == 0 ? " (automatic)" : " (requested "
+                                                    + requested + ")")),
+                                            false
+                                    );
+                                    return workers;
+                                })))
+                .then(ShaderParameterCommands.command()));
+        event.getDispatcher().register(Commands.literal("kasuga_pbr")
+                .then(Commands.literal("status").executes(context -> {
+                    Map<String, PbrBakeState> states = PbrBakeCoordinator.getInstance().states();
+                    long ready = states.values().stream().filter(state -> state == PbrBakeState.READY).count();
+                    long failed = states.values().stream().filter(state -> state == PbrBakeState.FAILED).count();
+                    PbrBakeCoordinator.PbrBakeStats stats = PbrBakeCoordinator.getInstance().stats();
+                    context.getSource().sendSuccess(() -> Component.literal(
+                            "Kasuga PBR: " + ready + " ready, " + failed + " failed, " + states.size()
+                                    + " total; GPU=" + stats.gpuBakes() + ", CPU=" + stats.cpuBakes()
+                                    + ", disk-cache=" + stats.cacheHits() + ", memory-cache=" + stats.memoryHits()
+                                    + ", failed=" + stats.failures() + ", requests=" + stats.requests()
+                                    + "; key=" + formatPbrMillis(stats.cacheKeyNanos())
+                                    + ", read=" + formatPbrMillis(stats.diskReadNanos())
+                                    + ", GPU-time=" + formatPbrMillis(stats.gpuBakeNanos())
+                                    + ", CPU-time=" + formatPbrMillis(stats.cpuBakeNanos())
+                                    + ", write=" + formatPbrMillis(stats.diskWriteNanos())
+                    ), false);
+                    return 1;
+                }))
+                .then(Commands.literal("rebake").executes(context -> {
+                    try {
+                        PbrBakeCoordinator.getInstance().clearCache();
+                    } catch (IOException exception) {
+                        context.getSource().sendFailure(Component.literal(
+                                "Failed to clear Kasuga PBR cache: " + exception.getMessage()
+                        ));
+                        return 0;
+                    }
+                    context.getSource().sendSuccess(() -> Component.literal(
+                            "Kasuga PBR cache cleared; reloading resources"
+                    ), false);
+                    Minecraft.getInstance().execute(() -> Minecraft.getInstance().reloadResourcePacks());
+                    return 1;
+                }))
+                .then(Commands.literal("reload_config").executes(context -> {
+                    context.getSource().sendSuccess(() -> Component.literal(
+                            "Reloading Kasuga PBR conversion config and resources"
+                    ), false);
+                    Minecraft.getInstance().execute(() -> Minecraft.getInstance().reloadResourcePacks());
+                    return 1;
+                })));
+    }
+
+    private static String formatPbrMillis(long nanos) {
+        return String.format(Locale.ROOT, "%.1fms", nanos / 1_000_000.0);
+    }
+
+    @SubscribeEvent
     public static void onRenderTypeRegister(RegisterNamedRenderTypesEvent event) {
         AccessorOnRegisterRenderTypesEvent accessor = (AccessorOnRegisterRenderTypesEvent) event;
         accessor.getRenderTypes().put(
@@ -275,35 +399,39 @@ public class Constants {
 
     @SubscribeEvent
     public static void renderLevel(RenderLevelStageEvent event) {
-        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_ENTITIES) return;
-        Camera camera = event.getCamera();
-        Frustum frustum = event.getFrustum();
-        Matrix4f modelViewMatrix = event.getModelViewMatrix();
-        Matrix4f projectionMatrix = event.getProjectionMatrix();
-        PoseStack poseStack = event.getPoseStack();
-        int renderTick = event.getRenderTick();
-        DeltaTracker partial = event.getPartialTick();
-        RenderBuffers renderBuffers = Minecraft.getInstance().renderBuffers();
-        MultiBufferSource.BufferSource source = renderBuffers.bufferSource();
-        VertexConsumer consumer = source.getBuffer(RenderState.getRenderType());
+        WorldRenderPipelineDispatcher.dispatch(event);
+    }
+
+    private static void renderModels(WorldRenderPipelineContext pipelineContext) {
+        // Resource reload builds models before their new atlas sprites exist.
+        // Keep the currently published generation untouched and skip custom
+        // rendering until textures and models are atomically swapped.
+        if (LoadingIndicator.snapshot().active()) return;
+        if (MC_BACKEND == null) return;
+
+        PoseStack poseStack = pipelineContext.poseStack();
+        RenderBuffers renderBuffers = pipelineContext.renderBuffers();
+        MultiBufferSource.BufferSource source = pipelineContext.bufferSource();
+        RenderType renderType = RenderState.getRenderType();
+        VertexConsumer consumer = source.getBuffer(renderType);
         MCBackendContext context = new MCBackendContext(
                 consumer, poseStack, renderBuffers,
-                source, camera, frustum, modelViewMatrix,
-                projectionMatrix, renderTick, partial, Minecraft.getInstance().level
+                source, pipelineContext.camera(), pipelineContext.frustum(), pipelineContext.modelViewMatrix(),
+                pipelineContext.projectionMatrix(), pipelineContext.renderTick(), pipelineContext.partialTick(),
+                pipelineContext.level()
         );
-        testModel();
-        poseStack.pushPose();
-        Vec3 pos = camera.getPosition();
+        Vec3 pos = pipelineContext.camera().getPosition();
         poseStack.translate(- pos.x(), - pos.y(), - pos.z());
-        // TODO: 这里放置各Backend
-        MC_BACKEND.renderAllObjects(context);
-        // TODO: 最后结束该批次
-        poseStack.popPose();
-        source.endBatch(RenderState.RENDER_TYPE);
+        try {
+            testModel();
+            MC_BACKEND.renderAllObjects(context);
+        } finally {
+            source.endBatch(renderType);
+        }
     }
 
     private static void testModel() {
-//        testMMD();
+        testMMD();
 //        testUI();
 //        testObj();
 //        testBe();
@@ -318,8 +446,8 @@ public class Constants {
         String name2 = "OL制服弱音盘发.pmx";
         String name3 = "OL制服弱音散发.pmx";
         String name4 = "tda bunny miku 2.0.pmx";
-        testMMD(fileName1, name, "test_mmd");
-//        testMMD(fileName3, name4, "test_mmd_4");
+        String name5 = "unfading_flowers_miku_black.pmx";
+        testMMD(fileName2, name5, "test_mmd");
     }
 
     public static void testUI() {

@@ -44,7 +44,7 @@ public class ZipHelper implements AutoCloseable {
                     buffer.put(entryData);
                     buffer.flip();
                     entries.put(entry, buffer);
-                    entryNameMap.put(entry.getName().toLowerCase(Locale.ROOT), entry);
+                    entryNameMap.put(normalizeEntryName(entry.getName()), entry);
                 }
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -68,7 +68,7 @@ public class ZipHelper implements AutoCloseable {
                     buffer.put(entryData);
                     buffer.flip();
                     entries.put(entry, buffer);
-                    entryNameMap.put(entry.getName().toLowerCase(Locale.ROOT), entry);
+                    entryNameMap.put(normalizeEntryName(entry.getName()), entry);
                 }
                 stream.closeEntry();
             }
@@ -78,7 +78,7 @@ public class ZipHelper implements AutoCloseable {
     }
 
     public boolean hasEntry(String entryName) {
-        return entryNameMap.containsKey(entryName);
+        return entryNameMap.containsKey(normalizeEntryName(entryName));
     }
 
     public boolean hasEntry(ZipEntry entry) {
@@ -90,7 +90,7 @@ public class ZipHelper implements AutoCloseable {
     }
 
     public @Nullable ByteBuffer getBuffer(String entryName) {
-        ZipEntry entry = entryNameMap.get(entryName);
+        ZipEntry entry = entryNameMap.get(normalizeEntryName(entryName));
         if (entry == null) return null;
         return entries.get(entry);
     }
@@ -100,7 +100,7 @@ public class ZipHelper implements AutoCloseable {
     }
 
     public ByteBuffer getBufferOrDefault(String entryName, @Nullable ByteBuffer defaultValue) {
-        ZipEntry entry = entryNameMap.get(entryName);
+        ZipEntry entry = entryNameMap.get(normalizeEntryName(entryName));
         if (entry == null) return defaultValue;
         return entries.getOrDefault(entry, defaultValue);
     }
@@ -118,11 +118,12 @@ public class ZipHelper implements AutoCloseable {
     }
 
     public @Nullable ZipResource getResource(String entryName) {
-        ZipEntry entry = entryNameMap.get(entryName);
+        String normalized = normalizeEntryName(entryName);
+        ZipEntry entry = entryNameMap.get(normalized);
         if (entry == null) return null;
         ByteBuffer buffer = entries.get(entry);
         if (buffer == null) return null;
-        return new ZipResource(this, entryName, entry, buffer);
+        return new ZipResource(this, normalized, entry, buffer);
     }
 
     public @Nullable ZipResource getResource(ZipEntry entry) {
@@ -132,11 +133,26 @@ public class ZipHelper implements AutoCloseable {
     }
 
     public ZipResource getResourceOrDefault(String entryName, @Nullable ZipResource defaultValue) {
-        ZipEntry entry = entryNameMap.get(entryName);
+        String normalized = normalizeEntryName(entryName);
+        ZipEntry entry = entryNameMap.get(normalized);
         if (entry == null) return defaultValue;
         ByteBuffer buffer = entries.get(entry);
         if (buffer == null) return defaultValue;
-        return new ZipResource(this, entryName, entry, buffer);
+        return new ZipResource(this, normalized, entry, buffer);
+    }
+
+    public static String normalizeEntryName(String entryName) {
+        if (entryName == null || entryName.isBlank()) return "";
+        Deque<String> parts = new ArrayDeque<>();
+        for (String part : entryName.replace('\\', '/').split("/+")) {
+            if (part.isEmpty() || part.equals(".")) continue;
+            if (part.equals("..")) {
+                if (!parts.isEmpty()) parts.removeLast();
+            } else {
+                parts.addLast(part);
+            }
+        }
+        return String.join("/", parts).toLowerCase(Locale.ROOT);
     }
 
     public List<ZipResource> searchNameForResource(Predicate<String> namePredicate) {

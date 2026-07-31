@@ -50,7 +50,7 @@ public class BoneBindingChunk extends Chunk {
                 }
                 yield new PmxBoneBinding(PmxBoneBinding.BindingType.BDEF, boneWeights);
             }
-            case 2, 4 -> loadBDEF4_OR_QDEF(buffer, context);
+            case 2, 4 -> loadBDEF4_OR_QDEF(buffer, context, type == 2);
             case 3 -> {
                 Number bone1 = (Number) boneIndexLoader.load(buffer, context);
                 Number bone2 = (Number) boneIndexLoader.load(buffer, context);
@@ -62,7 +62,9 @@ public class BoneBindingChunk extends Chunk {
                 if (Objects.equals(bone1, bone2)) {
                     boneWeights = Map.of(bone1, 1.0f);
                 } else {
-                    boneWeights = Map.of(bone1, weight, bone2, 1.0f - weight);
+                    boneWeights = new LinkedHashMap<>();
+                    boneWeights.put(bone1, weight);
+                    boneWeights.put(bone2, 1.0f - weight);
                 }
                 yield new PmxBoneBinding(
                         Objects.equals(bone1, bone2) ?
@@ -74,7 +76,7 @@ public class BoneBindingChunk extends Chunk {
         };
     }
 
-    public PmxBoneBinding loadBDEF4_OR_QDEF(ByteBuffer buffer, SerialContext context) {
+    public PmxBoneBinding loadBDEF4_OR_QDEF(ByteBuffer buffer, SerialContext context, boolean isBDEF) {
         Number bone1 = (Number) loader.boneIndexLoader().load(buffer, context);
         Number bone2 = (Number) loader.boneIndexLoader().load(buffer, context);
         Number bone3 = (Number) loader.boneIndexLoader().load(buffer, context);
@@ -107,7 +109,9 @@ public class BoneBindingChunk extends Chunk {
         } else {
             boneWeights.put(bone4, weight4);
         }
-        return new PmxBoneBinding(PmxBoneBinding.BindingType.BDEF, boneWeights);
+        return new PmxBoneBinding(isBDEF ?
+                PmxBoneBinding.BindingType.BDEF : PmxBoneBinding.BindingType.QDEF,
+                boneWeights);
     }
 
     private void BDEF1() {

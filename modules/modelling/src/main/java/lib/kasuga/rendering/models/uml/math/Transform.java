@@ -4,6 +4,7 @@ import org.joml.*;
 
 import java.lang.Math;
 import java.util.Objects;
+import java.util.Vector;
 
 public class Transform {
 
@@ -23,6 +24,10 @@ public class Transform {
 
     public Vector3f apply(Vector3f vector) {
         return transform.transformPosition(vector);
+    }
+
+    public Vector3f applyDirection(Vector3f vector) {
+        return transform.transformDirection(vector);
     }
 
     public Vector3f applyInvert(Vector3f vector) {

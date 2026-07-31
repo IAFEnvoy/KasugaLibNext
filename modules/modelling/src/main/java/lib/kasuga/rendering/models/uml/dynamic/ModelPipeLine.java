@@ -56,6 +56,13 @@ public class ModelPipeLine<SourceOutputType, BackendInputType, StorageIdentifier
     }
 
     public Map<StorageIdentifierType, Model> loadModel(Object source, @Nullable String sourceLoaderName) {
+        Map<StorageIdentifierType, Model> loaded = prepareModel(source, sourceLoaderName);
+        publishModels(loaded);
+        return loaded;
+    }
+
+    /** Loads and builds models without making them visible to render callers. */
+    public Map<StorageIdentifierType, Model> prepareModel(Object source, @Nullable String sourceLoaderName) {
         Source<?, SourceOutputType> manager = null;
         if (sourceLoaderName != null) {
             manager = sourceManager.getSource(sourceLoaderName);
@@ -82,8 +89,26 @@ public class ModelPipeLine<SourceOutputType, BackendInputType, StorageIdentifier
         loader.setSourceManager(this.sourceManager);
         Map<StorageIdentifierType, Model> map =
                 loader.load((StorageIdentifierType) source, sourceOutput.get());
-        models.putAll(map);
         return map;
+    }
+
+    /**
+     * Publishes a prepared model set and removes instances backed by replaced
+     * models. Call this on the game thread after dependent textures are ready.
+     */
+    public void publishModels(Map<StorageIdentifierType, Model> prepared) {
+        for (Map.Entry<StorageIdentifierType, Model> entry : prepared.entrySet()) {
+            Model previous = models.put(entry.getKey(), entry.getValue());
+            if (previous == null || previous == entry.getValue()) continue;
+            HashMap<InstanceIdentifierType, ModelInstance> staleInstances = modelInstances.remove(previous);
+            if (staleInstances == null) continue;
+            for (ModelInstance instance : staleInstances.values()) {
+                for (Backend<Bridge, BackendInputType, ?, ?> backend : backends.values()) {
+                    backend.remove(instance);
+                }
+            }
+            staleInstances.clear();
+        }
     }
 
     @Nullable

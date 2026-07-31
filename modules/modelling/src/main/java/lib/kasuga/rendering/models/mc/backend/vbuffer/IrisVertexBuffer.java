@@ -213,7 +213,6 @@ public class IrisVertexBuffer implements IVertexBuffer {
                 color = Integer.reverseBytes(color);
             }
             color = (color & 0xFF00FF00) | ((color & 0x00FF0000) >> 16) | ((color & 0x000000FF) << 16);
-
             bufOffset = vOffset + modelData.getPosOffset();
             x = src.getFloat(bufOffset);
             y = src.getFloat(bufOffset + 4);

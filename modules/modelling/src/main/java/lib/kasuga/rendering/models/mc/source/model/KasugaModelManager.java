@@ -1,5 +1,7 @@
 package lib.kasuga.rendering.models.mc.source.model;
 
+import lib.kasuga.rendering.models.mc.api.pbr.PbrUserConfig;
+import lib.kasuga.client.loading.LoadingIndicator;
 import com.google.gson.JsonObject;
 import lib.kasuga.rendering.models.mc.source.texture.KasugaTextureManager;
 import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
@@ -7,6 +9,7 @@ import lib.kasuga.rendering.models.uml.loaders.sources.SourceManager;
 import lib.kasuga.rendering.models.uml.loaders.sources.SourceType;
 import lombok.NonNull;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.client.Minecraft;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.util.profiling.ProfilerFiller;
@@ -66,19 +69,31 @@ public class KasugaModelManager implements PreparableReloadListener, AutoCloseab
                                           @NonNull ProfilerFiller reloadProfiler,
                                           @NonNull Executor backgroundExecutor,
                                           @NonNull Executor gameExecutor) {
+        Map<ModelPipeLine, Map<Object, lib.kasuga.rendering.models.uml.structure.Model>> preparedModels =
+                new IdentityHashMap<>();
         CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+            LoadingIndicator.begin("Scanning model resources", 1);
+            PbrUserConfig.reload(Minecraft.getInstance().gameDirectory.toPath().resolve("config"));
 
             modelScanner.setConfig(ModelProxyConfigLoader.loadConfig(resourceManager));
             List<ResourceLocation> scanned = modelScanner.scan(resourceManager);
 
             Map<ModelPipeLine, List<ResourceLocation>> routed = pipeLineRouter.route(scanned);
+            int modelCount = routed.values().stream().mapToInt(List::size).sum();
+            int totalSteps = modelCount + 2;
+            int completed = 1;
 
             for(Map.Entry<ModelPipeLine, List<ResourceLocation>> entry : routed.entrySet()) {
                 for(ResourceLocation location : entry.getValue()) {
-                    entry.getKey().loadModel(location, null);
+                    LoadingIndicator.update("Loading model " + location, completed, totalSteps);
+                    Map<Object, lib.kasuga.rendering.models.uml.structure.Model> loaded =
+                            entry.getKey().prepareModel(location, null);
+                    preparedModels.computeIfAbsent(entry.getKey(), ignored -> new HashMap<>()).putAll(loaded);
+                    completed++;
+                    LoadingIndicator.update("Loaded model " + location, completed, totalSteps);
                 }
             }
-
+            LoadingIndicator.update("Preparing PBR textures and atlases", totalSteps - 1, totalSteps);
         }, backgroundExecutor);
         CompletableFuture<Void> allTexturesFuture = future.thenCompose(ignored -> {
             List<CompletableFuture<Void>> textureFutures = textureManagers.stream()
@@ -86,7 +101,10 @@ public class KasugaModelManager implements PreparableReloadListener, AutoCloseab
                     .toList();
             return CompletableFuture.allOf(textureFutures.toArray(new CompletableFuture[0]));
         });
-        return allTexturesFuture;
+        return allTexturesFuture.thenRunAsync(() -> {
+            LoadingIndicator.label("Publishing models");
+            preparedModels.forEach(ModelPipeLine::publishModels);
+        }, gameExecutor).whenComplete((ignored, throwable) -> LoadingIndicator.complete());
     }
 
     private void loadAllModels(ModelPipeLine pipe) {

@@ -67,8 +67,19 @@ public class SkeletonInstance {
         Set<Bone> updatedBones = collectUpdatedBones();
         updateQueue.clear();
         Bone rootBone = skeleton.getRoot();
-        Transform transform1 = transforms.getOrDefault(rootBone, new Transform());
+        // Fix (Bug #2): 根骨骼的绝对变换应包含骨架实例变换和根骨骼自身的绑定变换。
+        // 原代码: Transform transform1 = transforms.getOrDefault(rootBone, new Transform());
+        // 问题: 仅从动画数据获取根骨骼变换（默认 identity），忽略了:
+        //       1. this.transform（骨架实例级别变换，即 transformRoot() 设置的值）
+        //       2. rootBone.getTransform()（根骨骼在PMX中定义的绑定姿态变换）
+        //       这两个变换的缺失导致所有骨骼的绝对变换计算错误，蒙皮后顶点位置偏移。
+        // 修复: absTransform = this.transform * rootBone.bindTransform * morph * animation。
+        //       这样在绑定姿态下 abs * inv = identity（因为两边都包含 rootBindTransform 而抵消），
+        //       transformRoot() API 也能正确生效。
+        Transform transform1 = this.transform.copy().mul(rootBone.getTransform());
         getMorphTransform(rootBone, transform1);
+        Transform anim = transforms.get(rootBone);
+        if (anim != null) { transform1.mul(anim); }
         absoluteTransforms.put(rootBone, transform1);
         updateQueue.add(Pair.of(rootBone, transform1));
         recursiveUpdate();

@@ -107,8 +107,8 @@ public class BoneTransformCpuProcessor {
             basePositions[componentOffset + 2] = position.z;
 
             baseNormals[componentOffset] = normal.x;
-            baseNormals[componentOffset + 3] = normal.y;
-            baseNormals[componentOffset + 4] = normal.z;
+            baseNormals[componentOffset + 1] = normal.y;
+            baseNormals[componentOffset + 2] = normal.z;
 
             bindingFuncs[i] = vertex.getBinding().getFunc();
             boneWeightOffsets[i] = bones.size();
@@ -262,7 +262,7 @@ public class BoneTransformCpuProcessor {
 
             for (int i = 0; i < taskCount; i++) {
                 int taskStart = startInclusive + i * multiThreadedThreshold;
-                int taskEnd = Math.min(taskStart + multiThreadedThreshold, len);
+                int taskEnd = Math.min(taskStart + multiThreadedThreshold, endExclusive);
                 futures[i] = (CompletableFuture.runAsync(() -> {
                     this.updateSkinningRange(taskStart, taskEnd, multiThreadedThreshold, updateTangent, true);
                 }, executor));

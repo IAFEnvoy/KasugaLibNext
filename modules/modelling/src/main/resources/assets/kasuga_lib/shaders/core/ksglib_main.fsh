@@ -27,6 +27,8 @@ in vec4 vertexColor;
 in vec4 lightMapColor;
 in vec4 overlayColor;
 in vec2 texCoord0;
+in vec2 textureUV;
+flat in vec4 textureBounds;
 in vec3 viewPos;
 in vec3 viewNormal;
 in mat3 TBN;
@@ -141,7 +143,14 @@ vec2 steepParallaxMapping(float depth, vec2 texCoords, vec3 viewDir) {
 
 
 void main() {
+    vec2 boundsSize = textureBounds.zw - textureBounds.xy;
     vec2 originalTexCoord = texCoord0;
+    if (abs(boundsSize.x) > 0.000001 && abs(boundsSize.y) > 0.000001) {
+        // PMX uses repeating texture coordinates. Repeat in local texture space
+        // before mapping into the shared atlas, otherwise out-of-range UVs sample
+        // adjacent sprites in the atlas.
+        originalTexCoord = textureBounds.xy + fract(textureUV) * boundsSize;
+    }
     float depth = texture(ksg_NormalMap, originalTexCoord).a;
     vec3 V = normalize(-viewPos);
     vec3 viewDir = normalize(transpose(TBN) * V);

@@ -621,6 +621,10 @@ public class KsgVertexBuffer implements AutoCloseable, VersionedBackendRenderabl
         int srcPositionOffset = bufOffsets.get(VertexFormatElement.POSITION);
         int srcColorOffset = bufOffsets.get(VertexFormatElement.COLOR);
         int srcUv0Offset = bufOffsets.get(VertexFormatElement.UV0);
+        int srcTextureUvOffset = bufOffsets.get(RenderState.TEXTURE_UV);
+        int srcTextureBoundsOffset = bufOffsets.get(RenderState.TEXTURE_BOUNDS);
+        int dstTextureUvOffset = offsets.get(RenderState.TEXTURE_UV);
+        int dstTextureBoundsOffset = offsets.get(RenderState.TEXTURE_BOUNDS);
         int srcTangentOffset = bufOffsets.get(RenderState.TANGENT);
         int srcNormalOffset = bufOffsets.get(VertexFormatElement.NORMAL);
 
@@ -669,6 +673,8 @@ public class KsgVertexBuffer implements AutoCloseable, VersionedBackendRenderabl
             );
 
             MemoryUtil.memCopy(sourcePointer + srcUv0Offset, vertexPointer + dstUv0Offset, 8L);
+            MemoryUtil.memCopy(sourcePointer + srcTextureUvOffset, vertexPointer + dstTextureUvOffset, 8L);
+            MemoryUtil.memCopy(sourcePointer + srcTextureBoundsOffset, vertexPointer + dstTextureBoundsOffset, 16L);
             MemoryUtil.memCopy(sourcePointer + srcTangentOffset, vertexPointer + dstTangentOffset, 16L);
             MemoryUtil.memCopy(sourcePointer + srcNormalOffset, vertexPointer + dstNormalOffset, 3L);
 

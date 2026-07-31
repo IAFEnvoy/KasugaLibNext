@@ -54,7 +54,8 @@ public class FlatModelData implements AutoCloseable {
             tangOffset, uv0Offset, uv1Offset, uv2Offset,
             overlayOffset, lightmapOffset,
             bindingTypeOffset, bindingBoneOffset, bindingWeightOffset,
-            sdefR0Offset, sdefR1Offset, sdefCOffset;
+            sdefR0Offset, sdefR1Offset, sdefCOffset,
+            textureUvOffset, textureBoundsOffset;
 
     @Getter
     protected final ByteBuffer buffer;
@@ -167,6 +168,8 @@ public class FlatModelData implements AutoCloseable {
         this.sdefR0Offset = bufOffsets.getOrDefault(RenderState.SDEF_R0, -1);
         this.sdefR1Offset = bufOffsets.getOrDefault(RenderState.SDEF_R1, -1);
         this.sdefCOffset = bufOffsets.getOrDefault(RenderState.SDEF_C, -1);
+        this.textureUvOffset = bufOffsets.getOrDefault(RenderState.TEXTURE_UV, -1);
+        this.textureBoundsOffset = bufOffsets.getOrDefault(RenderState.TEXTURE_BOUNDS, -1);
 
         this.materials = model.getModel().getMaterialSet().getMaterials();
         this.materialUvBounds = new float[materials.length * 8];
@@ -672,6 +675,14 @@ public class FlatModelData implements AutoCloseable {
         float x = uv0s[vertexIndex * 2];
         float y = uv0s[vertexIndex * 2 + 1];
 
+        // PMX textures use repeat addressing and frequently contain UVs well
+        // outside [0, 1]. The custom Kasuga shader can repeat in local texture
+        // space using its extra attributes, but Iris' NEW_ENTITY format only
+        // receives this final atlas coordinate. Repeat before atlas mapping so
+        // Iris cannot sample neighbouring sprites in the combined atlas.
+        x = x - (float) Math.floor(x);
+        y = y - (float) Math.floor(y);
+
         int matIndex = vertexMaterials[vertexIndex] * 8;
         float u0 = materialUvBounds[matIndex];
         float v0 = materialUvBounds[matIndex + 1];
@@ -776,11 +787,13 @@ public class FlatModelData implements AutoCloseable {
             position.add(scratchPosition.mul(weight));
 
             scratchNormal.set(normalX, normalY, normalZ);
+            bindInverse.normal().transform(scratchNormal);
             absTransform.normal().transform(scratchNormal);
             normal.add(scratchNormal.mul(weight));
 
             if (tangent != null) {
                 scratchTangent.set(tangentX, tangentY, tangentZ);
+                bindInverse.normal().transform(scratchTangent);
                 absTransform.normal().transform(scratchTangent);
                 tangent.x += scratchTangent.x() * weight;
                 tangent.y += scratchTangent.y() * weight;
@@ -881,10 +894,25 @@ public class FlatModelData implements AutoCloseable {
     }
 
     protected void fillUvToBuffer(int index, int bufPos, Vector2f cache) {
-        bufPos += uv0Offset;
+        int vertexStart = bufPos;
+        bufPos = vertexStart + uv0Offset;
         getFinalUv(index, cache);
         buffer.putFloat(bufPos, cache.x());
         buffer.putFloat(bufPos + 4, cache.y());
+
+        if (textureUvOffset >= 0) {
+            int localUvPos = vertexStart + textureUvOffset;
+            buffer.putFloat(localUvPos, uv0s[index * 2]);
+            buffer.putFloat(localUvPos + 4, uv0s[index * 2 + 1]);
+        }
+        if (textureBoundsOffset >= 0) {
+            int boundsPos = vertexStart + textureBoundsOffset;
+            int materialPos = vertexMaterials[index] * 8;
+            buffer.putFloat(boundsPos, materialUvBounds[materialPos]);
+            buffer.putFloat(boundsPos + 4, materialUvBounds[materialPos + 1]);
+            buffer.putFloat(boundsPos + 8, materialUvBounds[materialPos + 4]);
+            buffer.putFloat(boundsPos + 12, materialUvBounds[materialPos + 5]);
+        }
     }
 
     protected void fillLightAndOverlayToBuffer(int bufPos) {
@@ -999,20 +1027,22 @@ public class FlatModelData implements AutoCloseable {
             u0 = 0f; v0 = 0f;
             u1 = 1f; v1 = 1f;
         }
-        float rectU = u1 - u0;
-        float rectV = v1 - v0;
+        float atlasU0 = u0;
+        float atlasV0 = v0;
+        float rectU = u1 - atlasU0;
+        float rectV = v1 - atlasV0;
         float maxV = Math.max(v0, v1);
         float maxU = Math.max(u0, u1);
         float minV = Math.min(v0, v1);
         float minU = Math.min(u0, u1);
-        u0 = Math.clamp(u0 + rectU * umlSprite.getUv0().x(), minU, maxU);
-        v0 = Math.clamp(v0 + rectV * umlSprite.getUv0().y(), minV, maxV);
-        u1 = Math.clamp(u0 + rectU * umlSprite.getUv1().x(), minU, maxU);
-        v1 = Math.clamp(v0 + rectV * umlSprite.getUv1().y(), minV, maxV);
-        u2 = Math.clamp(u0 + rectU * umlSprite.getUv2().x(), minU, maxU);
-        v2 = Math.clamp(v0 + rectV * umlSprite.getUv2().y(), minV, maxV);
-        u3 = Math.clamp(u0 + rectU * umlSprite.getUv3().x(), minU, maxU);
-        v3 = Math.clamp(v0 + rectV * umlSprite.getUv3().y(), minV, maxV);
+        u0 = Math.clamp(atlasU0 + rectU * umlSprite.getUv0().x(), minU, maxU);
+        v0 = Math.clamp(atlasV0 + rectV * umlSprite.getUv0().y(), minV, maxV);
+        u1 = Math.clamp(atlasU0 + rectU * umlSprite.getUv1().x(), minU, maxU);
+        v1 = Math.clamp(atlasV0 + rectV * umlSprite.getUv1().y(), minV, maxV);
+        u2 = Math.clamp(atlasU0 + rectU * umlSprite.getUv2().x(), minU, maxU);
+        v2 = Math.clamp(atlasV0 + rectV * umlSprite.getUv2().y(), minV, maxV);
+        u3 = Math.clamp(atlasU0 + rectU * umlSprite.getUv3().x(), minU, maxU);
+        v3 = Math.clamp(atlasV0 + rectV * umlSprite.getUv3().y(), minV, maxV);
 
         int i = index * 8;
         materialUvBounds[i] = u0;

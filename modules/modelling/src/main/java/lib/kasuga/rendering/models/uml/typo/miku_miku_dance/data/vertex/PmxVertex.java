@@ -1,6 +1,8 @@
 package lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.vertex;
 
 import lib.kasuga.rendering.models.uml.math.binding.BoneBindingFunc;
+import lib.kasuga.rendering.models.uml.math.binding.SDEFData;
+import lib.kasuga.rendering.models.uml.structure.basic.data.vertex.SDEFBoneBindingData;
 import lib.kasuga.rendering.models.uml.structure.basic.data.vertex.VertexData;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.PmxBoneBinding;
 import org.joml.Vector2f;
@@ -9,7 +11,7 @@ import org.joml.Vector4f;
 
 import java.util.Objects;
 
-public class PmxVertex implements VertexData {
+public class PmxVertex implements VertexData, SDEFBoneBindingData {
 
     public final Vector3f position;
     public final Vector3f normal;
@@ -41,5 +43,10 @@ public class PmxVertex implements VertexData {
         return Objects.equals(position, v.position) &&
                 bindingType == v.bindingType &&
                 Objects.equals(binding, v.binding);
+    }
+
+    @Override
+    public SDEFData getSDEFData() {
+        return binding.getSDEFData();
     }
 }

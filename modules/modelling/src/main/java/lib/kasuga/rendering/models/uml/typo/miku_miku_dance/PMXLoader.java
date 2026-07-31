@@ -146,20 +146,24 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
         }
 
         Map<PmxVertex, List<PmxVertex>> vertexMapping = new HashMap<>();
+        Map<PmxVertex, Integer> vertexIndices = new HashMap<>();
         List<PmxVertex> sortedVertices = new ArrayList<>();
         int[] mappings = new int[vertices.size()];
         int i = 0;
         for (PmxVertex v : vertices) {
-            if (vertexMapping.containsKey(v)) {
+            Integer existingIndex = vertexIndices.get(v);
+            if (existingIndex != null) {
                 List<PmxVertex> duplicates = vertexMapping.get(v);
                 duplicates.add(v);
-                mappings[i] = sortedVertices.indexOf(v);
+                mappings[i] = existingIndex;
             } else {
                 ArrayList<PmxVertex> duplicates = new ArrayList<>();
                 duplicates.add(v);
                 vertexMapping.put(v, duplicates);
                 sortedVertices.add(v);
-                mappings[i] = sortedVertices.size() - 1;
+                int newIndex = sortedVertices.size() - 1;
+                vertexIndices.put(v, newIndex);
+                mappings[i] = newIndex;
             }
             i++;
         }
@@ -211,10 +215,21 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
             offset += count;
         }
 
+        // PMX stores normals per source vertex, but equivalent vertices can be
+        // duplicated at UV/material seams. Reconcile compatible triangle
+        // corners before the backend flattens every face into its GPU buffer.
+        PmxNormalSmoother.smooth(meshesArray);
+
         Bone[] boneArray = new Bone[bones.size()];
         Bone rootBone = null;
         List<Bone> childOfRoot = new ArrayList<>();
         boolean hasMultiRootBone = false;
+
+        for (i = 0; i < bones.size(); i++) {
+            PmxBone bone = bones.get(i);
+            scaleBone(bone);
+        }
+
         for (i = 0; i < bones.size(); i++) {
             PmxBone b = bones.get(i);
             Bone bone = getBone(bones, b);
@@ -314,6 +329,7 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
         );
 
         vertexMapping.clear();
+        vertexIndices.clear();
         sortedVertices.clear();
         childOfRoot.clear();
         map.put(outputIdentifier, model);
@@ -383,6 +399,8 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
     public abstract Bone getBone(List<PmxBone> bones, PmxBone bone);
 
     public abstract @Nullable ModelData getModelData(PmxHeader header);
+
+    public void scaleBone(PmxBone bone) {}
 
     public TextLoader getTextLoader() {
         checkHeaderLoaded();

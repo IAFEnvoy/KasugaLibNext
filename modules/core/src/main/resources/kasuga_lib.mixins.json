@@ -28,6 +28,7 @@
     "client.AccessorVertexBuffer",
     "client.MixinBlockModelShaper",
     "client.MixinGlslPreprocessor",
+    "client.MixinLoadingOverlay",
     "client.MixinScreen"
   ]
 }

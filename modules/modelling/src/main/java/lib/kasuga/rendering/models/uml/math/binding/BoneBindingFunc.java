@@ -2,6 +2,8 @@ package lib.kasuga.rendering.models.uml.math.binding;
 
 import lib.kasuga.rendering.models.uml.math.BoneContext;
 import lib.kasuga.rendering.models.uml.math.DualQuaternion;
+import lib.kasuga.rendering.models.uml.math.Transform;
+import lib.kasuga.rendering.models.uml.math.binding.SDEFData;
 import lib.kasuga.rendering.models.uml.structure.basic.Mesh;
 import lib.kasuga.rendering.models.uml.structure.basic.Vertex;
 import lib.kasuga.rendering.models.uml.structure.basic.data.vertex.SDEFBoneBindingData;
@@ -34,7 +36,9 @@ public interface BoneBindingFunc {
             posTransformed.mul(boneContext.weight());
             posFinal.add(posTransformed);
             for (Map.Entry<Mesh, Vector3f> meshAndNormal : vertex.getNormals().entrySet()) {
-                Vector3f normalTransformed = boneContext.absTransform().normal().transform(new Vector3f(meshAndNormal.getValue()));
+                Vector3f normalTransformed = new Vector3f(meshAndNormal.getValue());
+                boneContext.invTransform().normal().transform(normalTransformed);
+                boneContext.absTransform().normal().transform(normalTransformed);
                 normalTransformed.mul(boneContext.weight());
                 if (normalFinals.containsKey(meshAndNormal.getKey())) {
                     normalFinals.get(meshAndNormal.getKey()).add(normalTransformed);
@@ -52,82 +56,50 @@ public interface BoneBindingFunc {
             return BDEF.apply(vertex, context);
         }
 
-        // 获取该顶点在绑定时，在世界空间中的位置
-        Vector3f posOrg = vertex.getPosition();
-
-        // 两个骨骼的数据
-        BoneContext boneContext0 = context.get(0);
-        BoneContext boneContext1 = context.get(1);
-
-        // 计算出该顶点在两个骨骼空间中的位置
-        Vector3f p0 = new Vector3f(vertex.getPosition());
-        Vector3f p1 = new Vector3f(vertex.getPosition());
-        p0 = boneContext0.invTransform().apply(p0);
-        p1 = boneContext1.invTransform().apply(p1);
-
-        // 获取该顶点所对应的两个辅助参数r0和r1在骨骼空间中的位置
-        Vector3f r0, r1;
-        if ((vertex.getData() instanceof SDEFBoneBindingData sdefData)) {
-            r0 = sdefData.getSDEFData().r0();
-            r1 = sdefData.getSDEFData().r1();
-        } else {
-            r0 = new Vector3f(p0);
-            r1 = new Vector3f(p1);
+        BoneContext<BoneData> boneCtx0 = context.get(0);
+        BoneContext<BoneData> boneCtx1 = context.get(1);
+        Object bd = vertex.getBinding().getData();
+        if (!(bd instanceof SDEFBoneBindingData sdefData) || sdefData.getSDEFData() == null) {
+            return BDEF.apply(vertex, context);
         }
+        SDEFData sdef = sdefData.getSDEFData();
+        float w0 = boneCtx0.weight(), w1 = boneCtx1.weight();
+        float s = w0 + w1;
+        if (!Float.isFinite(s) || Math.abs(s) < 1.0e-6f) {
+            return BDEF.apply(vertex, context);
+        }
+        w0 /= s;
+        w1 /= s;
 
-        // 获取该顶点所对应的两个骨骼的关节j0和j1在世界空间中的位置
-        Vector3f j0 = new Vector3f(p0).sub(r0);
-        Vector3f j1 = new Vector3f(p1).sub(r1);
+        // PMX stores C/R0/R1 in model space. Build the two skinning
+        // transforms (animated absolute * inverse bind) before applying the
+        // standard SDEF spherical interpolation formula.
+        Transform skin0 = boneCtx0.absTransform().copy().mul(boneCtx0.invTransform());
+        Transform skin1 = boneCtx1.absTransform().copy().mul(boneCtx1.invTransform());
+        Quaternionf rotation0 = skin0.getRotation().normalize();
+        Quaternionf rotation1 = skin1.getRotation().normalize();
+        if (rotation0.dot(rotation1) < 0.0f) {
+            rotation1.set(-rotation1.x, -rotation1.y, -rotation1.z, -rotation1.w);
+        }
+        Quaternionf rotation = new Quaternionf(rotation0).slerp(rotation1, w1).normalize();
 
-        Vector3f j0Bind = boneContext0.bindTransform().apply(j0);
-        Vector3f j1Bind = boneContext1.bindTransform().apply(j1);
-        Vector3f j0Current = boneContext0.absTransform().apply(j0);
-        Vector3f j1Current = boneContext1.absTransform().apply(j1);
+        Vector3f center = sdef.c();
+        Vector3f radiusBlend = new Vector3f(sdef.r0()).mul(w0)
+                .add(new Vector3f(sdef.r1()).mul(w1));
+        Vector3f posFinal = new Vector3f(vertex.getPosition())
+                .sub(center)
+                .sub(radiusBlend);
+        rotation.transform(posFinal);
+        posFinal.add(
+                skin0.apply(new Vector3f(center).add(sdef.r0())).mul(w0)
+                        .add(skin1.apply(new Vector3f(center).add(sdef.r1())).mul(w1))
+        );
 
-        // 将r0和r1从骨骼空间转换到世界空间
-        r0 = boneContext0.absTransform().apply(r0);
-        r1 = boneContext1.absTransform().apply(r1);
-
-        // 获取该顶点所对应的两个骨骼的旋转
-        Quaternionf q0 = boneContext0.absTransform().getRotation();
-        Quaternionf q1 = boneContext1.absTransform().getRotation();
-
-        // 绑定姿态下，世界坐标中的相对矢量
-        Vector3f a0 = new Vector3f(posOrg).sub(j0Bind);
-        Vector3f a1 = new Vector3f(posOrg).sub(j1Bind);
-
-        // 当前帧当中，受单根骨骼影响的顶点的相对位置
-        Vector3f v0 = new Vector3f(j0Current).add(q0.transform(a0));
-        Vector3f v1 = new Vector3f(j1Current).add(q1.transform(a1));
-
-        // 权重归一化
-        float w0 = boneContext0.weight();
-        float w1 = boneContext1.weight();
-        float sum = w0 + w1;
-        w0 /= sum;
-        w1 /= sum;
-
-        // 获取插值辅助点和关节中心
-        Vector3f r = new Vector3f(r0);
-        r = r.mul(w0).add(new Vector3f(r1).mul(w1));
-        Vector3f j = new Vector3f(j0Current);
-        j = j.mul(w0).add(new Vector3f(j1Current).mul(w1));
-
-        // 计算最终位置
-        Vector3f posFinal = new Vector3f(v0).mul(w0).add(new Vector3f(v1).mul(w1));
-        posFinal = posFinal.add(r).sub(j);
-
-        // 计算法线
         HashMap<Mesh, Vector3f> normalFinals = new HashMap<>();
-        for (Map.Entry<Mesh, Vector3f> meshAndNormal : vertex.getNormals().entrySet()) {
-            Vector3f normalOrg = meshAndNormal.getValue();
-            Vector3f n0 = boneContext0.absTransform().normal().transform(new Vector3f(normalOrg));
-            Vector3f n1 = boneContext1.absTransform().normal().transform(new Vector3f(normalOrg));
-            Vector3f normalFinal = new Vector3f(n0).mul(w0).add(new Vector3f(n1).mul(w1));
-            normalFinal.normalize();
-            normalFinals.put(meshAndNormal.getKey(), normalFinal);
+        for (var e : vertex.getNormals().entrySet()) {
+            Vector3f nf = rotation.transform(new Vector3f(e.getValue())).normalize();
+            normalFinals.put(e.getKey(), nf);
         }
-
         return new Vertex(vertex, posFinal, normalFinals);
     };
 
@@ -137,8 +109,10 @@ public interface BoneBindingFunc {
         }
         Vector3f posOrg = vertex.getPosition();
         List<Pair<DualQuaternion, Float>> dualQuaternions = new ArrayList<>();
+        Transform skinningMatrix = new Transform();
         for (BoneContext<BoneData> boneContext : context) {
-            DualQuaternion dq = boneContext.absTransform().toDualQuaternion();
+            skinningMatrix.set(boneContext.absTransform()).mul(boneContext.invTransform());
+            DualQuaternion dq = skinningMatrix.toDualQuaternion();
             dualQuaternions.add(Pair.of(dq, boneContext.weight()));
         }
         DualQuaternion result = DualQuaternion.blend(dualQuaternions);
