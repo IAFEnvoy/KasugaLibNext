@@ -5,7 +5,7 @@ import io.micronaut.context.annotation.Context;
 import jakarta.annotation.PostConstruct;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
-import lib.kasuga.rendering.models.mc.Constants;
+import lib.kasuga.rendering.models.mc.registry.PipelineRegistry;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
 import org.slf4j.Logger;
@@ -23,11 +23,11 @@ public class PipelineStatusLogger {
 
     private void onReloadListenerRegister(RegisterClientReloadListenersEvent event) {
         logger.info("=== Modelling Pipeline Status ===");
-        logPipeline("BE_PIPELINE", Constants.BE_PIPELINE);
-        logPipeline("JE_PIPELINE", Constants.JE_PIPELINE);
-        logPipeline("OBJ_PIPELINE", Constants.OBJ_PIPELINE);
-        logPipeline("MMD_PIPELINE", Constants.MMD_PIPELINE);
-        logBackend("MC_BACKEND", Constants.MC_BACKEND);
+        logPipeline("BE", PipelineRegistry.be());
+        logPipeline("JE", PipelineRegistry.je());
+        logPipeline("OBJ", PipelineRegistry.obj());
+        logPipeline("PMX", PipelineRegistry.pmx());
+        logBackend("MC_BACKEND", PipelineRegistry.backend());
         logger.info("================================");
     }
 
