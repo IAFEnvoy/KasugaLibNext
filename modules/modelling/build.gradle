@@ -61,6 +61,10 @@ sourceSets {
     }
 }
 
+tasks.named('processContentTestingResources', ProcessResources) {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
@@ -173,6 +177,9 @@ dependencies {
     annotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
 
     contentTestingAnnotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
+
+    additionalRuntimeClasspath 'org.jgrapht:jgrapht-core:1.5.2'
+    additionalRuntimeClasspath 'com.google.zxing:core:3.5.3'
 
     implementation("com.google.guava:guava:32.1.2-jre")
 
