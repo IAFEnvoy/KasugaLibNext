@@ -26,7 +26,7 @@ import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
 import net.minecraft.resources.ResourceLocation;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,13 +41,15 @@ public final class PipelineRegistry {
     private static final Map<String, ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?>> PIPELINES =
             new ConcurrentHashMap<>();
 
-    private static final Map<String, String> BUILTIN_ROUTES = new HashMap<>();
+    private static final Map<String, String> BUILTIN_ROUTES = new LinkedHashMap<>();
     static {
         BUILTIN_ROUTES.put(".geo.json", BE);
         BUILTIN_ROUTES.put(".obj", OBJ);
         BUILTIN_ROUTES.put(".mmd.zip", PMX);
         BUILTIN_ROUTES.put(".json", JE);
     }
+
+    private static KasugaPipeLineRouter router;
 
     private static MCBackend backend;
     private static KsgPmxLoader pmxLoader;
@@ -163,11 +165,20 @@ public final class PipelineRegistry {
     }
 
     public static void registerDefaultRoutes(KasugaPipeLineRouter router) {
+        PipelineRegistry.router = router;
         BUILTIN_ROUTES.forEach((extension, id) ->
                 router.registerByExtension(extension, () -> get(id)));
     }
 
     public static void registerRoute(KasugaPipeLineRouter router, String extension, String id) {
         router.registerByExtension(extension, () -> get(id));
+    }
+
+    @Nullable
+    public static ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> resolve(ResourceLocation modelKey) {
+        if (router == null) {
+            throw new IllegalStateException("KasugaPipeLineRouter is not initialized yet (registerDefaultRoutes)");
+        }
+        return router.resolve(modelKey);
     }
 }

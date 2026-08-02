@@ -15,5 +15,11 @@ public class ModellingTestCreativeTab {
                 builder -> builder.title(Component.translatable("itemGroup.kasuga_lib.modelling_test"))))
             .configure(CreativeTabRegModifiers.TabBuilder.of("icon",
                 builder -> builder.icon(() -> new ItemStack(Items.COMMAND_BLOCK))))
+            .displayItems((params, output) -> {
+                var block = ModellingContentTest.TEST_JE_FAN_BLOCK.getEntry();
+                if (block != null) {
+                    output.accept(block);
+                }
+            })
             .setParent(ModellingTestApplication.registry);
 }
