@@ -94,6 +94,11 @@ public final class State<Owner> {
 
     //endregion
 
+    /** Configured duration in ticks, or -1 if the state has no auto-complete duration. */
+    public int durationTicks() {
+        return durationTicks;
+    }
+
     boolean hasDuration() {
         return durationTicks >= 0;
     }

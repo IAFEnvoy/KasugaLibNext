@@ -1,5 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
 import net.minecraft.resources.ResourceLocation;
 
 import java.util.Map;
@@ -18,11 +19,21 @@ public final class MachineRegistry {
      */
     public static final MachineRegistry GLOBAL = new MachineRegistry();
 
+    private final Map<ResourceLocation, StateMachineDefinition> definitionsById = new ConcurrentHashMap<>();
     private final Map<ResourceLocation, StateMachine<?>> byId = new ConcurrentHashMap<>();
     private final Map<Long, StateMachine<?>> byHandle = new ConcurrentHashMap<>();
     private final AtomicLong nextHandle = new AtomicLong(1);
 
-    /** Register and obtain a scripting handle. */
+    /** Register a data-driven definition (JSON). */
+    public void registerDefinition(ResourceLocation id, StateMachineDefinition definition) {
+        definitionsById.put(id, definition);
+    }
+
+    public StateMachineDefinition getDefinition(ResourceLocation id) {
+        return definitionsById.get(id);
+    }
+
+    /** Register a runtime machine instance and obtain a scripting handle. */
     public long register(ResourceLocation id, StateMachine<?> machine) {
         byId.put(id, machine);
         long handle = nextHandle.getAndIncrement();
@@ -43,6 +54,7 @@ public final class MachineRegistry {
     }
 
     public void clear() {
+        definitionsById.clear();
         byId.clear();
         byHandle.clear();
     }

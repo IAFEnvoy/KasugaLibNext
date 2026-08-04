@@ -26,10 +26,11 @@ import java.util.function.Consumer;
  * <p>Layers run in parallel (orthogonality); each tick composes their poses (BASE/ADDITIVE/OVERRIDE)
  * into a {@link Blender} and flushes via the {@link PoseSink} (null on a logic-only server).
  */
-public final class StateMachine<Owner> {
+public final class StateMachine<Owner> implements StateReader {
 
     private final Owner owner;
     private final List<Layer<Owner>> layers = new ArrayList<>();
+    private final Map<String, Layer<Owner>> layersById = new HashMap<>();
     private PoseSink sink;
     private boolean clientSide;
     private int version;
@@ -70,17 +71,12 @@ public final class StateMachine<Owner> {
         return layer;
     }
 
-    /** Nullable layer lookup for best-effort callers (scripting / JSON); {@code null} if the id is unknown. */
+    /** Nullable layer lookup for best-effort callers (scripting / JSON); {@code null} if the id is unknown. O(1). */
     public @Nullable Layer<Owner> layerOrNull(String id) {
         if (id == null) {
             return null;
         }
-        for (Layer<Owner> layer : layers) {
-            if (layer.id().equals(id)) {
-                return layer;
-            }
-        }
-        return null;
+        return layersById.get(id);
     }
 
     public void setSink(PoseSink sink) {
@@ -176,6 +172,12 @@ public final class StateMachine<Owner> {
         return true;
     }
 
+    /** Non-consuming check: is the named layer currently locked? */
+    public boolean isLayerLocked(String id) {
+        Integer remaining = locks.get(id);
+        return remaining != null && remaining > 0;
+    }
+
     //endregion
 
     //region reconcile surface (reserved data for future client/server sync)
@@ -224,6 +226,59 @@ public final class StateMachine<Owner> {
 
     //endregion
 
+    //region StateReader — collaborative state read surface
+
+    @Override
+    public boolean has(StateQuery query) {
+        return read(query) != null;
+    }
+
+    @Override
+    public Object read(StateQuery query) {
+        if (query.isEmpty()) return null;
+        String source = query.source();
+        return switch (source) {
+            case "owner" -> owner;
+            case "machine" -> readMachine(query.segment(1));
+            case "layer" -> readLayer(query.segment(1), query.segment(2));
+            case "data" -> data().get(query.subPath(1));
+            case "signal" -> signal(query.subPath(1));
+            case "trigger" -> isTriggered(query.subPath(1));
+            default -> null;
+        };
+    }
+
+    private Object readMachine(String prop) {
+        if (prop == null) return null;
+        return switch (prop) {
+            case "tick", "tickCount" -> tickCount;
+            case "version" -> version;
+            case "client", "clientSide" -> isClientSide();
+            default -> null;
+        };
+    }
+
+    private Object readLayer(String layerId, String prop) {
+        if (layerId == null || prop == null) return null;
+        Layer<Owner> layer = layerOrNull(layerId);
+        if (layer == null) return null;
+        State<Owner> active = layer.active();
+        return switch (prop) {
+            case "id" -> layer.id();
+            case "state" -> active == null ? null : active.id();
+            case "mode" -> layer.mode();
+            case "weight" -> layer.weight();
+            case "locked" -> isLayerLocked(layer.id());
+            case "elapsed" -> layer.stateElapsedTicks();
+            case "duration" -> active == null ? -1 : active.durationTicks();
+            case "transition" -> active == null ? null : layer.activeTransition();
+            case "transitionElapsed" -> layer.transitionElapsed();
+            default -> null;
+        };
+    }
+
+    //endregion
+
     public static final class Builder<O> {
 
         private final StateMachine<O> machine;
@@ -237,6 +292,7 @@ public final class StateMachine<Owner> {
             config.accept(layer);
             layer.start();
             machine.layers.add(layer);
+            machine.layersById.put(layer.id(), layer);
             return this;
         }
 

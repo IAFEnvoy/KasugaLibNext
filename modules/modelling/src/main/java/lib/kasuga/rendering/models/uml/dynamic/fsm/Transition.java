@@ -72,6 +72,38 @@ public final class Transition<Owner> {
 
     //endregion
 
+    //region accessors
+
+    public String id() {
+        return id;
+    }
+
+    public Layer<Owner> layer() {
+        return layer;
+    }
+
+    public State<Owner> from() {
+        return from;
+    }
+
+    public State<Owner> to() {
+        return to;
+    }
+
+    public String triggerOn() {
+        return triggerOn;
+    }
+
+    public boolean isWhenComplete() {
+        return whenComplete;
+    }
+
+    public float crossFadeSeconds() {
+        return crossFadeSeconds;
+    }
+
+    //endregion
+
     boolean fires(StateContext<Owner> ctx, boolean sourceComplete) {
         if (whenComplete && !sourceComplete) {
             return false;

@@ -34,5 +34,8 @@ repo
 hs_err_pid*.log
 replay_pid*.log
 
+# logs
+logs
+
 .internal
 .docs

@@ -1,6 +1,7 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
 import lib.kasuga.rendering.models.uml.math.Transform;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -117,6 +118,21 @@ public final class Layer<Owner> {
 
     public State<Owner> active() {
         return active;
+    }
+
+    /** Ticks the active state has been running (0 immediately after entering). */
+    public int stateElapsedTicks() {
+        return stateElapsedTicks;
+    }
+
+    /** The currently firing transition, or null if none. */
+    public @Nullable Transition<Owner> activeTransition() {
+        return activeTransition;
+    }
+
+    /** Seconds elapsed in the current cross-fade (0 if no transition). */
+    public float transitionElapsed() {
+        return transitionElapsed;
     }
 
     /** External imperative switch within this layer. */
