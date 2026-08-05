@@ -2,6 +2,8 @@ package lib.kasuga.rendering.effect;
 
 import lib.kasuga.rendering.effect.pipeline.RenderPipelineDescriptor;
 import lib.kasuga.rendering.effect.pipeline.RenderPhase;
+import lib.kasuga.rendering.effect.particle.ParticleBatchRenderer;
+import lib.kasuga.rendering.effect.particle.ParticleRenderPipeline;
 import lib.kasuga.rendering.effect.post.PostProcessPass;
 import lib.kasuga.rendering.effect.post.graph.PostProcessGraph;
 import lib.kasuga.rendering.effect.post.graph.PostProcessGraphRegistration;
@@ -98,5 +100,18 @@ public interface RenderPipelineRegistrar {
             EffectRenderer<T> renderer
     ) {
         return effects(descriptor, DuplicatePolicy.FAIL, sortBackToFront, renderer);
+    }
+
+    ParticleRenderPipeline particles(
+            RenderPipelineDescriptor descriptor,
+            DuplicatePolicy duplicatePolicy,
+            ParticleBatchRenderer renderer
+    );
+
+    default ParticleRenderPipeline particles(
+            RenderPipelineDescriptor descriptor,
+            ParticleBatchRenderer renderer
+    ) {
+        return particles(descriptor, DuplicatePolicy.FAIL, renderer);
     }
 }

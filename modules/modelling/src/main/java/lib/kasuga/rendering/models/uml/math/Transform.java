@@ -66,6 +66,13 @@ public class Transform {
         return this;
     }
 
+    /** Replaces this transform and derives its inverse-transpose normal matrix in place. */
+    public Transform set(Matrix4f value) {
+        transform.set(Objects.requireNonNull(value, "value"));
+        normal.set(value).invert().transpose();
+        return this;
+    }
+
     public Transform translate(float x, float y, float z) {
         transform.translate(x, y, z);
         return this;
@@ -73,6 +80,28 @@ public class Transform {
 
     public Transform translate(Vector3f vec) {
         transform.translate(vec);
+        return this;
+    }
+
+    /**
+     * Moves this transform in world space without changing its rotation or scale.
+     *
+     * <p>This differs from {@link #translate(Vector3f)}, which composes a local-space
+     * translation and is therefore affected by the transform's current rotation and scale.</p>
+     */
+    public Transform translateWorld(Vector3f delta) {
+        Objects.requireNonNull(delta, "delta");
+        transform.setTranslation(
+                transform.m30() + delta.x,
+                transform.m31() + delta.y,
+                transform.m32() + delta.z
+        );
+        return this;
+    }
+
+    /** Replaces only the world-space translation component. */
+    public Transform setPosition(Vector3f position) {
+        transform.setTranslation(Objects.requireNonNull(position, "position"));
         return this;
     }
 
