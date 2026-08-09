@@ -1,6 +1,8 @@
 package lib.kasuga.rendering.effect;
 
 import lib.kasuga.rendering.effect.pipeline.RenderPipelineDescriptor;
+import lib.kasuga.rendering.effect.particle.ParticleBatchRenderer;
+import lib.kasuga.rendering.effect.particle.ParticleRenderPipeline;
 import lib.kasuga.rendering.effect.post.PostProcessPass;
 import lib.kasuga.rendering.effect.post.PostProcessPipelineRegistry;
 import lib.kasuga.rendering.effect.post.graph.PostProcessGraph;
@@ -103,6 +105,15 @@ public final class RenderPipelineScope implements RenderPipelineRegistrar, AutoC
         return own(EffectRenderPipeline.register(
                 owner, descriptor, duplicatePolicy, sortBackToFront, renderer
         ));
+    }
+
+    @Override
+    public ParticleRenderPipeline particles(
+            RenderPipelineDescriptor descriptor,
+            DuplicatePolicy duplicatePolicy,
+            ParticleBatchRenderer renderer
+    ) {
+        return own(ParticleRenderPipeline.register(owner, descriptor, duplicatePolicy, renderer));
     }
 
     public synchronized boolean isClosed() {

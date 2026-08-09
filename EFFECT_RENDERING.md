@@ -1,18 +1,34 @@
-# Kasuga 自定义渲染行为规范
+# Kasuga Custom Rendering Specification
 
-Kasuga 通过 `RenderPipelineRegistrar` 统一注册 shader、world pipeline、managed effect 和
-post-processing。
+`RenderPipelineRegistrar` is the common registrar for Kasuga rendering resources. The registrar registers shaders, world pipelines, managed effects, and post-processing resources.
 
-## 注册、所有权与生命周期
+> **Language note**
+>
+> This document uses the writing principles in ASD-STE100, Issue 9. API names and product terms keep their official spelling.
 
-- `RenderPipelineRegistrar` 是 shader、world pipeline、managed effect、post-process pass 和
-  post-process graph 的统一注册入口。
-- `RegisterRenderPipelinesEvent` 在客户端 mod bus 上触发一次。通过该事件取得的 registrar
-  随客户端存活。
-- 动态内容使用 `RenderPipelineScope`。它与事件 registrar 暴露相同的注册行为。
-- 每个 registrar 都绑定一个非空 owner。所有 registration 和诊断快照都保留该 owner。
+## Terms
 
-静态内容从客户端注册事件取得 registrar：
+| Term | Definition |
+| --- | --- |
+| Registrar | An object that registers rendering resources for one owner. |
+| Owner | A non-null resource ID that identifies the code or module that owns a registration. |
+| Registration | An object that identifies and controls one registered entry. |
+| Scope | A registrar for dynamic content. A scope closes the resources that the scope owns. |
+| Descriptor | An immutable value that defines the configuration of a resource. |
+| Handle | A stable object that supplies access to one exact shader registration. |
+| Managed target | A render target that a post-process graph creates and releases. |
+
+## Registration, Ownership, and Lifecycle
+
+- Use `RenderPipelineRegistrar` as the common registration point for shaders, world pipelines, managed effects, post-process passes, and post-process graphs.
+
+- `RegisterRenderPipelinesEvent` occurs one time on the client mod bus. A registrar from this event stays active for the lifetime of the client.
+
+- Use `RenderPipelineScope` for dynamic content. A scope supplies the same registration methods as an event registrar.
+
+- Each registrar has one non-null owner. Each registration and diagnostic snapshot keeps this owner.
+
+The client registration event supplies a registrar for static content:
 
 ```java
 @SubscribeEvent
@@ -24,7 +40,7 @@ public static void registerRendering(RegisterRenderPipelinesEvent event) {
 }
 ```
 
-动态模块持有一个 scope，并在卸载时关闭它：
+A dynamic module owns a scope. The module closes the scope during module unload:
 
 ```java
 try (RenderPipelineScope scope = RenderPipelineScope.create(
@@ -34,33 +50,39 @@ try (RenderPipelineScope scope = RenderPipelineScope.create(
 }
 ```
 
-- `RenderPipelineScope.child(owner)` 创建独立 owner 的子 scope；父 scope 关闭时也会关闭子
-  scope。
-- Scope 按注册的相反顺序关闭资源。关闭操作可重复调用；关闭后的 scope 不再接受新资源。
-- 所有 registration 都提供 `id()`、`owner()`、`isActive()` 和 `close()`。Registration 只代表
-  注册时产生的那一个条目，不按 ID 跟随后续替换项。
-- Shader registry 与 world-pipeline registry 分别约束 ID 唯一性。World callback、managed
-  effect、post-process pass 和 graph 都占用 world-pipeline ID。
-- `DuplicatePolicy.FAIL` 在 ID 已存在时直接拒绝注册，并报告当前 owner。
-- `DuplicatePolicy.REPLACE` 用新条目替换当前条目，使旧 registration 失效。随后关闭旧
-  registration 不会删除替换项。
+- `RenderPipelineScope.child(owner)` creates a child scope with an independent owner. When the parent scope closes, it also closes the child scope.
 
-## Pipeline 描述与执行
+- A scope closes resources in the reverse order of registration. You can close a scope more than one time. A closed scope does not accept new resources.
 
-- `RenderPipelineDescriptor` 是不可变值，由 ID、placement、priority 和 `RenderDrawState`
-  组成；缺少 placement 时构建失败。
-- Placement 可以是 Kasuga 语义 `RenderPhase`，也可以是原生 NeoForge
-  `RenderLevelStageEvent.Stage`。原生 placement 不产生语义 phase。
-- `RenderPhase.POST_PROCESS` 映射到原生 `AFTER_LEVEL`。在这个原生 stage 内，执行顺序固定为
-  `POST_PROCESS`、原生 `AFTER_LEVEL` placement、语义 `AFTER_LEVEL`。
-- 同一执行位置内，priority 数值较小的管线先运行；priority 相同时按 ID 字符串排序。
-- Registry 为每个原生 stage 缓存不可变执行快照。注册、替换或关闭会使相关快照失效。
-- World pipeline callback 在客户端 render thread 上运行。仅在客户端世界存在时调用。
-- 每次 callback 都获得独立 push 后的 pose stack；返回或抛出异常后都会 pop。
-- 单个 callback 抛出的运行时异常会被记录，不会阻止同一 stage 的后续管线执行。
-- Callback 自行开始的 buffer batch 必须在返回前结束。
+- Each registration supplies `id()`, `owner()`, `isActive()`, and `close()`. A registration refers only to the entry that registration created. The registration does not follow a replacement that has the same ID.
 
-一个 world pipeline 可以直接使用 descriptor 已编译的 `RenderType`：
+- The shader registry and the world-pipeline registry apply ID uniqueness separately. World callbacks, managed effects, post-process passes, and graphs use world-pipeline IDs.
+
+- `DuplicatePolicy.FAIL` rejects a registration if the ID is in use. The error identifies the current owner.
+
+- `DuplicatePolicy.REPLACE` replaces the current entry. The replacement deactivates the old registration. Closing the old registration does not close the replacement.
+
+## Pipeline Description and Execution
+
+- `RenderPipelineDescriptor` is an immutable value. It contains an ID, a placement, a priority, and a `RenderDrawState`. The build fails if the placement is missing.
+
+- A placement can be a Kasuga semantic `RenderPhase` or a native NeoForge `RenderLevelStageEvent.Stage`. A native placement does not create a semantic phase.
+
+- `RenderPhase.POST_PROCESS` maps to the native `AFTER_LEVEL` stage. In this native stage, Kasuga uses this fixed order: `POST_PROCESS`, native `AFTER_LEVEL` placement, and semantic `AFTER_LEVEL`.
+
+- At one execution position, a pipeline with a lower priority value runs first. If priority values are equal, Kasuga sorts the pipelines by ID string.
+
+- The registry caches an immutable execution snapshot for each native stage. Registering, replacing, or closing an entry invalidates the applicable snapshot.
+
+- A world-pipeline callback runs on the client render thread. Kasuga calls the callback only when a client world is present.
+
+- Kasuga pushes a separate pose stack for each callback. Kasuga pops the pose stack after the callback returns or throws an exception.
+
+- If one callback throws a runtime exception, Kasuga records the exception. Other pipelines in the same stage continue to run.
+
+- If a callback starts a buffer batch, it must end the batch before it returns.
+
+A world pipeline can use the compiled `RenderType` from its descriptor:
 
 ```java
 RenderPipelineDescriptor descriptor = RenderPipelineDescriptor.builder(
@@ -83,103 +105,115 @@ PipelineRegistration registration = pipelines.world(
 );
 ```
 
-## Draw state 与 RenderType
+## Draw State and `RenderType`
 
-- `RenderDrawState` 是不可变的 Minecraft draw-state 描述，可以独立复用或通过
-  `toBuilder()` 派生。
-- 默认状态为 `POSITION`、`QUADS`、1536 字节 buffer、position shader、无纹理、无混合、
-  `LEQUAL` depth test、启用 cull、主 framebuffer 以及 color/depth 写入。
-- Buffer size 必须大于零。所有 state shard 都必须非空。
-- 稳定枚举用于常规 blend、depth、cull、layering、target 和 write-mask 选择；高级调用方可以
-  直接提供原生 `RenderStateShard`。
-- 每次 pipeline 注册都会创建一个 `CompiledRenderPipeline`。默认 `RenderType` 在首次访问时
-  构建并缓存。
-- 基于 texture、blur 和 mipmap 的纹理变体按完整组合缓存。高级纹理状态变体按调用方提供的
-  非空名称缓存。
-- `CompiledRenderPipeline` 的缓存只属于当前 registration；替换 registration 会产生新的缓存。
+- `RenderDrawState` is an immutable Minecraft draw-state description. You can reuse the draw state or derive a new value with `toBuilder()`.
 
-## Shader 来源与 registration
+- The default state uses `POSITION`, `QUADS`, a 1536-byte buffer, and the position shader. It has no texture and no blending. It also uses the `LEQUAL` depth test, culling, the main framebuffer, and color and depth writes.
 
-- `RenderShaderDescriptor` 支持资源 shader、generated shader 和自定义 factory 三种来源。
-- Fullscreen generated program 默认使用 `DefaultVertexFormat.BLIT_SCREEN`。Graphics generated
-  program 必须显式提供 Minecraft vertex format。
-- Descriptor 默认使用 `EAGER`、priority 0 和 `DISABLE_PIPELINE`。
-- `ShaderRegistration` 和 `RenderShaderHandle` 都绑定到精确 registration。
-- Handle 对象跨 F3+T 保持稳定，但其内部 `ShaderInstance` 会失效并安装新 generation。
-- Handle 同时持有公开参数的默认 `ShaderParameterBlock`；参数值跨 F3+T 保持，不依赖当前
-  `ShaderInstance`。
-- `generation()` 只在新的编译实例成功安装后递增。
-- `get()` 在 shader 不可用时返回 `null`；`shader()` 返回空值；`require()` 抛出异常。
-- `status()` 返回当前 state、load origin、队列位置、等待时间、generation、prepare/compile
-  耗时、translation cache 命中情况和最近错误。
-- 可观察状态包括 `REGISTERED`、`PREPARING`、`QUEUED`、`COMPILING`、`READY`、`FAILED` 和
-  `CLOSED`。
-- 通过 registry ID 查询或预载只作用于该 ID 当前活动的 registration；通过 registration 或
-  handle 操作不会作用于同 ID 的替换项。
+- The buffer size must be greater than zero. Each state shard must be non-null.
 
-## Shader preparation、编译与重载
+- Use stable enumerations for blend, depth, cull, layering, target, and write-mask selections. A caller can also supply a native `RenderStateShard`.
 
-- `EAGER` shader 在 client setup 注册后立即开始 generated-source preparation，并在 Minecraft
-  初始 `RegisterShadersEvent` 中完成 compile/link；在资源系统已经可用后注册时转入逐帧编译队列。
-- `DEFERRED` 不阻塞正常 resource reload，在资源可用后转入逐帧编译队列。
-- `MANUAL` 不会自动排队，只有显式调用 registration、handle 或 registry preload 后才尝试
-  排队。
-- Generated shader 的 IR 到 GLSL/JSON 翻译属于 CPU preparation；OpenGL compile/link 只在
-  render thread 上执行。
-- Preparation 使用独立的有界 executor，排队容量为 128，不使用 JVM common pool。默认 worker
-  数量为可用 CPU 核心数的一半、最少 1、最多 4；client setup 会预启动这些 worker。
-- `ShaderPreparationScheduler.configureWorkers(0)` 使用自动数量；正数表示用户请求值，并自动限制
-  到 JVM 可见的 CPU 核心数。启动参数 `-Dkasuga.shaderPreparationWorkers=N` 提供相同配置，`0`
-  表示自动；客户端内可用 `/kasuga_effects workers N` 动态调整，调整立即作用于排队和后续任务。
-- Preparation 结果进入最多 128 项的 LRU translation cache。相等的 `ShaderProgram` 会复用已
-  生成 bundle 和编码后的 Minecraft resources；同一 program 的并发请求只执行一次翻译，不同
-  program 可以由多个 worker 并行准备。
-- Preparation 队列已满时 registration 进入失败状态，不会退回到调用线程同步执行。
-- Registration 被关闭或替换时，尚未开始的 preparation 会被取消并从 executor 队列移除。
-- 逐帧编译队列默认在每帧启动下一项前检查 2ms 预算，且每帧最多启动 4 项。单次 OpenGL
-  compile 开始后不能被中断，因此实际帧耗时可以超过预算。
-- 编译队列先按 preload priority、再按入队顺序选择。数值较小的 priority 更早执行。
-- 同一 owner 每帧优先最多使用 2 个编译名额；有其他 owner 等待时会让出后续名额，没有其他
-  owner 可运行时可以继续使用剩余额度。
-- `whenReady()` 只等待当前精确 registration。到达 `READY` 时以 `ShaderStatus` 完成；进入
-  `FAILED`、`CLOSED` 或被替换时异常完成。调用方取消 future 后，registry 会移除对应 waiter。
-- Shader 已经 ready 时，`whenReady()` 返回已完成 future；其他异步完成发生在 render thread。
-- `ShaderLoadListener` 的 ready、failure 和 invalidated 回调都在 render thread 上执行。Listener
-  异常会被记录，不改变 shader 状态。
-- `DISABLE_PIPELINE` 将加载失败限制在当前 shader，使其保持不可用并允许其他资源继续加载。
-- `FAIL_RELOAD` 在 active resource reload 中发生编译失败时中止该次 reload；late preload 没有
-  可中止的 reload，失败仍表现为 `FAILED`。
-- Resource reload 创建的 shader 由 Minecraft 管理；late preload 创建的 shader 由 registry
-  管理，并在关闭、替换或后续 generation 成功安装时于 render thread 释放。
+- Each pipeline registration creates one `CompiledRenderPipeline`. Kasuga builds and caches the default `RenderType` when code first accesses the `RenderType`.
+
+- Kasuga caches texture variants by the complete texture, blur, and mipmap combination. Kasuga caches a custom texture-state variant by the non-null name that the caller supplies.
+
+- A `CompiledRenderPipeline` cache belongs only to its registration. A replacement registration receives a new cache.
+
+## Shader Sources and Registrations
+
+- `RenderShaderDescriptor` supports three shader sources: resource shaders, generated shaders, and custom factories.
+
+- A generated fullscreen program uses `DefaultVertexFormat.BLIT_SCREEN` by default. A generated graphics program must specify a Minecraft vertex format.
+
+- A descriptor uses `EAGER`, priority `0`, and `DISABLE_PIPELINE` by default.
+
+- `ShaderRegistration` and `RenderShaderHandle` bind to one exact registration.
+
+- A handle stays stable across F3+T reloads. A reload invalidates the internal `ShaderInstance`. The handle then installs a new generation.
+
+- A handle also stores the default `ShaderParameterBlock` for exposed parameters. F3+T reloads do not change the parameter values. The values do not depend on the current `ShaderInstance`.
+
+- `generation()` increases only after Kasuga installs a new compiled instance successfully.
+
+- `get()` returns `null` if the shader is not available. `shader()` returns an empty optional. `require()` throws an exception.
+
+- `status()` reports the current state, load origin, queue position, wait time, generation, prepare time, compile time, translation-cache result, and most recent error.
+
+- The observable states are `REGISTERED`, `PREPARING`, `QUEUED`, `COMPILING`, `READY`, `FAILED`, and `CLOSED`.
+
+- A registry lookup or preload by ID uses the current active registration for that ID. A registration or handle cannot access a replacement with the same ID.
+
+## Shader Preparation, Compilation, and Reload
+
+- After client setup, an `EAGER` shader starts generated-source preparation immediately. The shader finishes compilation and linking during the initial Minecraft `RegisterShadersEvent`. If registration occurs after resource-system startup, Kasuga puts the shader in the per-frame compile queue.
+
+- A `DEFERRED` shader does not block a resource reload. Kasuga puts the shader in the per-frame compile queue after resources become available.
+
+- A `MANUAL` shader does not enter a queue automatically. The shader enters a queue only after an explicit preload through its registration, handle, or registry.
+
+- Translation from generated shader IR to GLSL and JSON is CPU preparation. OpenGL compilation and linking occur only on the render thread.
+
+- Preparation uses a separate bounded executor with a queue capacity of 128. The executor does not use the JVM common pool. By default, the worker count is half the available CPU count, with a minimum of 1 and a maximum of 4. Client setup starts these workers.
+
+- `ShaderPreparationScheduler.configureWorkers(0)` selects the automatic count. A positive value is a user request, and Kasuga limits it to the CPU count that the JVM can see. The startup option `-Dkasuga.shaderPreparationWorkers=N` supplies the same setting, and `0` selects automatic mode. In the client, `/kasuga_effects workers N` changes the setting. The change applies immediately to queued and future tasks.
+
+- Preparation results enter an LRU translation cache with a maximum of 128 entries. Equal `ShaderProgram` values reuse the generated bundle and encoded Minecraft resources. Concurrent requests translate one program one time. Multiple workers can translate different programs in parallel.
+
+- If the preparation queue is full, the registration enters the failed state. Kasuga does not run preparation synchronously on the calling thread.
+
+- When a registration closes or is replaced, Kasuga cancels preparation that did not start. Kasuga also removes the task from the executor queue.
+
+- By default, the per-frame compile queue checks a 2 ms budget before the next item starts. The queue starts a maximum of four items in one frame. An OpenGL compile cannot stop after compilation starts. Therefore, the actual frame time can be more than the budget.
+
+- The compile queue selects items first by preload priority and then by queue order. A lower priority value runs first.
+
+- In each frame, one owner can use the first two compile slots. Other waiting owners receive the remaining slots. The first owner receives remaining slots only when no other owner can run.
+
+- `whenReady()` waits only for the exact registration. A `READY` state completes the future with `ShaderStatus`. A `FAILED` or `CLOSED` state completes the future exceptionally. Replacement also completes the future exceptionally. If the caller cancels the future, the registry removes the related waiter.
+
+- If the shader is ready, `whenReady()` returns a completed future. Other asynchronous completions occur on the render thread.
+
+- The ready, failure, and invalidated callbacks of `ShaderLoadListener` run on the render thread. If a listener throws an exception, Kasuga records the exception. The exception does not change the shader state.
+
+- `DISABLE_PIPELINE` limits a load failure to the current shader. The shader stays unavailable, and other resources continue to load.
+
+- `FAIL_RELOAD` stops an active resource reload if compilation fails. A late preload has no active reload to stop. The shader state becomes `FAILED`.
+
+- Minecraft manages shaders that a resource reload creates. The registry manages shaders that a late preload creates. On the render thread, the registry releases a shader when the registration closes or is replaced. The registry also releases the old shader after successful installation of a later generation.
 
 ## Java Shader DSL
 
-- DSL 不解析 Java AST，也不反编译 lambda。Builder lambda 在 Java 中立即执行，并生成带类型的
-  shader IR。
-- 普通 Java 条件和循环只控制 IR 的构建过程，不会出现在最终 shader 中；需要保留到 GLSL 的
-  动态条件与循环必须通过 shader builder 声明。
-- 保存在普通 Java 变量中的表达式在每个使用点内联，不会自动生成 GLSL local。
-- `let*` 创建有初始化值的 GLSL local；需要后续赋值时使用返回 `ShaderVariable` 的 `local*`。
-- Fullscreen program 只包含 fragment module，并使用内建 fullscreen vertex stage。
-- Graphics program 同时包含 vertex 和 fragment module。`position(...)` 写入 `gl_Position`。
-- 每个 fragment input 必须存在同名同类型的 vertex output，否则 program 构建失败。
-- 两个 stage 中同名 uniform 或 sampler 的声明必须完全一致；一致声明在 Minecraft shader JSON
-  中只出现一次。
-- Program ID 必须符合小写 `namespace:path` 资源 ID 格式。
-- 当前 profile 支持 float、int、bool、vec2、vec3、vec4、mat2、mat3、mat4、sampler2D、float
-  uniform array、命名 struct、stage input/output、局部变量、结构化控制流、常用数学运算和
-  纹理采样。
-- 当前 backend 输出 GLSL 150 和 Minecraft core-shader JSON。
-- Runtime generated bundle 在加载自身 `.vsh`、`.fsh` 和 `.json` 时优先于资源包；bundle 中没有
-  的资源和 import 会回退到当前客户端 `ResourceProvider`。
-- Graphics program 的 DSL stage interface 会在 Java 构建期校验；传给
-  `RenderShaderDescriptor` 的 Minecraft vertex format 是否与 attribute 匹配仍由调用方保证。
+- The DSL does not parse a Java AST and does not decompile a lambda. A builder lambda runs immediately in Java and creates typed shader IR.
 
-## 用户可调 Shader 参数
+- Java conditions and loops control only IR construction. The final shader does not contain these Java structures. Use the shader builder for conditions and loops that must stay dynamic in GLSL.
 
-Shader 不会自动公开所有 uniform。开发者必须逐项注册允许用户修改的参数；每项参数固定包含
-`name`、`description`、`ShaderParameterType`、inclusive `range` 和 `defaultValues`。名称同时是
-GLSL uniform 名称，因此必须是合法且非保留的 GLSL identifier。
+- The backend inserts an expression from a Java variable at each use location. The expression does not automatically create a GLSL local variable.
+
+- A `let*` call creates an initialized GLSL local variable. For later assignments, use a `local*` call that returns `ShaderVariable`.
+
+- A fullscreen program contains only a fragment module and uses the built-in fullscreen vertex stage.
+
+- A graphics program contains a vertex module and a fragment module. `position(...)` writes to `gl_Position`.
+
+- Each fragment input must have a vertex output with the same name and type. Otherwise, program construction fails.
+
+- A uniform or sampler with the same name in both stages must have an identical declaration. An identical declaration occurs only one time in the Minecraft shader JSON.
+
+- A program ID must use the lowercase `namespace:path` resource-ID format.
+
+- The current profile supports float, int, bool, vec2, vec3, vec4, mat2, mat3, mat4, and sampler2D. The profile also supports float uniform arrays and named structs. The profile supports stage inputs and outputs, local variables, structured control flow, common mathematical operations, and texture sampling.
+
+- The current backend generates GLSL 150 and Minecraft core-shader JSON.
+
+- During loading, a runtime-generated bundle has priority for its own `.vsh`, `.fsh`, and `.json` files. For a missing resource or import, loading uses the current client `ResourceProvider`.
+
+- The DSL checks the stage interface of a graphics program during Java construction. The caller must match the `RenderShaderDescriptor` vertex format to the attributes.
+
+## User-Adjustable Shader Parameters
+
+A shader does not expose all uniforms automatically. Register each user-adjustable parameter. Each parameter has a fixed `name`, `description`, `ShaderParameterType`, inclusive `range`, and `defaultValues`. The parameter name is also the GLSL uniform name. The name must be a valid, non-reserved GLSL identifier.
 
 ```java
 public static final ShaderParameter EXPOSURE = ShaderParameter.floatParameter(
@@ -200,8 +234,7 @@ public static final ShaderParameter TINT = ShaderParameter.builder(
         .build();
 ```
 
-Generated shader 通过对应类型的 `expose*` 方法声明 uniform 并注册参数规格。普通 `uniform*`
-保持内部状态，不会出现在公开 schema 中。
+In a generated shader, use the applicable `expose*` call to declare a uniform and register the parameter specification. A `uniform*` call keeps the uniform internal. The call does not add the uniform to the public schema.
 
 ```java
 ShaderProgram program = ShaderProgram.fullscreen("example:adjustable", shader -> {
@@ -212,8 +245,7 @@ ShaderProgram program = ShaderProgram.fullscreen("example:adjustable", shader ->
 });
 ```
 
-资源 shader 和 custom factory 无法调用 DSL，可在 descriptor 上注册同一份规格。资源中的 uniform
-必须与参数 `name` 和底层 GLSL 类型匹配；首次绑定时缺少 uniform 会直接报错。
+A resource shader or custom factory cannot use the DSL. Register the same specification on `RenderShaderDescriptor`. The resource uniform must match the parameter `name` and basic GLSL type. The first bind fails if the uniform is missing.
 
 ```java
 RenderShaderDescriptor descriptor = RenderShaderDescriptor.builder(id, format)
@@ -223,9 +255,7 @@ RenderShaderDescriptor descriptor = RenderShaderDescriptor.builder(id, format)
         .build();
 ```
 
-注册后的 `RenderShaderHandle.parameters()` 是该 registration 的默认运行时参数块。修改会验证组件
-数量、数值类型、有限值和 range，不会重新生成或编译 shader。`reset(name)` 使用声明的 default，
-`resetAll()` 恢复所有 default。
+`RenderShaderHandle.parameters()` supplies the default runtime parameter block for the registration. `ShaderParameterBlock` validates each change for component count, numeric type, finite values, and range. A parameter change does not regenerate or compile the shader. `reset(name)` uses the declared default. `resetAll()` restores all declared defaults.
 
 ```java
 RenderShaderHandle handle = registration.handle();
@@ -233,25 +263,24 @@ handle.parameters().setFloat(EXPOSURE, 1.35f);
 handle.parameters().set(TINT, 1.0, 0.55, 0.2);
 ```
 
-将 handle 传给 `PostProcessContext.fullscreen(...)` 或 `PostProcessGraphContext.fullscreen(...)` 时，
-默认参数块在 draw 前自动上传。传入裸 `ShaderInstance` 时不会隐式猜测 registration；调用方应使用
-`.parameters(block)` 显式绑定。需要同一 Shader 的多个独立配置时使用
-`handle.createParameterBlock()`。
+When a fullscreen method receives a handle, Kasuga uploads the default parameter block before the draw. The applicable methods are `PostProcessContext.fullscreen(...)` and `PostProcessGraphContext.fullscreen(...)`. Kasuga cannot infer a registration from a direct `ShaderInstance`. Use `.parameters(block)` to bind a parameter block. Use `handle.createParameterBlock()` for each independent configuration of one shader.
 
-当前 `ShaderParameterType` 包含 float、integer、boolean、vec2/3/4、RGB/RGBA color 和
-mat2/3/4。Range 对所有组件生效；boolean 固定使用 `[0, 1]`。
+The current `ShaderParameterType` values include float, integer, boolean, vec2, vec3, vec4, RGB color, and RGBA color. `ShaderParameterType` also includes mat2, mat3, and mat4. The range applies to all components. Boolean parameters always use `[0, 1]`.
 
-客户端中打开 `/kasuga_effects`，点击 `Parameters` 即可进入由 schema 自动生成的参数面板。
-面板不识别某个具体效果：所有公开了参数的 shader 都会自动出现。Boolean 显示为开关，其余类型
-按分量显示滑条；向量、颜色和矩阵会使用相应的分量名。修改在下一次 draw 时生效，不触发 shader
-重新生成或重新编译。默认参数块异步保存在
-`config/kasuga_lib/shader-parameters.json`，客户端重启后会按 shader ID 和参数名恢复；独立的
-`createParameterBlock()` 是 effect 实例状态，不会写入全局配置。配置文件只保存相对 schema
-默认值的 override；执行 reset 后，未来版本修改的默认值仍可正常生效。代码可通过
-`isDefault(name)` 和 `hasOverrides()` 判断当前状态。
+To open the parameter panel:
 
-客户端也可用以下命令检查、修改和恢复任意 shader 主动公开的参数。命令适合滑条无法精确表达的
-大范围整数，或需要一次输入完整 vector/matrix 的场景：
+1. Enter `/kasuga_effects` in the client.
+2. Select `Parameters`.
+
+The schema generates the parameter panel. The panel is not specific to one effect. The panel shows each shader that exposes parameters. A boolean parameter uses a switch. Other parameter types use component sliders.
+
+Vectors, colors, and matrices use the applicable component names. A parameter change applies during the next draw. The change does not regenerate or recompile the shader.
+
+Kasuga saves the default parameter blocks asynchronously in `config/kasuga_lib/shader-parameters.json`. After a client restart, Kasuga restores values by shader ID and parameter name. An independent block from `createParameterBlock()` contains effect-instance state. Kasuga does not store this block in the global configuration.
+
+The configuration stores only values that override schema defaults. A reset permits a later schema default to apply. Use `isDefault(name)` and `hasOverrides()` to examine the current state.
+
+The following client commands examine, change, and reset exposed shader parameters. Use a command when a slider cannot set a large integer accurately. Also use a command to enter a complete vector or matrix:
 
 ```text
 /kasuga_effects parameter list <shader-id>
@@ -259,10 +288,9 @@ mat2/3/4。Range 对所有组件生效；boolean 固定使用 `[0, 1]`。
 /kasuga_effects parameter reset <shader-id> <name>
 ```
 
-多个 vector/matrix 分量可用空格或逗号分隔。内建黑洞示例公开 `LensingScale`、
-`DiskBrightness` 和 `ChromaticScale`，其余屏幕、时间和 per-effect packed uniforms 保持内部。
+Spaces or commas separate vector and matrix components. The built-in black-hole example exposes `LensingScale`, `DiskBrightness`, and `ChromaticScale`. The screen, time, and per-effect packed uniforms stay internal.
 
-Fullscreen shader 可以直接由 Java 表达式构建并注册：
+The following example builds and registers a fullscreen shader from Java expressions:
 
 ```java
 ShaderProgram program = ShaderProgram.fullscreen("example:screen_tint", shader -> {
@@ -280,60 +308,61 @@ ShaderRegistration shader = pipelines.shader(
 shader.whenReady().thenAccept(status -> rebuildDependentResources(shader.handle()));
 ```
 
-## 从 GLSL 迁移到 Java Shader DSL
+## Migration from GLSL to the Java Shader DSL
 
-Builder lambda 对应 GLSL 的 `main()` 函数体。Lambda 执行时不会计算像素结果，而是按调用顺序
-记录声明、表达式和语句，最后生成 GLSL 150。
+A builder lambda represents the body of the GLSL `main()` function. The lambda does not calculate pixel results. The lambda records declarations, expressions, and statements in call order. The backend then generates GLSL 150.
 
-### 类型与表达式
+### Types and Expressions
 
-Java DSL 使用表达式包装类型代替 GLSL 运算符。推荐用 `var` 保存中间表达式，具体类型仍由
-Java 编译器检查。
+The Java DSL uses expression-wrapper types in place of GLSL operators. Use `var` for an intermediate expression when the expression type is clear. The Java compiler checks the exact type.
 
 | GLSL | Java DSL |
 | --- | --- |
-| `float`、`int`、`bool` | `FloatExpr`、`IntExpr`、`BoolExpr` |
-| `vec2`、`vec3`、`vec4` | `Vec2Expr`、`Vec3Expr`、`Vec4Expr` |
-| `mat2`、`mat3`、`mat4` | `Mat2Expr`、`Mat3Expr`、`Mat4Expr` |
+| `float`, `int`, `bool` | `FloatExpr`, `IntExpr`, `BoolExpr` |
+| `vec2`, `vec3`, `vec4` | `Vec2Expr`, `Vec3Expr`, `Vec4Expr` |
+| `mat2`, `mat3`, `mat4` | `Mat2Expr`, `Mat3Expr`, `Mat4Expr` |
 | `sampler2D` | `Sampler2DExpr` |
-| `struct Material` | `ShaderStructType`、`StructExpr` |
-| `1.0`、`1`、`true` | `shader.f32(1)`、`shader.i32(1)`、`shader.bool(true)` |
+| `struct Material` | `ShaderStructType`, `StructExpr` |
+| `1.0`, `1`, `true` | `shader.f32(1)`, `shader.i32(1)`, `shader.bool(true)` |
 | `vec2(x, y)` | `shader.vec2(x, y)` |
 | `vec4(rgb, alpha)` | `shader.vec4(rgb, alpha)` |
-| `a + b`、`a - b` | `a.add(b)`、`a.sub(b)` |
-| `a * b`、`a / b` | `a.mul(b)`、`a.div(b)` |
-| `a < b`、`a >= b`、`a == b` | `a.lt(b)`、`a.gte(b)`、`a.equalTo(b)` |
-| `a && b`、`a || b`、`!a` | `a.and(b)`、`a.or(b)`、`a.not()` |
+| `a + b`, `a - b` | `a.add(b)`, `a.sub(b)` |
+| `a * b`, `a / b` | `a.mul(b)`, `a.div(b)` |
+| `a < b`, `a >= b`, `a == b` | `a.lt(b)`, `a.gte(b)`, `a.equalTo(b)` |
+| `a && b`, `a || b`, `!a` | `a.and(b)`, `a.or(b)`, `a.not()` |
 | `texture(image, uv)` | `image.sample(uv)` |
-| `normalize(v)`、`length(v)` | `v.normalize()`、`v.length()` |
+| `normalize(v)`, `length(v)` | `v.normalize()`, `v.length()` |
 | `mix(x, y, t)` | `x.mix(y, t)` |
 | `atan(y, x)` | `y.atan2(x)` |
 | `matrix * vector` | `matrix.transform(vector)` |
-| `left * right`（matrix） | `left.mul(right)` |
-| `value.rgb`、`value.a` | `value.rgb()`、`value.a()` |
+| `left * right` (matrix) | `left.mul(right)` |
+| `value.rgb`, `value.a` | `value.rgb()`, `value.a()` |
 | `Values[index]` | `values.get(index)` |
 | `float(integer)` | `integer.toFloat()` |
 
-只有对应 `Expr` 类型实际暴露的方法可以生成。比如当前 `Vec2Expr` 支持 `normalize()`，并不保证
-所有 vector wrapper 都已经暴露同样的函数。Java 数字不能直接参与大多数表达式时，使用
-`f32()`、`i32()` 或对应方法的 primitive overload。
+Only a method from the applicable `Expr` type can generate code. For example, the current `Vec2Expr` supplies `normalize()`. Other vector wrappers do not always supply the same method. If an expression does not accept a Java number, use `f32()`, `i32()`, or an applicable primitive overload.
 
-### Global、stage I/O 与输出
+### Globals, Stage Inputs, and Stage Outputs
 
-- `uniformFloat/Int/Bool/Vec*/Mat2/Mat3/Mat4` 对应 GLSL uniform；传入的值写入 Minecraft
-  shader JSON 作为默认值。无默认值的 matrix overload 使用单位矩阵。
-- `uniformFloatArray` 是当前唯一的 uniform array，长度必须大于 1，元素通过 `IntExpr` 索引。
-- `sampler2D` 声明 `uniform sampler2D`。
-- `inputFloat/Int/Vec*` 声明当前 stage 的 `in`。
-- Vertex stage 使用 `outputFloat/Vec*` 声明 `out`，并用 `position(...)` 写入 `gl_Position`。
-- Fragment stage 使用 `fragmentColor(...)` 写入生成器提供的 `fragColor`。
-- Fullscreen fragment 可以调用 `texCoord()` 读取内建 vertex stage 的纹理坐标。
-- Graphics fragment 必须用 `inputVec2` 等方法声明自己的输入；调用 `texCoord()` 会直接失败。
-- Vertex program 至少要调用一次 `position(...)`，fragment program 至少要调用一次
-  `fragmentColor(...)`。当前校验只确认 IR 中存在写入，不分析所有分支是否都会写入，完整覆盖
-  所有运行路径由 shader 作者保证。
+- `uniformFloat`, `uniformInt`, `uniformBool`, `uniformVec*`, and `uniformMat*` declare GLSL uniforms. Supplied values become defaults in the Minecraft shader JSON. A matrix overload without a default uses an identity matrix.
 
-Graphics program 中的两个 stage 分别对应传统 `.vsh` 和 `.fsh`：
+- `uniformFloatArray` is the only current method for uniform arrays. The length must be greater than 1. Use an `IntExpr` to index an element.
+
+- `sampler2D` declares `uniform sampler2D`.
+
+- `inputFloat`, `inputInt`, and `inputVec*` declare `in` values for the current stage.
+
+- In a vertex stage, `outputFloat` and `outputVec*` declare `out` values. `position(...)` writes to `gl_Position`.
+
+- In a fragment stage, `fragmentColor(...)` writes to the generated `fragColor`.
+
+- A fullscreen fragment can use `texCoord()` to read the texture coordinates from the built-in vertex stage.
+
+- A graphics fragment must use a method such as `inputVec2` to declare the fragment inputs. A call to `texCoord()` fails.
+
+- A vertex program must call `position(...)` at least one time. A fragment program must call `fragmentColor(...)` at least one time. Validation only confirms that the IR contains a write. The shader author must write to the required output on all runtime paths.
+
+The two stages in a graphics program represent the `.vsh` and `.fsh` files:
 
 ```java
 ShaderProgram particle = ShaderProgram.graphics(
@@ -369,23 +398,20 @@ RenderShaderDescriptor descriptor = RenderShaderDescriptor.generated(
 );
 ```
 
-`Position`、`UV0`、`Color` 等 input 名称和类型必须与传入的 Minecraft `VertexFormat` 对应。
-DSL 会校验 vertex/fragment 之间的接口，但不会反查 `VertexFormat`。
+The `Position`, `UV0`, and `Color` input names and types must match the supplied Minecraft `VertexFormat`. The DSL checks the vertex-to-fragment interface, but it does not check the `VertexFormat`.
 
-### 局部变量与控制流
+### Local Variables and Control Flow
 
-普通 Java 变量只持有一个 IR 表达式。下面的 `brightness` 不会生成 GLSL local，而是在使用点
-内联：
+A Java variable holds one IR expression. In this example, `brightness` does not create a GLSL local variable. The backend inserts the `brightness` expression at the use location:
 
 ```java
 var brightness = color.rgb().mul(intensity);
 shader.fragmentColor(shader.vec4(brightness, color.a()));
 ```
 
-`letFloat/letVec*`、`letMat*` 和 `letStruct` 会生成只在 DSL 中读取的 GLSL local。需要后续赋值
-时使用对应的 `local*`，通过 `get()` 读取、`set()` 写入。
+`letFloat/letVec*`, `letMat*`, and `letStruct` create GLSL local variables that are read-only in the DSL. For later assignments, use the applicable `local*` method. `get()` reads the variable. `set()` writes the variable.
 
-以下 GLSL：
+This GLSL:
 
 ```glsl
 float sum = 0.0;
@@ -397,7 +423,7 @@ for (int index = 0; index < Count; ++index) {
 fragColor = vec4(sum, sum, sum, 1.0);
 ```
 
-对应的 Java DSL 为：
+The equivalent Java DSL is:
 
 ```java
 var count = shader.uniformInt("Count", 0);
@@ -413,13 +439,17 @@ shader.forRange("index", shader.i32(0), count, index -> {
 shader.fragmentColor(shader.vec4(sum.get(), sum.get(), sum.get(), shader.f32(1)));
 ```
 
-- `ifThen` 和 `ifThenElse` 生成 shader 分支；普通 Java `if` 只在构建 IR 时执行一次。
-- `forRange(name, start, end, body)` 生成递增 1、结束条件为 `< end` 的 int loop。
-- `whileLoop(condition, body)` 和 `doWhile(condition, body)` 分别生成 `while` 与 `do while`。
-- `breakLoop()` 只能退出当前最内层 loop；`continueLoop()` 可在 loop 内使用。
-- 普通 Java `for` 可以用于按常量展开表达式，相当于手工 unroll，不会生成 GLSL loop。
-- Java lambda 中需要跨分支或循环修改的 shader 值必须使用 `ShaderVariable`，不能通过重新绑定
-  Java 局部变量表达 shader assignment。
+- `ifThen` and `ifThenElse` generate shader branches. A Java `if` runs one time during IR construction.
+
+- `forRange(name, start, end, body)` generates an integer loop. The loop increments by 1 and uses `< end` as the end condition.
+
+- `whileLoop(condition, body)` generates `while`. `doWhile(condition, body)` generates `do while`.
+
+- `breakLoop()` can exit only the innermost loop. You can use `continueLoop()` in a loop.
+
+- A Java `for` can unroll an expression for constant values. The Java loop does not generate a GLSL loop.
+
+- If a shader value changes across branches or loops in a Java lambda, use `ShaderVariable`. Do not rebind a Java local variable to represent a shader assignment.
 
 ```java
 var cursor = shader.localInt("cursor", shader.i32(0));
@@ -434,11 +464,11 @@ shader.doWhile(cursor.get().gt(shader.i32(0)), () ->
 );
 ```
 
-### Struct
+### Structs
 
-Struct 是命名类型。字段 key 由创建它的 `ShaderStructType.Builder` 持有；即使另一个 struct 有同名
-同类型字段，也不能混用。先声明被依赖的 struct，再声明包含它的 struct。当前 struct 用于 typed
-local、构造、字段读取和字段赋值，不作为 uniform 或 stage input/output。
+A struct is a named type. The `ShaderStructType.Builder` that creates a field owns the field key. You cannot use the field key with a different struct. This restriction applies when the other struct has a field with the same name and type.
+
+Declare a dependency struct before you declare the struct that contains the dependency. The current DSL supports structs for typed locals, construction, field reads, and field assignments. The DSL does not support structs for uniforms, stage inputs, or stage outputs.
 
 ```java
 var materialBuilder = ShaderStructType.builder("Material");
@@ -457,12 +487,11 @@ shader.setStructField(material, roughness, shader.f32(0.25f));
 var finalTint = material.get().field(tint);
 ```
 
-`structValue` 的参数按字段声明顺序传入，并在 Java 构建期检查数量和类型。
+`structValue` arguments must follow the order of field declarations. The builder checks the argument count and types during Java construction.
 
-### Switch
+### Switch Statements
 
-`switchOn` 接受 `IntExpr`。`caseOf` 保持声明顺序，不自动插入 `break`，因此和 GLSL 一样允许
-fallthrough；需要结束 case 时显式调用 `breakSwitch()`。`defaultCase` 最终输出在所有 case 后面。
+`switchOn` accepts an `IntExpr`. `caseOf` keeps declaration order and does not insert `break`. Therefore, `caseOf` permits GLSL fallthrough. Call `breakSwitch()` to end a case. The generated output puts `defaultCase` after all cases.
 
 ```java
 shader.switchOn(mode, cases -> cases
@@ -475,31 +504,39 @@ shader.switchOn(mode, cases -> cases
 );
 ```
 
-`breakLoop()` 和 `breakSwitch()` 都要求对应结构是最内层 break target，避免生成语义错误的裸
-`break`。例如 switch 位于 loop 内时，case 中可以 `breakSwitch()`，不能直接 `breakLoop()`；需要
-退出外层 loop 时应设置一个 bool local，并在 switch 结束后判断它。
+For `breakLoop()` and `breakSwitch()`, the applicable structure must be the innermost break target. This rule prevents an invalid bare `break`. A case in a loop can call `breakSwitch()`. The case cannot call `breakLoop()` directly. To exit the outer loop, set a boolean local variable. Test the variable after the switch.
 
-### 命名与链接规则
+### Naming and Link Rules
 
-- Shader program ID 必须使用小写 `namespace:path`。
-- Shader identifier 必须匹配 `[A-Za-z_][A-Za-z0-9_]*`，不能以 `gl_` 开头，也不能使用 GLSL
-  保留字。
-- 同一 stage 中的 global、local 和 loop index 共用一套名字，整个 stage 内不能重复；不同代码
-  block 不会创建可重复使用名称的独立命名域。
-- Fragment input 必须存在同名同类型的 vertex output。Vertex 可以声明 fragment 未读取的额外
-  output。
-- 两个 stage 复用同名 uniform 或 sampler 时，storage、类型、array 长度和默认值必须完全
-  一致。
-- 名称区分大小写，并直接成为最终 GLSL 和 Minecraft JSON 中的名称。
+- A shader program ID must use lowercase `namespace:path`.
 
-### Runtime uniform 与 sampler
+- A shader identifier must match `[A-Za-z_][A-Za-z0-9_]*`. It must not start with `gl_`, and it must not be a reserved GLSL word.
 
-- 不要长期缓存 `ShaderInstance`；F3+T 会替换实例。长期对象只保存
-  `RenderShaderHandle`，每次渲染通过 handle 或 pass context 取得当前 generation。
-- Uniform 在 render thread 上通过当前 `ShaderInstance.safeGetUniform(name).set(...)` 更新。
-- Fullscreen pass 使用 `colorSampler`、`depthSampler` 或 `textureSampler` 绑定 sampler。
-- Float array 以完整 `float[]` 上传；数组容量和 shader 声明保持一致。
-- DSL 中的 uniform 默认值只用于生成 JSON，不会覆盖每帧由 Java 上传的当前值。
+- Globals, locals, and loop indexes in one stage share one name set. A name cannot occur more than one time in the complete stage. Separate code blocks do not create reusable name scopes.
+
+- A fragment input must have a vertex output with the same name and type. A vertex can have additional outputs that the fragment does not read.
+
+- If both stages use a uniform or sampler with the same name, its storage, type, array length, and default value must be identical.
+
+- Names are case-sensitive. The final GLSL and Minecraft JSON use these names without changes.
+
+### Runtime Uniforms and Samplers
+
+F3+T replaces the current `ShaderInstance`. For a long-life object:
+
+1. Store only a `RenderShaderHandle`.
+2. During each render, access the current generation through the handle or pass context.
+
+- On the render thread, update a uniform through `currentShader.safeGetUniform(name).set(...)`.
+
+- In a fullscreen pass, use `colorSampler`, `depthSampler`, or `textureSampler` to bind a sampler.
+
+To upload a float array:
+
+1. Set the `float[]` capacity to the length in the shader declaration.
+2. Upload the complete `float[]`.
+
+- A uniform default in the DSL generates a JSON default. It does not overwrite a current value that Java uploads each frame.
 
 ```java
 context.fullscreen(PostProcessGraphTarget.main(), shaderHandle)
@@ -508,10 +545,9 @@ context.fullscreen(PostProcessGraphTarget.main(), shaderHandle)
         .draw(false);
 ```
 
-### Raw GLSL escape
+### Raw GLSL Escape
 
-Typed API 无法表达的 GLSL 可以通过 raw escape 接入。所有 raw 入口都标有
-`@DelicateShaderApi`：它是代码审查信号，不是稳定性承诺，也不会让 Java 编译器验证 GLSL。
+Use a raw escape for GLSL that the typed API cannot represent. All raw entry points have `@DelicateShaderApi`. This annotation identifies code for additional review. The annotation does not guarantee API stability. The Java compiler does not validate raw GLSL.
 
 ```java
 @DelicateShaderApi
@@ -531,21 +567,19 @@ static ShaderProgram derivativeShader() {
 }
 ```
 
-- `rawPreamble` 插入在 `#version 150` 后，适合 extension 和宏。
-- `rawDeclaration` 插入在 globals 后、`main()` 前，适合用户函数和 backend-specific 声明。
-- `rawStatement` 在当前 block 原样生成语句。
-- `rawFloat/Int/Bool/Vec*/Mat*/Struct` 把源码包装成调用方声明的表达式类型。
+- `rawPreamble` inserts text after `#version 150`. Use it for extensions and macros.
 
-Raw API 只拒绝空字符串，不解析源码，也不跟踪其中的类型、标识符、uniform、stage interface 或
-控制流。传给 `rawFloat` 的表达式是否真为 float、raw uniform 是否进入 Minecraft JSON，以及
-目标驱动是否接受相关 GLSL，都由调用方负责。能用 typed API 表达时优先使用 typed API。
+- `rawDeclaration` inserts text after globals and before `main()`. Use it for user functions and backend-specific declarations.
 
-Typed API 目前仍未暴露用户函数、struct uniform/stage I/O、非 float uniform array、任意 swizzle、
-`discard`、derivative 和高级 texture sampling；这些能力可谨慎使用 raw escape，或者通过资源
-shader/custom factory 接入。若某项能力需要跨 backend、链接校验或长期公共 API，应继续扩展
-typed IR 和 backend，而不是固化 raw 字符串。
+- `rawStatement` copies the statement text into the current block. The method does not parse or change the text.
 
-## Gradle shader 生成
+- `rawFloat`, `rawInt`, `rawBool`, `rawVec*`, `rawMat*`, and `rawStruct` wrap source text in caller-declared expression types.
+
+The raw API rejects only empty strings. The raw API does not parse source text. The raw API does not track types, identifiers, uniforms, stage interfaces, or control flow. The caller is responsible for the declared type of a raw expression. The caller is also responsible for raw-uniform JSON entries and GLSL driver support. Use the typed API when the typed API supports the required feature.
+
+The typed API does not currently supply user functions, struct uniforms, struct stage inputs, or struct stage outputs. The typed API also excludes non-float uniform arrays, arbitrary swizzles, `discard`, derivatives, and advanced texture sampling. A raw escape can supply these features. A resource shader or custom factory can also supply these features. Extend the typed IR and backend for cross-backend support, link validation, or a long-life public API. Do not use a raw string as a permanent interface.
+
+## Gradle Shader Generation
 
 ```groovy
 plugins {
@@ -553,38 +587,227 @@ plugins {
 }
 ```
 
-- `builder.kasuga.shader` 插件创建 `shader` source set，读取 `src/shader/java` 和
-  `src/shader/resources`，并为其加入 shader DSL 依赖。
-- `generateKasugaShaders` 在 `processResources` 前执行，先清空自己的生成目录，再执行 shader
-  providers。
-- Provider 必须是实现 `ShaderProgramProvider` 的非抽象 public 类，并具有 public 无参构造器；
-  不满足条件时生成任务失败。
-- Provider 按 class name 排序后执行。其返回的 program 被转换成 `.vsh`、`.fsh` 和 `.json`
-  资源。
-- 两个 program 生成同一路径时任务失败，不覆盖已有生成结果。
-- 生成目录自动加入 main resources，因此生成内容会进入最终 jar。
+- The `builder.kasuga.shader` plugin creates the `shader` source set. The plugin reads `src/shader/java` and `src/shader/resources`. The plugin also adds the shader DSL dependency.
 
-## Managed effect
+- `generateKasugaShaders` runs before `processResources`. The task first clears the generated-output directory. The task then runs the shader providers.
 
-- `EffectRenderPipeline` 负责 effect instance 的 tick、存活检查、视锥剔除、可选远到近排序和
-  renderer 调用。
-- 客户端未暂停且世界存在时，每个活动 effect 每个 client tick 更新一次。
-- Effect 在 tick 前后返回非存活状态时会被移除。Tick 抛出运行时异常时只移除该 instance，并
-  记录错误。
-- Render traversal 使用插值后的 bounds 做视锥剔除。启用排序时按插值位置到相机的距离从远到
-  近排列；每个可见 effect 每帧最多计算一次距离。高频 effect 可以覆写
-  `distanceToSqr(partialTick, observer)`，避免仅为排序创建临时位置对象。
-- 至少存在一个可见 instance 时才调用 renderer 的 `begin` 和 `end`，两者每条 pipeline 每帧
-  最多各调用一次。
-- 单个 instance 的 render 异常会被记录，并继续处理其他 instance；它不会自动移除该 instance。
-- `spawn()`、`clear()` 和 `EffectHandle.remove()` 可以跨线程调用。列表变更在下一次 client tick
-  或 render traversal 时应用。
-- `EffectHandle.remove()` 只在第一次成功移除时返回 `true`。
-- 客户端切换或卸载世界时，所有 effect pipeline 清空现有 instance，同时清空 post-process
-  target pool。客户端暂停期间不执行 tick。
-- Pipeline 关闭后不再接受新 instance，也不再参与 tick 或 render。
+- A provider must be a non-abstract public class that implements `ShaderProgramProvider`. The provider must have a public no-argument constructor. The generation task fails if the provider does not meet these conditions.
 
-同一种 effect 共用 renderer 和 pipeline state，每个实例由独立 handle 控制：
+- The task sorts providers by class name before execution. The task converts each returned program to `.vsh`, `.fsh`, and `.json` resources.
+
+- If two programs generate the same path, the task fails. The task does not overwrite generated output.
+
+- The plugin adds the generated directory to the main resources. Therefore, the final JAR contains the generated content.
+
+## Transformable Particle Instances and Group Control
+
+Particles and managed effects use different lifecycle models:
+
+- `ParticleInstance` is a passive, transformable render instance. A particle instance contains a complete `Transform`, velocity, color, and general per-instance attributes. `ParticleInstance` does not require a `tick()` implementation.
+
+- `ParticleSource` is a continuous particle source. Application code can place and move the source. The emission rate uses particles per tick and supports fractional accumulation. Source settings control the particle factory, initial velocity, gravity, color, initial size, initial rotation, and lifetime. A source-setting change affects only new particles.
+
+- `ParticleState` supplies one state value to `ParticleOperator`. The state contains a spatial `Transform`, velocity, color, attributes, and lifetime progress. `Transform` contains position, size, and rotation. Velocity is a separate physical value. `ParticleOperator` receives the current state and returns the next state.
+
+- An external physics system can replace or atomically change the complete instance transform through `transform(...)`.
+
+- `ParticleGroup` owns its instances and supplies two update methods. Both methods use two phases. The general method creates a stable snapshot for the complete group. The method then commits all changes. The packed-buffer method stores current and next states in direct buffers.
+
+- `ParticleGroupBehavior` updates the complete group in one call. Use this behavior for smoke flow fields, rain, snow, explosions, and camera-relative weather volumes.
+
+- `ParticleBufferGroupBehavior` updates the complete group in a reusable `ParticleInstanceBuffer`. A native-order direct `ByteBuffer` stores IDs, matrices, velocity, color, attributes, and flags. After the capacity becomes stable, tick and render operations do not create per-instance snapshot or update objects.
+
+- `ParticleBehavior` is an optional behavior for one instance. The behavior reads the complete group snapshot from before the update. Use this behavior for fish, bird, and insect groups that need neighbor data.
+
+- `ParticleGroupSnapshot.near(position, radius)` builds a spatial grid when the first query occurs. Queries with the same radius reuse the grid during one update. Therefore, Boids do not scan the complete group for each instance.
+
+- If a group controller and instance behavior update one instance, the instance-behavior result has priority. A `null` result prevents an update of that instance.
+
+- `ParticleBatchRenderer` receives a reusable `ParticleInstanceBuffer` for each call. Matrix, position, velocity, and color getters can write to a destination parameter. This parameter prevents temporary-object allocation. A callback renderer can expand instances into a Minecraft vertex buffer. `ParticleInstancedBatchRenderer` submits instances with hardware instancing.
+
+- Kasuga clears groups and placed sources when the client changes or unloads a world. If an instance has no controller and no behavior, the runtime does not move the instance.
+
+The following example registers a batch pipeline:
+
+```java
+ParticleRenderPipeline smoke = pipelines.particles(
+        RenderPipelineDescriptor.builder(id("smoke"), RenderPhase.AFTER_PARTICLES)
+                .draw(draw -> draw
+                        .vertexFormat(DefaultVertexFormat.POSITION_COLOR)
+                        .primitiveMode(VertexFormat.Mode.QUADS)
+                        .blend(PipelineBlendMode.TRANSLUCENT))
+                .build(),
+        (instances, context) -> renderSmokeBatch(instances, context)
+);
+
+GasSmokePreset preset = new GasSmokePreset(GasSmokePreset.Settings.defaults());
+smoke.bufferController(preset.bufferController());
+preset.inject(source, 4.5f, new Vector3f(0, 0.18f, 0));
+smoke.add(preset.createTracer(position, scale, color));
+```
+
+The following example combines physics and appearance operators in a placeable cube-smoke source:
+
+```java
+ParticleOperator cubeSmoke = ParticleOperators
+        // Apply buoyancy, drag, and velocity integration.
+        .physics(new Vector3f(0, 0.0035f, 0), 0.985f)
+        // Control size, rotation, and opacity in the same state function.
+        .then(ParticleOperators.scale(1.012f))
+        .then(ParticleOperators.rotate(new Vector3f(0.006f, 0.018f, 0.004f)))
+        .then(ParticleOperators.fade(0.975f));
+
+ParticleSource source = smoke.source(ParticleSource.Settings.builder()
+        .position(new Vector3f(12, 70, -4))
+        .emissionRate(0.75f)
+        .particleType(spawn -> ParticleInstance.builder(spawn.transform())
+                // The renderer can use this attribute to select a cube, sprite, or custom mesh.
+                .velocity(spawn.velocity())
+                .color(spawn.color())
+                .attributes(CUBE_PARTICLE_TYPE)
+                .build())
+        .initialVelocity(new Vector3f(0, 0.035f, 0))
+        .affectedByGravity(false)
+        .size(0.35f)
+        .rotation(new Vector3f(0, 0.25f, 0))
+        .color(new Vector4f(0.62f, 0.62f, 0.62f, 0.48f))
+        .lifetimeTicks(100)
+        .operator(cubeSmoke)
+        .build());
+
+// The source can follow a block, entity, or script anchor.
+source.position(nextPosition);
+```
+
+`ParticleOperators.transform(...)` accepts a `UnaryOperator<Transform>`. The operator receives the current transform and returns the next transform. A gravity-affected particle uses the default `integrate()` and `.affectedByGravity(true)`. The source `particleType` is an instance factory. The renderer of the related `ParticleRenderPipeline` selects cube, billboard, or mesh drawing.
+
+The default particle type uses the source settings directly. A custom factory can use `spawn.sequence()` for stable random values. The factory can change position, velocity, size, or color during construction.
+
+Hardware instancing uses a backend-independent mesh and draw contract:
+
+```java
+RenderShaderHandle shader = pipelines.shader(RenderShaderDescriptor.generated(
+        ParticleInstanceShaderPrograms.colored("example:liquid_instances"),
+        DefaultVertexFormat.POSITION
+)).handle();
+
+ParticleInstanceMesh mesh = new ParticleInstanceMesh(
+        ParticleInstanceMesh.Topology.TRIANGLES,
+        trianglePositions
+);
+ParticleBatchRenderer renderer = new ParticleInstancedBatchRenderer(
+        mesh,
+        new OpenGlParticleInstanceBackend(shader)
+);
+```
+
+- `ParticleInstanceMesh`, `ParticleInstanceBuffer`, `ParticleInstanceShaderPrograms`, and `ParticleInstanceRenderBackend` do not contain VAO, VBO, or LWJGL types.
+
+- An alpha-blending renderer can reuse `ParticleDepthSorter`. The sorter submits instances from far to near. The sorter enables the depth test and disables depth writes. For per-particle face sorting, a quad pipeline can use `sortOnUpload(true)`. `pipeline.sortBackToFront(true)` reorders the packed instance buffer before rendering. Therefore, callback renderers and hardware-instanced renderers use the same transparent sorting.
+
+- The current `OpenGlParticleInstanceBackend` owns all OpenGL resources, attributes, and `glDrawArraysInstanced` calls. The base mesh uses one static VBO. The packed instance buffer uses one stream VBO. The stream VBO expands when necessary and updates each frame. One instance group uses one draw submission.
+
+- Kasuga Shader IR describes the matrix and color semantics of an instance. The particle API does not contain GLSL. A Vulkan backend can reuse the mesh, packed layout, simulation, and Shader IR. The Vulkan backend replaces the `ParticleInstanceRenderBackend` implementation and its shader compiler.
+
+- The current standard layout uses 144 bytes for each instance. The layout exposes the four columns of a `mat4` and color to the GPU. Velocity and attributes stay in the packed buffer for simulation. The standard shader does not read velocity or attributes.
+
+- GPU depth sorting for transparent instances is not currently available. For an effect that needs exact transparent order, use additive blending, weighted OIT, or an instance-sorting method before upload.
+
+Built-in behavior presets:
+
+| Preset | Update method | Use |
+| --- | --- | --- |
+| `SmokePlumePreset` | Group controller | Analytic rise, disturbance, expansion, fade, and recycling |
+| `GasSmokePreset` | Packed-buffer controller | Density and velocity volume, buoyancy, diffusion, pressure projection, and tracer advection |
+| `LiquidFlowPreset` | Packed-buffer controller | Low-viscosity incompressible velocity field, gravity, pressure projection, and tracer advection |
+| `RainFieldPreset` | Group controller | Wind-driven fall, camera-relative or world-relative volume, and out-of-range reuse |
+| `BoidsPreset` | Optional instance behavior | Separation, alignment, cohesion, and group bounds |
+
+`GasSmokePreset` and `LiquidFlowPreset` share `StableFluidGrid3D`. Semi-Lagrangian advection, Gauss-Seidel diffusion, and pressure projection use preallocated direct `FloatBuffer` values. This implementation is a Stable Fluids approximation for real-time effects. The primary computational complexity is `O(gridSize^3 * iterations)`. Gas uses the default closed solver boundary. Liquid uses an open boundary; after a tracer leaves the finite solver grid it keeps its world-space momentum and gravity instead of being clipped to the simulation volume. A `FluidTracerCollision3D` remains active in world coordinates outside that grid. The Minecraft block adapter implements this interface with swept collision-shape queries in loaded chunks, so unrestricted tracers continue to collide and slide against blocks without forcing chunk loads.
+
+To increase simulation detail:
+
+1. Increase the tracer count.
+2. If more detail is necessary, increase the grid resolution.
+
+`FluidEnvironment3D` combines fluid-environment constraints. Each simulation step applies the constraints before the pressure solver starts:
+
+```java
+liquid.environment(FluidEnvironment3D.builder()
+        .add(FluidConstraints3D.solidBox(minimum, maximum))
+        .add(FluidConstraints3D.solidSphere(center, radius))
+        .add(FluidConstraints3D.directionalForce(regionMin, regionMax, acceleration))
+        .add(FluidConstraints3D.source(regionMin, regionMax, densityPerSecond, velocity))
+        .add(FluidConstraints3D.drain(regionMin, regionMax, densityRetention, acceleration))
+        .build());
+```
+
+Application code can implement `FluidConstraint3D` for a custom dynamic constraint. The constraint context supplies normalized cell coordinates, density, velocity, and the solid mask. Application code can generate constraints from block collision shapes, pipe networks, or moving force fields. The solver and preset do not depend on the Minecraft world.
+
+The following example connects Minecraft block collisions through a separate adapter:
+
+```java
+MinecraftBlockFluidConstraint blocks =
+        new MinecraftBlockFluidConstraint(liquidHalfExtents, 4);
+blocks.level(clientLevel);
+blocks.center(simulationCenter);
+
+liquid.environment(FluidEnvironment3D.builder()
+        .add(blocks)
+        .add(otherConstraints)
+        .build());
+```
+
+- The adapter scans real block `VoxelShape` values in loaded chunks of the simulation volume. The adapter rasterizes stairs, slabs, fences, and other collision boxes into solid cells. The adapter does not treat all non-air blocks as full cubes.
+
+- Collision boxes align with fluid-cell centers. This alignment prevents a wall from expanding outward by half a cell. A thinner collision box maps to the cell nearest the center of the collision box. Therefore, thin objects such as fences remain in the solid mask.
+
+- The solver clears density and velocity in solid cells. In adjacent fluid cells, the solver clamps velocity that points into a solid cell. Pressure projection and advection then move around the block. If a coarse-grid step moves a liquid tracer into a solid cell, the tracer returns to its previous position.
+
+- Scan results stay in a cache for the configured game-tick interval. The adapter rebuilds the results after volume movement, level changes, or an `invalidate()` call. The adapter skips unloaded chunks. Fluid simulation does not force chunk loading.
+
+- Collision operates only from blocks to fluid. Simulated water does not push pistons or entities. The simulation does not wet blocks or change vanilla waterlogging. The simulation does not place or remove Minecraft fluid blocks.
+
+In this API, liquid means an incompressible velocity and density volume. The solid mask is an approximate no-slip obstacle. The model excludes free surfaces, surface tension, drop merging, and conservative FLIP or PIC particles. The model also excludes two-way reactions between fluid and rigid bodies. The model supports visual effects such as water flow, magic liquid, and pipe flow. The model is not a complete water solver.
+
+The following commands control particle presets in the development client:
+
+| Command | Result |
+| --- | --- |
+| `/kasuga_particle_preset smoke` | Starts the smoke preset. |
+| `/kasuga_particle_preset cube_smoke` | Starts the cube-smoke preset. |
+| `/kasuga_particle_preset liquid` | Starts the liquid preset. |
+| `/kasuga_particle_preset rain` | Starts the rain preset. |
+| `/kasuga_particle_preset boids` | Starts the Boids preset. |
+| `/kasuga_particle_preset all` | Starts all presets. |
+| `/kasuga_particle_preset clear` | Stops and clears all presets. |
+| `/kasuga_particle_preset status` | Shows the instance count for each group. |
+
+Normal smoke ray-marches a turbulent three-dimensional density field inside each instanced cube and integrates opacity along the view ray. The cube is only a volume bound; the fragment shader discards empty samples, so no billboard or solid cube surface is visible. Cube smoke enables back-face culling. Cube smoke also adds stable variation to the position, velocity, and color of each particle. These settings prevent repeated blending of transparent front and back faces.
+
+## Managed Effects
+
+- `EffectRenderPipeline` controls effect-instance ticks, lifetime checks, frustum culling, optional far-to-near sorting, and renderer calls.
+
+- When the client is not paused and a world is present, Kasuga updates each active effect one time in each client tick.
+
+- Kasuga removes an effect that is not alive before or after the effect tick. If the tick throws a runtime exception, Kasuga removes only the related instance. Kasuga also records the exception.
+
+- Render traversal uses interpolated bounds for frustum culling. When sorting is enabled, Kasuga sorts effects from far to near. The sort uses the distance between the interpolated position and the camera. Kasuga calculates this distance one time for each visible effect in one frame. An effect can override `distanceToSqr(partialTick, observer)` to prevent allocation of a temporary position object.
+
+- The renderer calls `begin` and `end` only if at least one instance is visible. The renderer calls each method one time for each pipeline in one frame.
+
+- If one instance throws a render exception, Kasuga records the exception and continues with the other instances. Kasuga does not remove the failed instance automatically.
+
+- `spawn()`, `clear()`, and `EffectHandle.remove()` accept calls from different threads. Kasuga applies list changes during the next client tick or render traversal.
+
+- `EffectHandle.remove()` returns `true` only for the first successful removal.
+
+- When the client changes or unloads a world, Kasuga clears all instances from all effect pipelines. Kasuga also clears the post-process target pool. Kasuga does not tick effects while the client is paused.
+
+- After an effect pipeline closes, the pipeline rejects new instances. The closed pipeline does not participate in tick or render operations.
+
+Instances of one effect type share a renderer and pipeline state. A separate handle controls each instance. The following example spawns and removes one effect:
 
 ```java
 RenderPipelineDescriptor sparkDescriptor = RenderPipelineDescriptor.builder(
@@ -602,40 +825,49 @@ EffectHandle<SparkEffect> spark = sparks.spawn(new SparkEffect(position));
 spark.remove();
 ```
 
-## Post-processing pass
+## Post-Process Passes
 
-- Post-process pass 必须使用语义 `RenderPhase.POST_PROCESS`；其他 placement 在注册时被拒绝。
-- Pass 始终在 render thread 上执行，并在结束或抛出异常后重新绑定 main render target。
-- Target descriptor 支持相对屏幕尺寸或固定尺寸、可选 depth attachment、nearest/linear filter
-  和 clear color。解析后的宽高至少为 1 像素。
-- Target pool 按物理 ID 复用 target。Descriptor 或解析尺寸变化时会销毁并重建原 target。
-- Color copy 不允许 source 与 destination 相同。Depth copy 要求两端都有 depth attachment。
-- Fullscreen draw 只接受 `BLIT_SCREEN` shader，会备份并恢复 GL state。
-- Fullscreen draw 不允许从当前 output target 采样 color 或 depth，以避免 framebuffer feedback。
-  直接绑定的外部 texture ID 由调用方保证 feedback 安全。
+- A post-process pass must use the semantic `RenderPhase.POST_PROCESS`. Registration rejects all other placements.
 
-## Post-processing graph
+- A pass always runs on the render thread. Kasuga binds the main render target after the pass ends or throws an exception.
 
-- Graph ID 必须与注册它的 pipeline descriptor ID 相同。
-- Graph build 时拒绝重复 target、重复 pass、未声明 target、缺少 producer 的 managed-target
-  读取、managed target 的多个 writer、缺失的显式依赖和依赖环。
-- 每个 pass 必须声明至少一个输出，且同一 pass 不能同时读取和写入同一 target。
-- Main target 是外部 target，可以被多个 pass 写入；其他 target 是 graph 管理的 target。
-- Pass 顺序首先满足显式 `after` 和由读写关系推导的依赖。在所有当前可执行的 pass 中，
-  priority 较小者先执行，priority 相同时按 pass ID 排序。
-- `prepare` 在 managed target 分配和 pass 执行之前运行。返回 `false` 时该帧不分配 target，也不
-  执行任何 pass。
-- 每次 graph 执行都创建新的 `PostProcessGraphFrame`。其中的数据只在本次 prepare 和后续
-  pass 之间共享；按声明类型读取，缺失或类型不符时抛出异常。
-- Pass context 只允许读取和写入该 pass 已声明的 target；未声明访问在运行时失败。
-- 不同 graph 的逻辑 target 会转换为包含 graph ID 的物理 ID，因此相同逻辑名称不会互相
-  冲突。物理 ID 和替换后的 target descriptor 在 graph build 时计算，执行阶段直接复用。
-- Managed target 按 graph registration 引用计数；最后一个使用者关闭后在 render thread 释放。
-- Prepare 或 pass 异常会附加 graph/pass ID 后向上抛出，随后由 world pipeline dispatcher 记录，
-  不阻止后续 pipeline。
-- `raw()` 是绕过 graph 资源访问限制的底层出口；使用后资源声明和 feedback 安全由调用方负责。
+- A target descriptor supports a size relative to the screen or a fixed size. The descriptor also supports an optional depth attachment, nearest or linear filtering, and a clear color. The resolved width and height are a minimum of one pixel.
 
-下面的 graph 先保存主画面，再用 fullscreen shader 合成回主 target：
+- The target pool reuses a target that has the same physical ID. A descriptor or resolved-size change destroys the old target. The target pool then creates a new target.
+
+- A color copy fails when the source and destination are the same target. A depth copy fails if either target has no depth attachment.
+
+- A fullscreen draw accepts only a `BLIT_SCREEN` shader. The draw saves and restores the GL state.
+
+- A fullscreen draw rejects color or depth sampling from the current output target. This restriction prevents framebuffer feedback. The caller must ensure that a directly bound external texture ID cannot cause feedback.
+
+## Post-Process Graphs
+
+- A graph ID must match the ID of the related pipeline descriptor.
+
+- During graph construction, Kasuga rejects duplicate targets, duplicate passes, and undeclared targets. Kasuga rejects a managed-target read without a producer and multiple writers to a managed target. Kasuga also rejects missing explicit dependencies and dependency cycles.
+
+- Each pass must declare at least one output. One pass must not read and write the same target.
+
+- The main target is external. Multiple passes can write to the main target. All other targets are graph-managed targets.
+
+- Pass order first satisfies explicit `after` dependencies. Pass order also satisfies dependencies from read and write relations. Of all available passes, a pass with a lower priority value runs first. If priority values are equal, Kasuga sorts the passes by pass ID.
+
+- `prepare` runs before managed-target allocation and pass execution. If `prepare` returns `false`, Kasuga does not allocate targets or run passes in that frame.
+
+- Each graph execution creates a new `PostProcessGraphFrame`. The current `prepare` call and subsequent passes share the frame data. A read uses the declared type. The read throws an exception if data is missing or has a different type.
+
+- A pass context can read or write only the targets that the pass declares. Access to an undeclared target fails at runtime.
+
+- Kasuga converts each logical graph target to a physical ID that contains the graph ID. Therefore, equal logical names in different graphs do not conflict. Kasuga calculates physical IDs and substituted target descriptors during graph construction. Graph execution reuses these values.
+
+- Managed targets use reference counts for each graph registration. When the last graph registration closes, Kasuga releases the target on the render thread.
+
+- If `prepare` throws an exception, Kasuga adds the graph ID and throws the exception again. For a pass exception, Kasuga adds the pass ID. The world-pipeline dispatcher records the exception. Later pipelines continue to run.
+
+- `raw()` bypasses graph resource-access limits. After a `raw()` call, the caller is responsible for resource declarations and feedback safety.
+
+This graph first saves the main image. Then, a fullscreen shader composites the image back to the main target:
 
 ```java
 ResourceLocation graphId = ResourceLocation.fromNamespaceAndPath("example", "screen_tint");
@@ -669,14 +901,29 @@ PostProcessGraph graph = PostProcessGraph.builder(graphId)
 PostProcessGraphRegistration graphRegistration = pipelines.graph(graph, 100);
 ```
 
-## 诊断与参数界面
+## Ready-to-Run PostFX Presets
 
-- `/kasuga_effects` 打开客户端诊断与参数界面；它不会暂停游戏。
-- Effects 页面显示 owner、pipeline ID、effect 类型、活动数、可见数和最近渲染耗时。
-- Shaders 页面显示 owner、来源、状态、策略、priority、origin、generation、排队等待、
-  preparation/compile 耗时、cache 命中、公开参数数量和失败信息。
-- Shader 汇总同时显示 preparation executor 的请求/实际 worker 数、可用 CPU，以及 render-thread
-  preload scheduler 的队列状态。
-- `Parameters` 打开通用 schema 参数编辑器；它不会为内建效果或黑洞示例添加专用分支。
-- Pipelines 页面显示 owner、placement、priority、draw mode、buffer size 和已缓存
-  `RenderType` 变体数量。
+`PostFxPresetDemo` uses one generated shader registration that stays active across reloads. Parameter blocks select different color settings. Preset selection does not register or compile the shader again.
+
+| Preset | Development-client command |
+| --- | --- |
+| Cinematic color | `/kasuga_postfx cinematic` |
+| High-contrast monochrome | `/kasuga_postfx noir` |
+| High-saturation vivid color | `/kasuga_postfx vivid` |
+| Off | `/kasuga_postfx off` |
+
+`/kasuga_effects` shows the graph, shader state, and adjustable parameters.
+
+## Diagnostics and Parameter Interface
+
+- `/kasuga_effects` opens the client diagnostics and parameter interface. The interface does not pause the game.
+
+- The Effects page shows the owner, pipeline ID, effect type, active count, visible count, and most recent render time.
+
+- The Shaders page shows the owner, source, state, policy, priority, origin, generation, queue wait, preparation time, compile time, cache result, exposed-parameter count, and failure information.
+
+- The shader summary shows the requested and actual worker counts for the preparation executor. The summary shows the available CPU count. The summary also shows the queue state of the preload scheduler on the render thread.
+
+- `Parameters` opens the general schema parameter editor. The editor has no special logic for built-in effects or the black-hole example.
+
+- The Pipelines page shows the owner, placement, priority, draw mode, buffer size, and number of cached `RenderType` variants.
