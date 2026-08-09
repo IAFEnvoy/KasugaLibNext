@@ -16,7 +16,7 @@ public class ModellingTestCreativeTab {
             .configure(CreativeTabRegModifiers.TabBuilder.of("icon",
                 builder -> builder.icon(() -> new ItemStack(Items.COMMAND_BLOCK))))
             .displayItems((params, output) -> {
-                var block = ModellingContentTest.TEST_JE_FAN_BLOCK.getEntry();
+                var block = ModellingContentTest.TEST_FAN_BE_BLOCK.getEntry();
                 if (block != null) {
                     output.accept(block);
                 }

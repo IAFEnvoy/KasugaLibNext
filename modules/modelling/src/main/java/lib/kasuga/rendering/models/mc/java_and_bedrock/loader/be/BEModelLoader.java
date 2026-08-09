@@ -6,7 +6,6 @@ import lib.kasuga.rendering.models.mc.backend.RenderState;
 import lib.kasuga.rendering.models.mc.java_and_bedrock.IdentifierHelper;
 import lib.kasuga.rendering.models.mc.java_and_bedrock.data.MCMeshData;
 import lib.kasuga.rendering.models.mc.java_and_bedrock.data.MCTextureData;
-import lib.kasuga.rendering.models.mc.java_and_bedrock.data.be.BEModelData;
 import lib.kasuga.rendering.models.mc.java_and_bedrock.loader.TextureLayer;
 import lib.kasuga.rendering.models.mc.source.texture.KasugaTextureManager;
 import lib.kasuga.rendering.models.uml.loaders.MaterialSetBuilder;
@@ -33,7 +32,6 @@ import lombok.Getter;
 import net.minecraft.client.resources.model.Material;
 import net.minecraft.resources.ResourceLocation;
 
-import java.nio.file.Path;
 import java.util.*;
 import java.util.function.BiFunction;
 
@@ -117,14 +115,27 @@ public class BEModelLoader extends Loader<JsonObject, ResourceLocation, String> 
                             getData(),
                      null
         );
-        this.loadedModels.put(ResourceLocation.tryBuild(
-                nameSpace,
-                ((BEModelData) getData()).getIdentifier().toLowerCase(Locale.ROOT)
-        ), model);
+        this.loadedModels.put(resolveModelIdentifier(), model);
+    }
+
+    /**
+     * 模型注册 key 必须是模型文件的 ResourceLocation（文件路径），
+     * 与 PipelineBindingRegistry 中 RenderFeature.modelKey 的语义一致——
+     * createInstance(modelKey) 按文件路径查找 models 存储。
+     * 不能使用 JSON 内的 identifier（可能含中文/空格，tryBuild 返回 null，
+     * 且与 modelKey 对不上）。
+     */
+    private ResourceLocation resolveModelIdentifier() {
+        Object identifier = getContext().getData("identifier");
+        if (!(identifier instanceof ResourceLocation rl)) {
+            throw new IllegalStateException("identifier not set in context - model cannot be registered");
+        }
+        return rl;
     }
 
     @Override
     public HashMap<ResourceLocation, Model> load(ResourceLocation loc, JsonObject input) {
+        getContext().setData("identifier", loc);
         return super.load(loc, input);
     }
 

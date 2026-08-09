@@ -18,6 +18,8 @@ public record BlockPipelineBinding(
         List<RenderFeature> features,
         @Nullable RenderBehavior behavior
 ) {
+    public static final BiFunction<BlockState, BlockPos, Transform> DEFAULT_TRANSFORM =
+            (state, pos) -> new Transform().translate(pos.getX() + 0.5f, pos.getY(), pos.getZ() + 0.5f);
 
     public static BlockPipelineBinding single(
             ResourceLocation modelKey,
@@ -25,6 +27,13 @@ public record BlockPipelineBinding(
             @Nullable RenderBehavior behavior
     ) {
         return new BlockPipelineBinding(List.of(new RenderFeature("main", modelKey, rootTransform)), behavior);
+    }
+
+    public static BlockPipelineBinding single(
+            ResourceLocation modelKey,
+            @Nullable RenderBehavior behavior
+    ) {
+        return new BlockPipelineBinding(List.of(new RenderFeature("main", modelKey, DEFAULT_TRANSFORM)), behavior);
     }
 
     public static BlockPipelineBinding composite(

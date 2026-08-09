@@ -13,11 +13,11 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.function.Supplier;
 
-public class TestJeFanBlock extends Block implements EntityBlock {
+public class TestFanBeBlock extends Block implements EntityBlock {
 
     private final Supplier<BlockEntityType<?>> blockEntityType;
 
-    public TestJeFanBlock(BlockBehaviour.Properties properties, Supplier<BlockEntityType<?>> blockEntityType) {
+    public TestFanBeBlock(BlockBehaviour.Properties properties, Supplier<BlockEntityType<?>> blockEntityType) {
         super(properties);
         this.blockEntityType = blockEntityType;
     }
