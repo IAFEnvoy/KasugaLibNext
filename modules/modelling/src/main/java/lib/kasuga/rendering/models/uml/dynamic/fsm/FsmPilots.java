@@ -1,10 +1,21 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import com.mojang.serialization.Codec;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
+import net.minecraft.resources.ResourceLocation;
+
 /**
  * Pilot factory: builds a small reference-style machine for an owner. Generic (uses trigger +
  * whenComplete, not owner fields) so it works for any {@link Owner}. A living example of the DSL.
  */
 public final class FsmPilots {
+
+    /** Tick-scoped trigger fired to start the demo machine. */
+    public static final StateVar<Boolean> ACTIVATE = StateVar.builder(
+            ResourceLocation.fromNamespaceAndPath("kasuga_lib", "pilot/activate"),
+            Boolean.class,
+            Codec.BOOL
+    ).defaultValue(Boolean.FALSE).ephemeral().build();
 
     private FsmPilots() {}
 
@@ -14,7 +25,7 @@ public final class FsmPilots {
                     State<Owner> idle = layer.state("idle");
                     State<Owner> active = layer.state("active").durationTicks(2);
                     layer.initial(idle);
-                    layer.transition("start", idle, active).on("activate");
+                    layer.transition("start", idle, active).on(ACTIVATE);
                     layer.transition("loop", active, idle).whenComplete();
                 })
                 .build();

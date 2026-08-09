@@ -1,5 +1,7 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -8,7 +10,7 @@ import java.util.function.Predicate;
 /**
  * A transition between two {@link State}s (referenced by handle, not string id). {@code from}/{@code to}
  * are a required pair, set at construction:
- * {@code layer.transition("id", from, to).when(ctx -> ...).on("attack").whenComplete()}.
+ * {@code layer.transition("id", from, to).when(ctx -> ...).on(ATTACK).whenComplete()}.
  *
  * <p>Fires when: (whenComplete-satisfied) AND (trigger active, if {@code .on(...)}) AND (all {@code .when} hold).
  */
@@ -19,7 +21,8 @@ public final class Transition<Owner> {
     final State<Owner> from;
     final State<Owner> to;
     final List<Predicate<StateContext<Owner>>> whens = new ArrayList<>();
-    String triggerOn;
+    StateVar<Boolean> triggerOn;
+    StateVar<Boolean> bufferedTrigger;
     boolean whenComplete;
     float crossFadeSeconds;
     final List<Consumer<StateContext<Owner>>> onFire = new ArrayList<>();
@@ -48,9 +51,21 @@ public final class Transition<Owner> {
         return this;
     }
 
-    /** Fire on a named trigger. */
-    public Transition<Owner> on(String trigger) {
+    /** Fire on a tick-scoped trigger (an ephemeral {@link StateVar}{@code <Boolean>}). */
+    public Transition<Owner> on(StateVar<Boolean> trigger) {
         this.triggerOn = trigger;
+        return this;
+    }
+
+    /**
+     * Fire on a buffered (latched) trigger — a <b>non-ephemeral</b> {@link StateVar}{@code <Boolean>} that,
+     * once raised via {@code StateMachine.triggerBuffered(var)}, stays set until this transition (or any
+     * other gated on it) consumes it. Unlike {@link #on(StateVar)}, the trigger survives across ticks, so
+     * {@code whenComplete + onBuffered(trigger)} does not deadlock when the trigger arrives before the source
+     * state completes.
+     */
+    public Transition<Owner> onBuffered(StateVar<Boolean> trigger) {
+        this.bufferedTrigger = trigger;
         return this;
     }
 
@@ -90,7 +105,7 @@ public final class Transition<Owner> {
         return to;
     }
 
-    public String triggerOn() {
+    public StateVar<Boolean> triggerOn() {
         return triggerOn;
     }
 
@@ -108,13 +123,20 @@ public final class Transition<Owner> {
         if (whenComplete && !sourceComplete) {
             return false;
         }
-        if (triggerOn != null && !ctx.machine().isTriggered(triggerOn)) {
+        if (triggerOn != null && !ctx.isTriggered(triggerOn)) {
+            return false;
+        }
+        if (bufferedTrigger != null && !ctx.machine().isBufferedTriggered(bufferedTrigger)) {
             return false;
         }
         for (Predicate<StateContext<Owner>> guard : whens) {
             if (!guard.test(ctx)) {
                 return false;
             }
+        }
+        // all conditions met — consume the buffered trigger (latch cleared on fire)
+        if (bufferedTrigger != null) {
+            ctx.machine().consumeBufferedTrigger(bufferedTrigger);
         }
         return true;
     }

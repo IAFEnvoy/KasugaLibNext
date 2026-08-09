@@ -14,7 +14,7 @@ import java.util.function.Consumer;
 
 /**
  * One parallel state graph + its blend properties ({@link BlendMode} / {@code weight} / {@link BoneMask}).
- * Layer UNIFIES the old "region" and "blend layer" concepts: multiple layers = parallel/orthogonal.
+ * Multiple layers run in parallel (orthogonal).
  *
  * <p>Built inside a {@code layer(id, layer -> ...)} lambda. {@link #state(String)} returns a typed
  * {@link State} handle, used in {@code transition(id, from, to)} (compile-time safe, no string ids).
@@ -58,6 +58,11 @@ public final class Layer<Owner> {
     }
 
     public State<Owner> state(String id, Consumer<State<Owner>> config) {
+        for (State<Owner> existing : states) {
+            if (existing.id().equals(id)) {
+                throw new IllegalStateException("duplicate state id '" + id + "' in layer '" + this.id + "'");
+            }
+        }
         State<Owner> state = new State<>(id);
         config.accept(state);
         states.add(state);
@@ -70,6 +75,10 @@ public final class Layer<Owner> {
     }
 
     public Transition<Owner> transition(String id, State<Owner> from, State<Owner> to) {
+        if (!states.contains(from) || !states.contains(to)) {
+            throw new IllegalArgumentException("transition '" + id + "' in layer '" + this.id
+                    + "' references a state from another layer (from/to must belong to this layer)");
+        }
         Transition<Owner> transition = new Transition<>(id, this, from, to);
         transitions.add(transition);
         return transition;
@@ -130,6 +139,26 @@ public final class Layer<Owner> {
         return activeTransition;
     }
 
+    /** Index of the active state in {@link #states} (build order), or -1 when no state is active. */
+    public int activeStateIndex() {
+        return states.indexOf(active);
+    }
+
+    /** Index of the active transition in {@link #transitions} (build order), or -1 when none is in flight. */
+    public int activeTransitionIndex() {
+        return transitions.indexOf(activeTransition);
+    }
+
+    /** State at {@code index} in build order; null when out of bounds. */
+    public @Nullable State<Owner> stateAt(int index) {
+        return index >= 0 && index < states.size() ? states.get(index) : null;
+    }
+
+    /** Transition at {@code index} in build order; null when out of bounds. */
+    public @Nullable Transition<Owner> transitionAt(int index) {
+        return index >= 0 && index < transitions.size() ? transitions.get(index) : null;
+    }
+
     /** Seconds elapsed in the current cross-fade (0 if no transition). */
     public float transitionElapsed() {
         return transitionElapsed;
@@ -157,15 +186,54 @@ public final class Layer<Owner> {
         return null;
     }
 
-    /** Client reconciliation: set the active state by id, silently (no onExit/onEnter callbacks). */
-    void conformTo(String stateId) {
+    /**
+     * Client reconciliation: set the active state by id, silently (no onExit/onEnter callbacks).
+     * Clears any in-flight transition — call {@link #conformTransition} afterwards to restore one.
+     *
+     * @return true when the state id matched and the layer was conformed
+     */
+    boolean conformTo(String stateId, int elapsedTicks) {
         State<Owner> target = findState(stateId);
         if (target == null) {
-            return;
+            return false;
         }
         active = target;
         activeTransition = null;
-        stateElapsedTicks = 0;
+        stateElapsedTicks = Math.max(0, elapsedTicks);
+        return true;
+    }
+
+    /** Legacy reconcile: same as {@link #conformTo(String, int)} with zero elapsed ticks. */
+    boolean conformTo(String stateId) {
+        return conformTo(stateId, 0);
+    }
+
+    /**
+     * Client reconciliation: restore an in-flight cross-fade by transition id. No-op when the id is
+     * unknown or neither the transition's source nor its target matches the currently active state.
+     * Must be called after {@link #conformTo(String, int)} — that method clears the active
+     * transition first. Note the active state stays on the transition's {@code from} state while a
+     * cross-fade is in flight, so both ends are accepted.
+     */
+    void conformTransition(String transitionId, float elapsedSeconds) {
+        Transition<Owner> transition = findTransition(transitionId);
+        if (transition == null || (active != transition.from && active != transition.to)) {
+            return;
+        }
+        activeTransition = transition;
+        transitionElapsed = Math.max(0f, elapsedSeconds);
+    }
+
+    private @Nullable Transition<Owner> findTransition(String id) {
+        if (id == null) {
+            return null;
+        }
+        for (Transition<Owner> transition : transitions) {
+            if (transition.id().equals(id)) {
+                return transition;
+            }
+        }
+        return null;
     }
 
     //endregion
@@ -183,6 +251,14 @@ public final class Layer<Owner> {
         this.transitionsByFrom = Collections.unmodifiableMap(byFrom);
     }
 
+    /**
+     * Advance one server tick. <b>Clock discipline</b> (intentional split — see doc/fsm-design-review.md block 1.2):
+     * {@code dt} is <em>real seconds</em> since the last tick and feeds cross-fade progress
+     * ({@code transitionElapsed += dt}); {@code stateElapsedTicks} is a <em>call count</em> compared against
+     * {@link State#durationTicks(int)} (which {@link State#durationSeconds(float)} rounds as {@code s*20}).
+     * So {@code whenComplete} fires after N tick calls regardless of {@code dt}, while cross-fade runs in real
+     * time. Hosts that tick at 20 Hz keep both in sync; variable-step callers should be aware of the split.
+     */
     boolean tick(StateMachine<Owner> machine, float dt, long tickCount) {
         activeChanged = false;
         if (machine.consumeLock(id)) {
@@ -228,6 +304,25 @@ public final class Layer<Owner> {
         return activeChanged;
     }
 
+    /**
+     * Puppet tick: advance cross-fade interpolation only. No transition evaluation, no state actions, no
+     * version bump, no {@code stateElapsedTicks} increment, no lock consumption — the server is authoritative
+     * and the client conforms to {@link StateMachine#conform(StateMachineSnapshot)} snapshots, which supply
+     * the active transition and its elapsed seconds. This lets a client smooth-interpolate between snapshots
+     * without locally evaluating guards on vars it does not sync.
+     */
+    void advancePuppet(float dt) {
+        if (activeTransition != null) {
+            transitionElapsed += dt;
+            if (transitionElapsed >= activeTransition.crossFadeSeconds) {
+                // complete without running onEnter/onExit (the server ran them)
+                active = activeTransition.to;
+                activeTransition = null;
+                stateElapsedTicks = 0;
+            }
+        }
+    }
+
     private void fire(Transition<Owner> transition, StateContext<Owner> ctx) {
         runActions(transition.onFire, ctx);
         if (transition.isInstant()) {
@@ -243,6 +338,7 @@ public final class Layer<Owner> {
         } else {
             activeTransition = transition;
             transitionElapsed = 0f;
+            activeChanged = true;
         }
     }
 
@@ -323,12 +419,13 @@ public final class Layer<Owner> {
         boneKeys.addAll(from.bones().keySet());
         boneKeys.addAll(to.bones().keySet());
         Transform scratch = new Transform();
+        TransformLerp.Scratch lerpScratch = new TransformLerp.Scratch(); // reused across bones (one alloc per blend)
         for (String key : boneKeys) {
             Pose.Bone bf = from.bones().get(key);
             Pose.Bone bt = to.bones().get(key);
             ApplyMode applyMode = bt != null ? bt.mode() : (bf != null ? bf.mode() : ApplyMode.REPLACE);
             if (bf != null && bt != null) {
-                TransformLerp.lerp(bf.transform(), bt.transform(), alpha, scratch);
+                TransformLerp.lerpInto(bf.transform(), bt.transform(), alpha, scratch, lerpScratch);
                 builder.bone(key, scratch, applyMode);
             } else if (bf != null) {
                 builder.bone(key, bf.transform(), applyMode);

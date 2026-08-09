@@ -1,6 +1,6 @@
 package lib.kasuga.rendering.models.mc.multiplexer;
 
-import lib.kasuga.rendering.models.uml.dynamic.data.Blackboard;
+import lib.kasuga.rendering.models.uml.dynamic.multiplexer.Blackboard;
 import lib.kasuga.rendering.models.uml.dynamic.multiplexer.Context;
 import net.minecraft.resources.ResourceLocation;
 

@@ -19,14 +19,26 @@ sourceSets {}
 useModProject(project(':modules:core'))
 useModProject(project(':modules:modelling'))
 
-base {
-    archivesName = mod_id
-}
 
 configurations {}
 
 test {
     useJUnitPlatform()
+}
+
+tasks.register('scriptUnitTest', Test) {
+    description = 'Runs pure Java scripting tests without the NeoForge dedicated-server test launcher.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath.filter {
+        !it.name.startsWith('junit-fml-')
+    }
+    useJUnitPlatform()
+    // The pre-existing scripting tests resolve a MinecraftServer parameter through the NeoForge
+    // EphemeralTestServerProvider and hang in a plain JVM (they need the dedicated-server launcher).
+    // This pure-JVM task therefore runs only the FSM scripting-API tests; the full suite still runs
+    // through the `test` task in the dev environment.
+    include '**/fsm/**'
 }
 
 
@@ -111,6 +123,10 @@ dependencies {
     implementation project(":modules:inject")
     implementation project(":modules:utils")
     testImplementation project(":modules:core")
+    testImplementation(project(":modules:modelling")) {
+        exclude group: 'libs', module: 'iris'
+        exclude group: 'libs', module: 'sodium'
+    }
 
     annotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
 

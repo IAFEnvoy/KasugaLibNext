@@ -1,6 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.multiplexer;
 
-import lib.kasuga.rendering.models.uml.dynamic.data.Blackboard;
+import lib.kasuga.rendering.models.uml.dynamic.multiplexer.Blackboard;
 
 import java.util.Objects;
 import java.util.function.Predicate;

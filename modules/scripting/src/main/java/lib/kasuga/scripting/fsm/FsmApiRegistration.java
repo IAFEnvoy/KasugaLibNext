@@ -13,8 +13,11 @@ public final class FsmApiRegistration {
     private FsmApiRegistration() {}
 
     public static <T extends ScriptEngine> ScriptEngineType.Builder<T> install(ScriptEngineType.Builder<T> builder) {
+        // Engine-aware suppliers: AnimatorApi/AnimatorBuilderApi capture the engine back-reference so they
+        // can wrap Java objects (StateContext) into ScriptValues when invoking JS callbacks. Explicit
+        // lambdas (not ctor references) avoid Supplier/Function overload ambiguity.
         return builder
-                .addGlobalApi("Animator", AnimatorApi::new)
-                .addGlobalApi("AnimatorBuilder", AnimatorBuilderApi::new);
+                .addGlobalApi("Animator", engine -> new AnimatorApi(engine))
+                .addGlobalApi("AnimatorBuilder", engine -> new AnimatorBuilderApi(engine));
     }
 }

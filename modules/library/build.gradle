@@ -24,9 +24,6 @@ repositories {
     }
 }
 
-base {
-    archivesName = mod_id
-}
 
 useModProject(project(':modules:scripting'))
 useModProject(project(':modules:modelling'))

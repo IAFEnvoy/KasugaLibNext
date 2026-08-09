@@ -22,8 +22,8 @@ class MultiplexerTest {
         }
 
         @Override
-        public lib.kasuga.rendering.models.uml.dynamic.data.Blackboard data() {
-            return lib.kasuga.rendering.models.uml.dynamic.data.Blackboard.empty();
+        public lib.kasuga.rendering.models.uml.dynamic.multiplexer.Blackboard data() {
+            return lib.kasuga.rendering.models.uml.dynamic.multiplexer.Blackboard.empty();
         }
     }
 

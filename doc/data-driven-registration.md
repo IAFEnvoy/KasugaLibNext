@@ -120,7 +120,7 @@ Block 通过 `block_entity` 字段引用方块实体，不需要独立的顶层 
 | `item_properties` | object | 否 | 物品属性（如创造标签页） |
 | `model` | string | 否 | 模型路径 |
 | `textures` | object | 否 | 纹理引用 |
-| `state_machine` | string | 否 | 状态机 id |
+| `state_machine` | string | 否 | 状态机 id（**已实现**：`BlockEntityTypeHandler` 会把它注入 `block_entity.params.state_machine`，经 params 通道传给 BE 工厂） |
 | `block_entity` | object | 否 | BlockEntity 绑定 |
 
 **优先级**：block 级属性 > group 级继承属性。当 block 的 `item_properties` 未指定 `tab` 时，自动从所属 group 继承。
@@ -192,11 +192,45 @@ Block Entity 通过 Block 定义中的 `block_entity` 字段关联，不作为�
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | `type` | string | 是 | BE 工厂类型，需在 `FactoryRegistry` 中注册为 `BlockEntityFactory` |
+| `params` | object | 否 | 透传给 BE 工厂的参数；顶层 `state_machine` 会自动并入 |
 
 **关联机制**：JsonTreeBuilder 在创建 Block 后，如果 Block 引用了 BE 类型，则：
 1. 通过 `FactoryRegistry.getBlockEntityFactory(type)` 获取工厂
 2. 以 Block 的 `Supplier<Block[]>` 作为 valid blocks 创建 `BlockEntityReg`
 3. 将 BE 注册挂载为 Block 的子节点（`blockReg.addChild(beReg)`）
+
+### 状态机方块（fsm_block / fsm_be）
+
+modelling 模块内置两个工厂（`FsmBlockEntityFactories`，`@Context` 静态注册，幂等）：
+
+| type | 说明 |
+|------|------|
+| `fsm_block` | `FsmBlock`（`EntityBlock`），BE 类型按 `BuiltInRegistries.BLOCK_ENTITY_TYPE` 扫描 `isValid(state)` 发现；`getTicker` 校验 BE 类型（类型缓存 + instanceof 兜底）后才返回 ticker |
+| `fsm_be` | `BlockEntityReg<AnimationBlockEntity>`，从 `params` 读 `state_machine`（缺省 warn 不崩）、`model`、`model_name`，闭包捕获进 BE 构造 |
+
+示例（contentTesting 的 `fsm_blocks.json`）：
+
+```json
+{
+  "blocks": [
+    {
+      "id": "kasuga_lib:fsm_test_block",
+      "type": "fsm_block",
+      "state_machine": "kasuga_lib:fsm_test_panel",
+      "block_entity": {
+        "type": "fsm_be",
+        "params": { "model": "kasuga_lib_test:models/fsm/test_cube.obj" }
+      }
+    }
+  ]
+}
+```
+
+`state_machine` 指向 `data/<namespace>/state_machines/*.json` 定义（由 modelling 的
+`StateMachineDefinitionLoader` 扫描加载）；`model` 为模型资源（`.mmd.zip` / `.obj` /
+`.geo.json` / `.json`，按扩展名路由到对应管线）。方块放置后：服务端每 tick 驱动逻辑机
+（sink=null）并通过 `FsmSyncServer` 推送状态；客户端绑定模型实例（`ModelInstancePoseSink`）、
+应用服务端快照并驱动渲染（详见 modelling `AnimationBlockEntity` / `KasugaModelPipelines`）。
 
 ---
 

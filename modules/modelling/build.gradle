@@ -21,9 +21,6 @@ repositories {
 
 useModProject(project(":modules:core"))
 
-base {
-    archivesName = mod_id
-}
 
 configurations {
     shadowLibrary
@@ -51,6 +48,21 @@ sourceSets {
         }
         resources {
             srcDir 'src/contentTesting/resources'
+        }
+
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+
+        compileClasspath += sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.runtimeClasspath
+    }
+
+    gameTest {
+        java {
+            srcDir 'src/gameTest/java'
+        }
+        resources {
+            srcDir 'src/gameTest/resources'
         }
 
         compileClasspath += sourceSets.main.output
@@ -88,6 +100,15 @@ neoForge {
 
     runs {
         client {
+            client()
+            gameDirectory = file('run/client')
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        clientProfile {
+            client()
+            gameDirectory = file('run/clientProfile')
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
             systemProperty 'kasuga.profileModel', 'true'
             systemProperty 'kasuga.profileModel.intervalMs', '1000'
             systemProperty 'kasuga.profileModel.animateTestBone', 'true'
@@ -96,24 +117,24 @@ neoForge {
             systemProperty 'kasuga.profileModel.animateBoneCount', '32'
             systemProperty 'kasuga.profileModel.animateTranslation', '0.2'
             systemProperty 'kasuga.modelGpuSkinning', 'true'
-            client()
-
-            // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
-            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
         server {
             server()
             programArgument '--nogui'
+            gameDirectory = file('run/server')
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
         gameTestServer {
             type = "gameTestServer"
+            gameDirectory = file('run/gameTestServer')
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
         data {
+            gameDirectory = file('run/data')
+            data()
             data()
             programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
         }
@@ -128,9 +149,9 @@ neoForge {
 
     mods {
         "${mod_id}" {
-            // Inlcude the core subproject as a dependency.
             sourceSet(sourceSets.main)
             sourceSet(sourceSets.contentTesting)
+            sourceSet(sourceSets.gameTest)
         }
     }
 
@@ -167,7 +188,7 @@ dependencies {
 
     annotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
 
-    contentTestingAnnotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
+    gameTestAnnotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
 
     implementation("com.google.guava:guava:32.1.2-jre")
 
@@ -178,6 +199,8 @@ dependencies {
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.7.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // test source set needs core's ScopedResourceManager/ResourceSystem types for loader tests
+    testImplementation project(":modules:core")
 
     jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
     jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
@@ -191,24 +214,15 @@ dependencies {
     compileOnly("libs:iris:neoforge-mc1.21.1-1.8.12")
     compileOnly("libs:sodium:neoforge-mc1.21.1-0.6.13")
     shadow("libs:iris:mc1.21-1.7.3")
-    runtimeOnly("libs:iris:neoforge-mc1.21.1-1.8.12")
-    runtimeOnly("libs:sodium:neoforge-mc1.21.1-0.6.13")
-    implementation("libs:sodium:neoforge-mc1.21.1-0.6.13")
+    localRuntime("libs:iris:neoforge-mc1.21.1-1.8.12")
+    localRuntime("libs:sodium:neoforge-mc1.21.1-0.6.13")
 }
 
-tasks.register('jmhMkdir', Exec) {
-    description = 'Creates the JMH reports directory.'
-    group = 'verification'
-    commandLine 'mkdir', '-p', 'build/reports/jmh'
-}
-
-tasks.register('jmhRun', JavaExec) {
-    description = 'Runs JMH microbenchmarks from src/jmh and writes JSON results.'
-    group = 'verification'
-    dependsOn 'jmhClasses', 'jmhMkdir'
-    mainClass = 'org.openjdk.jmh.Main'
-    classpath = sourceSets.jmh.runtimeClasspath
-    args '-wi', '5', '-i', '10', '-f', '1', '-rf', 'json', '-rff', 'build/reports/jmh/results.json'
+// The gameTest source set re-declares its resource dir (srcDir 'src/gameTest/resources') on top of Gradle's
+// default convention for that source set, so the first gameTest resource trips a duplicate-entry error. Take
+// both copies (last wins) — there is only ever one real source file per path.
+tasks.named('processGameTestResources', ProcessResources) {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.

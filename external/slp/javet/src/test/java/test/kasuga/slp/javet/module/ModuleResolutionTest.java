@@ -10,6 +10,7 @@ import lib.kasuga.slp.javet.JavetScriptEngine;
 import lib.kasuga.slp.javet.KasugaLibJavet;
 import lib.kasuga.slp.javet.module.JavetModuleHandle;
 import lib.kasuga.slp.javet.module.JsModuleResolver;
+import lib.kasuga.slp.javet.module.PackageAwareRequireResolver;
 import lib.kasuga.slp.javet.module.RequireResolver;
 import lib.kasuga.slp.javet.value.JavetValuePrimitive;
 import org.junit.jupiter.api.*;
@@ -60,6 +61,10 @@ public class ModuleResolutionTest {
     }
 
     private RequireResolver createRequireResolver() {
+        // Delegate the package-by-name + in-package relative branches to the PRODUCTION resolver class so
+        // these 13 tests exercise the same code path real scripts use (only the test-specific builtin branch
+        // stays inline here).
+        PackageAwareRequireResolver packageAware = new PackageAwareRequireResolver(engine, packageRegistry, resolver);
         return (moduleName, fromSourcePath) -> {
             if (builtinRegistry.has(moduleName)) {
                 Object builtin = builtinRegistry.resolve(moduleName);
@@ -73,34 +78,7 @@ public class ModuleResolutionTest {
                 }
                 return new JavetModuleHandle(exports, "builtin:" + moduleName, engineType);
             }
-
-            ResolvedPackage pkg = packageRegistry.lookup(moduleName);
-            if (pkg != null) {
-                ResolvedScript script = resolver.locateScript(pkg, List.of());
-                if (script != null) {
-                    return engine.loadModule(script);
-                }
-            }
-
-            if (moduleName.startsWith("./") || moduleName.startsWith("../")) {
-                String dir = fromSourcePath.contains("/")
-                    ? fromSourcePath.substring(0, fromSourcePath.lastIndexOf('/'))
-                    : "";
-                String target = dir.isEmpty()
-                    ? moduleName.substring(2)
-                    : dir + "/" + moduleName.substring(2);
-
-                for (var entry : packageRegistry.all().entrySet()) {
-                    ResolvedPackage candidate = entry.getValue();
-                    List<String> segments = List.of(target.split("/"));
-                    ResolvedScript script = resolver.locateScript(candidate, segments);
-                    if (script != null) {
-                        return engine.loadModule(script);
-                    }
-                }
-            }
-
-            return null;
+            return packageAware.resolve(moduleName, fromSourcePath);
         };
     }
 

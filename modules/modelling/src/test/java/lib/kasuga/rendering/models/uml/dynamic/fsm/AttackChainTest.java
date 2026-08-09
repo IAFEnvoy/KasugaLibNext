@@ -1,5 +1,8 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import com.mojang.serialization.Codec;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
+import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -10,6 +13,12 @@ import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 
 /** Reference scenario: upper_body attack chain — trigger → duration/whenComplete auto-advance + onEnter callbacks. */
 class AttackChainTest {
+
+    static final StateVar<Boolean> ATTACK = StateVar.builder(
+            ResourceLocation.fromNamespaceAndPath("kasuga_lib", "test/attack"),
+            Boolean.class,
+            Codec.BOOL
+    ).defaultValue(Boolean.FALSE).ephemeral().build();
 
     static final class Actor {
         final List<String> events = new ArrayList<>();
@@ -30,7 +39,7 @@ class AttackChainTest {
                     State<Actor> recover = layer.state("attack.recover").durationTicks(2)
                             .onEnter(ctx -> ctx.owner().events.add("recover"));
                     layer.initial(none);
-                    layer.transition("start_attack", none, windup).on("attack");
+                    layer.transition("start_attack", none, windup).on(ATTACK);
                     layer.transition("windup_to_hit", windup, hit).whenComplete();
                     layer.transition("hit_to_recover", hit, recover).whenComplete();
                     layer.transition("recover_to_none", recover, none).whenComplete();
@@ -45,7 +54,7 @@ class AttackChainTest {
 
         assertEquals("none", m.layer("upper_body").active().id());
 
-        m.trigger("attack");
+        m.trigger(ATTACK);
         m.tick();  // none -> windup (onEnter "windup")
         assertEquals("attack.windup", m.layer("upper_body").active().id());
 

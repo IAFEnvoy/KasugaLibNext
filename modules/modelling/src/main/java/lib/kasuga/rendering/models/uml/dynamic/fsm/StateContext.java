@@ -1,111 +1,166 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
-import lib.kasuga.rendering.models.uml.dynamic.data.Blackboard;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateMap;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.Consumer;
 
 /**
- * The typed context handed to {@link Transition} guards and {@link State} callbacks. Fully generic
- * over {@link Owner}, so {@code ctx.owner()} returns the actor with no cast (type-safe). Carries the
- * imperative surface: {@code goTo/trigger/lockLayer/signal}.
+ * The typed context handed to {@link Transition} guards and {@link State} callbacks. Fully generic over
+ * {@link Owner}, so {@code ctx.owner()} returns the actor with no cast (type-safe). Carries the imperative
+ * surface ({@code goTo/trigger/lockLayer}) and the typed value store ({@code get/set/vars}).
  *
- * <p>It also implements {@link StateReader}, so conditions and actions can read collaborative state
- * through a single path API: {@code ctx.read("data.combo", int.class)},
- * {@code ctx.read("layer.state")}, {@code ctx.read("trigger.attack")}.
+ * <p>Scoped to one {@link Layer}/{@link State} pair, so structural reads ({@code stateElapsedTicks()},
+ * {@code layerMode()}, ...) are direct typed methods — no path strings. The value store replaces the old
+ * {@code data()}/{@code signal()} channel: {@code ctx.get(SPEED)}, {@code ctx.set(MODE, "fast")},
+ * {@code ctx.isTriggered(ATTACK)}.
  */
 public record StateContext<Owner>(
         StateMachine<Owner> machine,
         Layer<Owner> layer,
         State<Owner> state,
         long tick
-) implements StateReader {
+) {
 
     /**
-     * The owning actor — fully typed. Read its fields directly in conditions: {@code ctx -> ctx.owner().moving}.
+     * The owning actor — fully typed. Read its fields directly in conditions:
+     * {@code ctx -> ctx.owner().moving}.
      */
-    public Owner owner() {return machine.owner();}
+    public Owner owner() {
+        return machine.owner();
+    }
 
-    public boolean isClientSide() {return machine.isClientSide();}
+    public boolean isClientSide() {
+        return machine.isClientSide();
+    }
 
-    /**
-     * Open typed/raw data channel — read or write custom data from conditions and actions without
-     * modifying any framework type: {@code ctx.data().get(MY_KEY)} (typed) or
-     * {@code ctx.data().get("name")} (raw). Backed by {@link StateMachine#data()} (persists across ticks).
-     */
-    public Blackboard data() {return machine.data();}
+    public long tickCount() {
+        return tick;
+    }
+
+    public int version() {
+        return machine.version();
+    }
+
+    //region structural (scoped to this layer/state)
+
+    public Layer<Owner> layer() {
+        return layer;
+    }
+
+    public State<Owner> state() {
+        return state;
+    }
+
+    @Nullable
+    public Transition<Owner> activeTransition() {
+        return layer == null ? null : layer.activeTransition();
+    }
+
+    /** Ticks the active state has been running (0 immediately after entering). */
+    public int stateElapsedTicks() {
+        return layer == null ? 0 : layer.stateElapsedTicks();
+    }
+
+    /** Configured duration of the active state, or {@code -1} if it has none. */
+    public int stateDurationTicks() {
+        return state == null ? -1 : state.durationTicks();
+    }
+
+    public BlendMode layerMode() {
+        return layer == null ? BlendMode.BASE : layer.mode();
+    }
+
+    public float layerWeight() {
+        return layer == null ? 0f : layer.weight();
+    }
+
+    public boolean isLayerLocked() {
+        return layer != null && machine.isLayerLocked(layer.id());
+    }
+
+    //endregion
+
+    //region value store (replaces data()/signal())
+
+    /** The typed value store (read-only view); values default to each var's default when unset. */
+    public StateMap vars() {
+        return machine.vars();
+    }
+
+    /** Read a typed value — the var's {@link StateVar#defaultValue()} if unset. */
+    public <T> T get(StateVar<T> var) {
+        return machine.vars().get(var);
+    }
+
+    /** True iff a value is explicitly set for {@code var} (a default does not count). */
+    public boolean has(StateVar<?> var) {
+        return machine.vars().has(var);
+    }
+
+    /** Validate and store {@code value} for {@code var}. */
+    public <T> T set(StateVar<T> var, T value) {
+        return machine.mutableVars().set(var, value);
+    }
+
+    /** Remove the explicitly-set value for {@code var} (subsequent {@code get} returns the default). */
+    public <T> T remove(StateVar<T> var) {
+        return machine.mutableVars().remove(var);
+    }
+
+    //endregion
+
+    //region triggers
+
+    /** Fire a tick-scoped trigger — an ephemeral {@link StateVar}{@code <Boolean>}; cleared at end of tick. */
+    public void trigger(StateVar<Boolean> trigger) {
+        machine.trigger(trigger);
+    }
+
+    /** Whether {@code trigger} is set this tick. */
+    public boolean isTriggered(StateVar<Boolean> trigger) {
+        return machine.isTriggered(trigger);
+    }
+
+    /** Raise a buffered (latched) trigger; consumed when a {@code Transition.onBuffered(var)} transition fires. */
+    public void triggerBuffered(StateVar<Boolean> trigger) {
+        machine.triggerBuffered(trigger);
+    }
+
+    /** Whether a buffered trigger is currently latched. */
+    public boolean isBufferedTriggered(StateVar<Boolean> trigger) {
+        return machine.isBufferedTriggered(trigger);
+    }
+
+    //endregion
+
+    //region imperative
 
     /**
      * Imperatively switch to {@code target} within the current layer (resolved this tick).
      */
-    public void goTo(State<Owner> target) {layer.requestGoTo(target);}
-
-    /**
-     * Fire a named trigger (consumed at end of this tick).
-     */
-    public void trigger(String name) {machine.trigger(name);}
+    public void goTo(State<Owner> target) {
+        layer.requestGoTo(target);
+    }
 
     /**
      * Lock another layer for {@code ticks} ticks (it stops evaluating transitions, but still emits its pose).
      */
-    public void lockLayer(String layerId, int ticks) {machine.lockLayer(layerId, ticks);}
+    public void lockLayer(String layerId, int ticks) {
+        machine.lockLayer(layerId, ticks);
+    }
 
-    /**
-     * Read a named signal (data-condition channel, reserved for JSON/scripts).
-     */
-    public Object signal(String name) {return machine.signal(name);}
-
-    public void signal(String name, Object value) {machine.setSignal(name, value);}
+    /** Force-unlock a layer (cancels any remaining {@link #lockLayer} duration). */
+    public void unlockLayer(String layerId) {
+        machine.unlockLayer(layerId);
+    }
 
     /**
      * Convenience for code that prefers a block: runs {@code body} with this context.
      */
-    public void run(Consumer<StateContext<Owner>> body) {body.accept(this);}
-
-    //region StateReader — read current and machine-level collaborative state
-
-    @Override
-    public boolean has(StateQuery query) {
-        return read(query) != null;
-    }
-
-    @Override
-    public Object read(StateQuery query) {
-        if (query.isEmpty()) return null;
-        String source = query.source();
-        return switch (source) {
-            case "owner", "machine", "data", "signal", "trigger" -> machine.read(query);
-            case "layer" -> readLayer(query.segment(1));
-            case "state" -> readState(query.segment(1));
-            default -> null;
-        };
-    }
-
-    private Object readLayer(String prop) {
-        if (prop == null || layer == null) return null;
-        State<Owner> active = layer.active();
-        return switch (prop) {
-            case "id" -> layer.id();
-            case "state" -> active == null ? null : active.id();
-            case "mode" -> layer.mode();
-            case "weight" -> layer.weight();
-            case "locked" -> machine.isLayerLocked(layer.id());
-            case "elapsed" -> layer.stateElapsedTicks();
-            case "duration" -> active == null ? -1 : active.durationTicks();
-            case "transition" -> layer.activeTransition();
-            case "transitionElapsed" -> layer.transitionElapsed();
-            case "mask" -> layer.boneMask();
-            default -> null;
-        };
-    }
-
-    private Object readState(String prop) {
-        if (prop == null || state == null) return null;
-        return switch (prop) {
-            case "id" -> state.id();
-            case "elapsed" -> layer == null ? 0 : layer.stateElapsedTicks();
-            case "duration" -> state.durationTicks();
-            default -> null;
-        };
+    public void run(Consumer<StateContext<Owner>> body) {
+        body.accept(this);
     }
 
     //endregion

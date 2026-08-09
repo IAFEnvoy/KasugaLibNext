@@ -1,16 +1,20 @@
-package lib.kasuga.rendering.models.uml.dynamic.data;
+package lib.kasuga.rendering.models.uml.dynamic.multiplexer;
 
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Open, typed key→value store — the user-extension channel for {@code StateContext} (via
- * {@code StateMachine.data()}) and {@link Context} implementations. Add custom data without editing any
- * framework type. Two key spaces:
+ * Open, typed key→value store — the user-extension channel for the multiplexer ({@link Context}
+ * implementations, e.g. {@code McContext}). Add custom sensor data without editing any framework type.
+ *
+ * <p><b>Note:</b> the FSM does not use {@code Blackboard}; its value store is the strongly-typed
+ * {@link lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateMap} (DataComponent-style, keyed by
+ * {@link lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar}). This class lives in the multiplexer
+ * package and serves only the multiplexer subsystem. Two key spaces:
  *
  * <ul>
  *   <li><b>typed</b> ({@link Key}): compile-time-safe channels Java code declares and reads,
- *       e.g. {@code ctx.data().get(MY_SPEED)} where {@code MY_SPEED = Blackboard.Key.of("speed")}.</li>
+ *       e.g. {@code ctx.data().get(MY_FLAG)} where {@code MY_FLAG = Blackboard.Key.of("flag")}.</li>
  *   <li><b>raw</b> (String): dynamically-named values for JSON/scripts,
  *       e.g. {@code ctx.data().put("speed", 0.5)} / {@code ctx.data().get("speed")}.</li>
  * </ul>

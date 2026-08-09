@@ -1,8 +1,10 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import com.mojang.serialization.Codec;
 import lib.kasuga.rendering.models.mc.multiplexer.McContext;
 import lib.kasuga.rendering.models.mc.multiplexer.McVariant;
-import lib.kasuga.rendering.models.uml.dynamic.data.Blackboard;
+import lib.kasuga.rendering.models.uml.dynamic.multiplexer.Blackboard;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 import lib.kasuga.rendering.models.uml.dynamic.multiplexer.Multiplexer;
 import lib.kasuga.rendering.models.uml.dynamic.multiplexer.MuxState;
 import lib.kasuga.rendering.models.uml.dynamic.multiplexer.SelectorPredicates;
@@ -17,13 +19,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
- * Verifies the open {@link Blackboard} extension channel: typed/raw keys on {@link StateContext},
- * and custom channels on {@link McContext} — no framework type edited to add new data.
+ * Verifies the typed extension channels: {@link StateVar}-keyed values on {@link StateContext} (FSM), and
+ * custom {@link Blackboard} channels on {@link McContext} (multiplexer) — no framework type edited to add data.
  */
 class ExtensibilityTest {
 
-    static final Blackboard.Key<Float> SPEED = Blackboard.Key.of("speed");
-    static final Blackboard.Key<String> MODE = Blackboard.Key.of("mode");
+    static final StateVar<Float> SPEED = StateVar.of(rl("test/speed"), Float.class, Codec.FLOAT, 0f);
+    static final StateVar<String> MODE = StateVar.of(rl("test/mode"), String.class, Codec.STRING, "idle");
+    static final StateVar<String> NOTE = StateVar.of(rl("test/note"), String.class, Codec.STRING, "");
     static final Blackboard.Key<Boolean> ARMED = Blackboard.Key.of("armed");
 
     static final class Actor {}
@@ -33,7 +36,7 @@ class ExtensibilityTest {
     }
 
     @Test
-    void contextBlackboardTypedAndRaw() {
+    void contextStateMapTyped() {
         Actor owner = new Actor();
         StateMachine<Actor> machine = StateMachine.<Actor>builder(owner)
                 .layer("l", layer -> {
@@ -41,19 +44,22 @@ class ExtensibilityTest {
                     State<Actor> b = layer.state("b");
                     layer.initial(a);
                     layer.transition("a2b", a, b)
-                            .when(ctx -> ctx.data().getOrDefault(SPEED, 0f) > 0.5f)
-                            .onFire(ctx -> ctx.data().put(MODE, "fast"));
+                            .when(ctx -> ctx.get(SPEED) > 0.5f)
+                            .onFire(ctx -> ctx.set(MODE, "fast"));
                 })
                 .build();
 
-        machine.data().put(SPEED, 0.6f);
+        // defaults read through when unset
+        assertEquals(0f, machine.vars().get(SPEED));
+
+        machine.mutableVars().set(SPEED, 0.6f);
         machine.tick();
 
         assertEquals("b", machine.layer("l").active().id());
-        assertEquals("fast", machine.data().get(MODE));
+        assertEquals("fast", machine.vars().get(MODE));
 
-        machine.data().put("note", "hello");
-        assertEquals("hello", machine.data().get("note"));
+        machine.mutableVars().set(NOTE, "hello");
+        assertEquals("hello", machine.vars().get(NOTE));
     }
 
     @Test

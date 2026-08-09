@@ -53,6 +53,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceProvider;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.RenderTypeGroup;
@@ -66,7 +67,7 @@ import java.util.Map;
 
 import static lib.kasuga.rendering.models.mc.backend.RenderState.UML_VERTEX_FORMAT;
 
-@EventBusSubscriber
+@EventBusSubscriber(value = Dist.CLIENT)
 public class Constants {
 
     public static ModelPipeLine BE_PIPELINE, OBJ_PIPELINE, MMD_PIPELINE, JE_PIPELINE;
@@ -362,6 +363,10 @@ public class Constants {
     }
 
     private static void testModel() {
+        // Render smoke switch: -Dkasuga.renderTestModels=false disables the default test models (hardcoded tests on by default).
+        if (!Boolean.parseBoolean(System.getProperty("kasuga.renderTestModels", "true"))) {
+            return;
+        }
         testMMD();
 //        testUI();
 //        testObj();

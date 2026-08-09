@@ -1,14 +1,19 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
-import lib.kasuga.rendering.models.uml.dynamic.data.Blackboard;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.MutableStateMap;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateMap;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -25,8 +30,12 @@ import java.util.function.Consumer;
  *
  * <p>Layers run in parallel (orthogonality); each tick composes their poses (BASE/ADDITIVE/OVERRIDE)
  * into a {@link Blender} and flushes via the {@link PoseSink} (null on a logic-only server).
+ *
+ * <p>The typed value store ({@link #vars()} / {@link #mutableVars()}) holds {@link StateVar}-keyed values
+ * (the FSM analog of Minecraft's {@code DataComponentMap}); signals are ordinary typed vars, and triggers are
+ * ephemeral {@code StateVar<Boolean>}s cleared at the end of every tick.
  */
-public final class StateMachine<Owner> implements StateReader {
+public final class StateMachine<Owner> {
 
     private final Owner owner;
     private final List<Layer<Owner>> layers = new ArrayList<>();
@@ -36,9 +45,13 @@ public final class StateMachine<Owner> implements StateReader {
     private int version;
     private long tickCount;
 
-    private final Map<String, Boolean> triggers = new HashMap<>();
-    private final Blackboard data = Blackboard.empty();
+    private final MutableStateMap vars = MutableStateMap.create();
     private final Map<String, Integer> locks = new HashMap<>();
+
+    private boolean logicEnabled = true;
+    private final Set<StateVar<Boolean>> bufferedTriggers = new HashSet<>();
+    private final Set<StateVar<?>> declaredVars = new HashSet<>();
+    private final Blender blender = new Blender();
 
     private StateMachine(Owner owner) {
         this.owner = owner;
@@ -54,6 +67,11 @@ public final class StateMachine<Owner> implements StateReader {
         return owner;
     }
 
+    /**
+     * Layer list in build order. Note: layers appended directly here (bypassing the builder) are
+     * not indexed in {@code layersById} — {@link #layerOrNull(String)} falls back to a linear scan
+     * so lookups still find them.
+     */
     public List<Layer<Owner>> layers() {
         return layers;
     }
@@ -71,12 +89,22 @@ public final class StateMachine<Owner> implements StateReader {
         return layer;
     }
 
-    /** Nullable layer lookup for best-effort callers (scripting / JSON); {@code null} if the id is unknown. O(1). */
+    /** Nullable layer lookup for best-effort callers (scripting / JSON); {@code null} if the id is unknown. */
     public @Nullable Layer<Owner> layerOrNull(String id) {
         if (id == null) {
             return null;
         }
-        return layersById.get(id);
+        Layer<Owner> layer = layersById.get(id);
+        if (layer != null) {
+            return layer;
+        }
+        // Fallback: layers appended directly to layers() bypass the by-id index.
+        for (Layer<Owner> candidate : layers) {
+            if (candidate.id().equals(id)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     public void setSink(PoseSink sink) {
@@ -95,6 +123,20 @@ public final class StateMachine<Owner> implements StateReader {
         return clientSide;
     }
 
+    /**
+     * Whether this machine evaluates transitions, runs state actions, bumps {@link #version()} and clears
+     * ephemeral vars on tick. Default {@code true}. Client "puppet" machines (driven by server snapshots via
+     * {@link #conform(StateMachineSnapshot)}) set this {@code false} so they only advance cross-fade
+     * interpolation and never locally evaluate guards on vars they do not sync.
+     */
+    public boolean logicEnabled() {
+        return logicEnabled;
+    }
+
+    public void setLogicEnabled(boolean logicEnabled) {
+        this.logicEnabled = logicEnabled;
+    }
+
     public long tickCount() {
         return tickCount;
     }
@@ -104,57 +146,104 @@ public final class StateMachine<Owner> implements StateReader {
     }
 
     public void tick(float dt) {
-        Blender blender = new Blender();
+        blender.reset();
         boolean changed = false;
         for (Layer<Owner> layer : layers) {
-            if (layer.tick(this, dt, tickCount)) {
-                changed = true;
+            if (logicEnabled) {
+                if (layer.tick(this, dt, tickCount)) {
+                    changed = true;
+                }
+            } else {
+                layer.advancePuppet(dt);
             }
             blender.applyLayer(layer.mode(), layer.activePose(), layer.weight(), layer.boneMask());
         }
-        if (sink != null && !blender.isEmpty()) {
+        // Always flush when a sink is attached: even an empty blender must reach the sink so it can
+        // neutralize channels posed last frame but absent this frame (ModelInstancePoseSink residue fix).
+        if (sink != null) {
             sink.apply(blender);
         }
-        consumeTriggers();
-        if (changed) {
-            version++;
+        if (logicEnabled) {
+            vars.removeEphemeral();
+            if (changed) {
+                version++;
+            }
         }
         tickCount++;
     }
 
     //endregion
 
-    //region triggers / signals / locks
+    //region value store / triggers / locks
 
-    public void trigger(String name) {
-        if (name != null) {
-            triggers.put(name, Boolean.TRUE);
+    /** The typed value store (read-only view); values default to each var's default when unset. */
+    public StateMap vars() {
+        return vars;
+    }
+
+    /** The typed value store (mutable); {@code set} validates against each var's validator. */
+    public MutableStateMap mutableVars() {
+        return vars;
+    }
+
+    /**
+     * The vars declared for this machine (inline + referenced), per its definition — the full set including
+     * unset vars (which still read their defaults via {@link #vars()}). Distinct from
+     * {@link StateMap#keySet()}, which only lists vars with an explicitly-set value.
+     */
+    public Set<StateVar<?>> declaredVars() {
+        return Collections.unmodifiableSet(declaredVars);
+    }
+
+    /**
+     * Fire a tick-scoped trigger — an ephemeral {@link StateVar}{@code <Boolean>} — for this tick. It is
+     * cleared at the end of the tick by {@link #tick(float)} (along with every other ephemeral var).
+     */
+    public void trigger(StateVar<Boolean> trigger) {
+        if (trigger != null) {
+            vars.set(trigger, Boolean.TRUE);
         }
     }
 
-    boolean isTriggered(String name) {
-        return triggers.getOrDefault(name, false);
+    /** Whether {@code trigger} is set this tick. */
+    public boolean isTriggered(StateVar<Boolean> trigger) {
+        return trigger != null && Boolean.TRUE.equals(vars.get(trigger));
     }
 
-    void consumeTriggers() {
-        triggers.clear();
+    /**
+     * Raise a buffered (latched) trigger. Unlike {@link #trigger(StateVar<Boolean>)}, it is NOT cleared at
+     * the end of the tick — it stays raised until a {@link Transition#onBuffered(StateVar)} transition
+     * consumes it. Use a <b>non-ephemeral</b> {@code StateVar<Boolean>} for buffered triggers (the latch set
+     * owns the lifecycle; an ephemeral var would be swept at tick end before the transition sees it).
+     */
+    public void triggerBuffered(StateVar<Boolean> trigger) {
+        if (trigger != null) {
+            bufferedTriggers.add(trigger);
+        }
     }
 
-    public Blackboard data() {
-        return data;
+    /** Whether a buffered trigger is currently latched. */
+    public boolean isBufferedTriggered(StateVar<Boolean> trigger) {
+        return trigger != null && bufferedTriggers.contains(trigger);
     }
 
-    public Object signal(String name) {
-        return data.get(name);
-    }
-
-    public void setSignal(String name, Object value) {
-        data.put(name, value);
+    /** Consume (clear) a buffered trigger — called when a transition gated on it fires. */
+    public void consumeBufferedTrigger(StateVar<Boolean> trigger) {
+        if (trigger != null) {
+            bufferedTriggers.remove(trigger);
+        }
     }
 
     void lockLayer(String id, int ticks) {
         if (id != null && ticks > 0) {
             locks.merge(id, ticks, Integer::max);
+        }
+    }
+
+    /** Drop any lock on {@code id} (cancels {@link #lockLayer}); inert if the layer is not locked. */
+    public void unlockLayer(String id) {
+        if (id != null) {
+            locks.remove(id);
         }
     }
 
@@ -180,9 +269,12 @@ public final class StateMachine<Owner> implements StateReader {
 
     //endregion
 
-    //region reconcile surface (reserved data for future client/server sync)
+    //region reconcile surface (server→client sync: snapshot()/conform(StateMachineSnapshot))
 
-    /** Imperative switch by id — scripting/JSON-friendly; inert if the layer/state is unknown. */
+    /**
+     * Imperative switch by id — scripting/JSON-friendly; inert if the layer/state is unknown. The switch is
+     * <b>instant</b> (no cross-fade) and takes effect on the next {@link #tick(float)}.
+     */
     public void goTo(String layerId, String stateId) {
         Layer<Owner> layer = layerOrNull(layerId);
         if (layer == null) {
@@ -194,11 +286,7 @@ public final class StateMachine<Owner> implements StateReader {
         }
     }
 
-    /**
-     * Snapshot of each layer's active state ({layer id &rarr; state id}). <b>Reserved</b> for a future
-     * server&rarr;client reconcile layer &mdash; currently unused (the wire transport was deferred), but kept on
-     * purpose so the data surface already exists when networking is reconsidered.
-     */
+    /** Debug/host inspection surface: current layer → active state ids. Network sync uses {@link #snapshot()}. */
     public Map<String, String> activeStates() {
         Map<String, String> snapshot = new LinkedHashMap<>();
         for (Layer<Owner> layer : layers) {
@@ -208,8 +296,9 @@ public final class StateMachine<Owner> implements StateReader {
     }
 
     /**
-     * Force each layer's active state by id (silent, no callbacks). <b>Reserved</b> for a future client
-     * reconcile layer &mdash; currently unused. Bumps {@link #version}.
+     * Force each layer's active state by id (silent, no callbacks). <b>Compatibility-only</b> legacy
+     * reconcile surface: unconditionally bumps {@link #version} and drops in-flight transition state.
+     * The network sync path uses {@link #conform(StateMachineSnapshot)} instead.
      */
     public void conform(Map<String, String> snapshot) {
         if (snapshot == null) {
@@ -224,57 +313,104 @@ public final class StateMachine<Owner> implements StateReader {
         version++;
     }
 
+    /**
+     * Immutable snapshot of the machine's runtime state — per-layer active state, elapsed ticks and
+     * the in-flight cross-fade. Server-authoritative; sent to clients over the FSM sync channel
+     * (see {@code lib.kasuga.rendering.models.uml.dynamic.fsm.sync}).
+     */
+    public StateMachineSnapshot snapshot() {
+        List<StateMachineSnapshot.LayerState> layerStates = new ArrayList<>(layers.size());
+        for (Layer<Owner> layer : layers) {
+            State<Owner> active = layer.active();
+            Transition<Owner> transition = layer.activeTransition();
+            layerStates.add(new StateMachineSnapshot.LayerState(
+                    layer.id(),
+                    active == null ? null : active.id(),
+                    layer.stateElapsedTicks(),
+                    transition == null ? null : transition.id(),
+                    layer.transitionElapsed()
+            ));
+        }
+        return new StateMachineSnapshot(version, layerStates);
+    }
+
+    /**
+     * Apply a server snapshot. Layers are matched by id (unknown ids ignored). Each layer is first
+     * conformed to its active state with elapsed ticks, then its in-flight transition is restored —
+     * {@code conformTo} clears the active transition, so the order matters. {@link #version} is
+     * bumped only when at least one layer actually applied; returns true in that case.
+     */
+    public boolean conform(StateMachineSnapshot snapshot) {
+        if (snapshot == null) {
+            return false;
+        }
+        boolean applied = false;
+        for (StateMachineSnapshot.LayerState layerState : snapshot.layers()) {
+            Layer<Owner> layer = layerOrNull(layerState.layerId());
+            if (layer == null) {
+                continue;
+            }
+            boolean changed = layer.conformTo(layerState.stateId(), layerState.elapsedTicks());
+            if (layerState.transitionId() != null) {
+                layer.conformTransition(layerState.transitionId(), layerState.transitionElapsedSeconds());
+            }
+            applied |= changed;
+        }
+        if (applied) {
+            version++;
+        }
+        return applied;
+    }
+
     //endregion
 
-    //region StateReader — collaborative state read surface
+    //region typed read surface — direct, type-safe accessors (no path strings).
 
-    @Override
-    public boolean has(StateQuery query) {
-        return read(query) != null;
-    }
-
-    @Override
-    public Object read(StateQuery query) {
-        if (query.isEmpty()) return null;
-        String source = query.source();
-        return switch (source) {
-            case "owner" -> owner;
-            case "machine" -> readMachine(query.segment(1));
-            case "layer" -> readLayer(query.segment(1), query.segment(2));
-            case "data" -> data().get(query.subPath(1));
-            case "signal" -> signal(query.subPath(1));
-            case "trigger" -> isTriggered(query.subPath(1));
-            default -> null;
-        };
-    }
-
-    private Object readMachine(String prop) {
-        if (prop == null) return null;
-        return switch (prop) {
-            case "tick", "tickCount" -> tickCount;
-            case "version" -> version;
-            case "client", "clientSide" -> isClientSide();
-            default -> null;
-        };
-    }
-
-    private Object readLayer(String layerId, String prop) {
-        if (layerId == null || prop == null) return null;
+    /** Active state id of the layer, or {@code null} if the layer is unknown or has no active state. */
+    @Nullable
+    public String activeStateId(String layerId) {
         Layer<Owner> layer = layerOrNull(layerId);
-        if (layer == null) return null;
-        State<Owner> active = layer.active();
-        return switch (prop) {
-            case "id" -> layer.id();
-            case "state" -> active == null ? null : active.id();
-            case "mode" -> layer.mode();
-            case "weight" -> layer.weight();
-            case "locked" -> isLayerLocked(layer.id());
-            case "elapsed" -> layer.stateElapsedTicks();
-            case "duration" -> active == null ? -1 : active.durationTicks();
-            case "transition" -> active == null ? null : layer.activeTransition();
-            case "transitionElapsed" -> layer.transitionElapsed();
-            default -> null;
-        };
+        State<Owner> active = layer == null ? null : layer.active();
+        return active == null ? null : active.id();
+    }
+
+    /** Ticks spent in the active state; {@code 0} if the layer is unknown. */
+    public int layerElapsedTicks(String layerId) {
+        Layer<Owner> layer = layerOrNull(layerId);
+        return layer == null ? 0 : layer.stateElapsedTicks();
+    }
+
+    /** Active state duration in ticks; {@code -1} if the layer is unknown or has no active state. */
+    public int layerDurationTicks(String layerId) {
+        Layer<Owner> layer = layerOrNull(layerId);
+        State<Owner> active = layer == null ? null : layer.active();
+        return active == null ? -1 : active.durationTicks();
+    }
+
+    /** Layer blend mode, or {@code null} if the layer is unknown. */
+    @Nullable
+    public BlendMode layerMode(String layerId) {
+        Layer<Owner> layer = layerOrNull(layerId);
+        return layer == null ? null : layer.mode();
+    }
+
+    /** Layer blend weight; {@code 0f} if the layer is unknown. */
+    public float layerWeight(String layerId) {
+        Layer<Owner> layer = layerOrNull(layerId);
+        return layer == null ? 0f : layer.weight();
+    }
+
+    /** In-flight cross-fade transition of the layer, or {@code null}. */
+    @Nullable
+    public Transition<Owner> activeTransition(String layerId) {
+        Layer<Owner> layer = layerOrNull(layerId);
+        return layer == null ? null : layer.activeTransition();
+    }
+
+    /** Seconds into the in-flight cross-fade. */
+    public float layerTransitionElapsed(String layerId) {
+        Layer<Owner> layer = layerOrNull(layerId);
+        return layer == null ? 0f : layer.transitionElapsed();
     }
 
     //endregion
@@ -290,6 +426,14 @@ public final class StateMachine<Owner> implements StateReader {
         public Builder<O> layer(String id, Consumer<Layer<O>> config) {
             Layer<O> layer = new Layer<>(id);
             config.accept(layer);
+            return layer(layer);
+        }
+
+        /** Register a pre-built layer: starts it, appends it, and indexes it by id. */
+        public Builder<O> layer(Layer<O> layer) {
+            if (machine.layersById.containsKey(layer.id())) {
+                throw new IllegalStateException("duplicate layer id '" + layer.id() + "'");
+            }
             layer.start();
             machine.layers.add(layer);
             machine.layersById.put(layer.id(), layer);
@@ -298,6 +442,13 @@ public final class StateMachine<Owner> implements StateReader {
 
         public Builder<O> sink(PoseSink sink) {
             machine.sink = sink;
+            return this;
+        }
+
+        public Builder<O> declaredVars(Set<StateVar<?>> vars) {
+            if (vars != null) {
+                machine.declaredVars.addAll(vars);
+            }
             return this;
         }
 

@@ -1,5 +1,8 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import com.mojang.serialization.Codec;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
+import net.minecraft.resources.ResourceLocation;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -25,6 +28,12 @@ public class StateMachineBenchmark {
 
     private static final int STATE_COUNT = 100;
 
+    private static final StateVar<Boolean> NEXT = StateVar.builder(
+            ResourceLocation.fromNamespaceAndPath("kasuga_lib", "bench/next"),
+            Boolean.class,
+            Codec.BOOL
+    ).defaultValue(Boolean.FALSE).ephemeral().build();
+
     private StateMachine<Object> machine;
 
     @Setup
@@ -39,7 +48,7 @@ public class StateMachineBenchmark {
                         layer.transition("t" + i,
                                 states.get(i),
                                 states.get((i + 1) % STATE_COUNT)
-                        ).on("next");
+                        ).on(NEXT);
                     }
                     layer.initial(states.get(0));
                 })
@@ -56,7 +65,7 @@ public class StateMachineBenchmark {
     /** Called on an event: trigger then tick, causing a transition. */
     @Benchmark
     public void onEvent(Blackhole blackhole) {
-        machine.trigger("next");
+        machine.trigger(NEXT);
         machine.tick();
         blackhole.consume(machine.layer("main").active().id());
     }

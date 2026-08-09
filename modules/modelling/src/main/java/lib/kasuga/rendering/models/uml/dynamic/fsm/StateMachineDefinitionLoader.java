@@ -1,8 +1,11 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import com.google.gson.JsonParseException;
 import com.mojang.logging.LogUtils;
 import com.mojang.serialization.JsonOps;
-import lib.kasuga.KasugaLib;
+import io.micronaut.context.annotation.Context;
+import jakarta.annotation.PostConstruct;
+import jakarta.inject.Inject;
 import lib.kasuga.core.resource.ResourceSystem;
 import lib.kasuga.core.resource.ScopedResourceManager;
 import lib.kasuga.core.resource.ScopedResourceManagerConsumer;
@@ -21,17 +24,39 @@ import java.util.Map;
 
 /**
  * Loads data-driven state machine definitions from {@code state_machines/*.json} in resource packs
- * and registers them with {@link MachineRegistry#GLOBAL}. Reloaded automatically when the scoped
- * resource manager reloads.
+ * and registers them with the injected {@link FsmDefinitions} (defaults to the shared bucket on
+ * {@link FsmRegistries#GLOBAL}). Reloaded automatically when the scoped resource manager reloads.
+ *
+ * <p>Reload semantics: {@link #load(ResourceManager)} first clears the RESOURCE bucket
+ * ({@link FsmDefinitions#clearResource()}) and re-populates it — already-built RESOURCE
+ * machines keep running on the structure they were built from (definition bucket and instances are
+ * decoupled by design); server-side machines only pick up new definitions when their block entity
+ * is reloaded.
  */
+@Context
 public final class StateMachineDefinitionLoader implements ScopedResourceManagerConsumer, ScopedResourcePackListener {
 
     private static final Logger LOGGER = LogUtils.getLogger();
     public static final String PATH = "state_machines";
 
-    public static final StateMachineDefinitionLoader INSTANCE = new StateMachineDefinitionLoader();
+    private final FsmDefinitions definitions;
 
-    private StateMachineDefinitionLoader() {}
+    @Inject
+    ResourceSystem resourceSystem;
+
+    public StateMachineDefinitionLoader() {
+        this(FsmRegistries.GLOBAL.definitions());
+    }
+
+    /** Testable / host-injectable entry: pass a dedicated definition bucket. */
+    public StateMachineDefinitionLoader(FsmDefinitions definitions) {
+        this.definitions = definitions != null ? definitions : FsmRegistries.GLOBAL.definitions();
+    }
+
+    @PostConstruct
+    public void init() {
+        resourceSystem.registerConsumer(this);
+    }
 
     @Override
     public void onResourceManagerAdded(@Nullable MinecraftServer server, ScopedResourceManager resourceManager) {
@@ -40,7 +65,7 @@ public final class StateMachineDefinitionLoader implements ScopedResourceManager
 
     @Override
     public void onResourceManagerRemoved(@Nullable MinecraftServer server, ScopedResourceManager resourceManager) {
-        // Definitions are cleared on reload; leave stale data during transitions.
+        // Machine instances are host-owned (never cleared here); the next reload re-populates definitions.
     }
 
     @Override
@@ -49,7 +74,7 @@ public final class StateMachineDefinitionLoader implements ScopedResourceManager
     }
 
     public void load(ResourceManager resourceManager) {
-        MachineRegistry.GLOBAL.clear();
+        definitions.clearResource();
         Map<ResourceLocation, Resource> resources = resourceManager.listResources(PATH, loc -> loc.getPath().endsWith(".json"));
         for (Map.Entry<ResourceLocation, Resource> entry : resources.entrySet()) {
             ResourceLocation loc = entry.getKey();
@@ -60,19 +85,12 @@ public final class StateMachineDefinitionLoader implements ScopedResourceManager
                         .ifPresent(result -> {
                             StateMachineDefinition definition = result.getFirst();
                             ResourceLocation id = definition.id();
-                            MachineRegistry.GLOBAL.registerDefinition(id, definition);
+                            definitions.registerResource(id, definition);
                             LOGGER.info("Loaded state machine definition '{}' from {}", id, loc);
                         });
-            } catch (IOException e) {
+            } catch (IOException | JsonParseException e) {
                 LOGGER.error("Failed to read state machine definition {}", loc, e);
             }
-        }
-    }
-
-    public static void install() {
-        ResourceSystem system = KasugaLib.getBean(ResourceSystem.class);
-        if (system != null) {
-            system.registerConsumer(INSTANCE);
         }
     }
 }

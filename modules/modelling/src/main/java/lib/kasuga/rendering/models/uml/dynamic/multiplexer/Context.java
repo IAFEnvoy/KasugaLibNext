@@ -1,6 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.multiplexer;
 
-import lib.kasuga.rendering.models.uml.dynamic.data.Blackboard;
+import lib.kasuga.rendering.models.uml.dynamic.multiplexer.Blackboard;
 
 /**
  * The input to a {@link Multiplexer}: a read-only snapshot of the world / object being evaluated.

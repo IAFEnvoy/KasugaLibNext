@@ -5,7 +5,7 @@ import net.minecraft.util.StringRepresentable;
 
 /**
  * How a {@link Layer} composes with the layers below it. Distinct axis from
- * {@code MorphInstance.BlendMode} (per-morph color multiply/add) — disambiguated by package + JavaDoc.
+ * {@code MorphInstance.BlendMode} (per-morph color multiply/add).
  */
 public enum BlendMode implements StringRepresentable {
     /** Bottom layer; its pose is the base. */

@@ -7,18 +7,20 @@ import net.minecraft.resources.ResourceLocation;
 import java.util.List;
 
 /**
- * Data-driven definition of an animation state machine. Stores only structure:
- * layers, states, transitions and pose targets. All behavior (guards, actions, pose resolution)
- * is referenced by {@link ResourceLocation} and resolved at runtime through
+ * Data-driven definition of an animation state machine. Stores typed {@link StateVarDefinition state vars},
+ * structure (layers, states, transitions, pose targets), and behavior references (guards / actions / pose
+ * resolution) resolved at runtime through
  * {@link lib.kasuga.rendering.models.uml.dynamic.fsm.function.FsmFunctionLibrary}.
  */
 public record StateMachineDefinition(
         ResourceLocation id,
+        List<StateVarDefinition> stateVars,
         List<LayerDefinition> layers
 ) {
 
     public static final Codec<StateMachineDefinition> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             ResourceLocation.CODEC.fieldOf("id").forGetter(StateMachineDefinition::id),
+            StateVarDefinition.CODEC.listOf().optionalFieldOf("state_vars", List.of()).forGetter(StateMachineDefinition::stateVars),
             LayerDefinition.CODEC.listOf().fieldOf("layers").forGetter(StateMachineDefinition::layers)
     ).apply(instance, StateMachineDefinition::new));
 }
