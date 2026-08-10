@@ -1,5 +1,11 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm.sync;
+package lib.kasuga.rendering.models.mc.dynamic.fsm.sync;
 
+import lib.kasuga.rendering.models.uml.dynamic.fsm.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.function.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
@@ -13,8 +19,13 @@ import java.util.List;
  * definition. {@code definitionHash} guards against mismatched definitions; out-of-bounds
  * indices are skipped with a warning instead of failing.
  *
+ * <p>The public fields use the pure {@link Id} (machineId) + a dimension {@code String} (matching
+ * {@link FsmSyncKey}); the {@link Head} wire record keeps {@link ResourceLocation} for both so the
+ * {@code ResourceLocation.STREAM_CODEC} wire format is byte-identical (no protocol bump) — the Id↔RL
+ * conversion happens in {@link #head()} / the decode lambda.
+ *
  * @param machineId           definition id of the machine
- * @param dimension           dimension the machine lives in
+ * @param dimension           dimension the machine lives in ({@code level.dimension().location().toString()})
  * @param ownerDiscriminator  host discriminator (block entity = worldPosition.asLong())
  * @param version             server machine version at push time
  * @param definitionHash      content hash of the definition (per-id identity check)
@@ -22,8 +33,8 @@ import java.util.List;
  * @param layers              per-layer state, in layer build order
  */
 public record FsmSyncPayload(
-        ResourceLocation machineId,
-        ResourceLocation dimension,
+        Id machineId,
+        String dimension,
         long ownerDiscriminator,
         int version,
         int definitionHash,
@@ -82,14 +93,22 @@ public record FsmSyncPayload(
     }
 
     private Head head() {
-        return new Head(machineId, dimension, ownerDiscriminator, version, definitionHash, force);
+        return new Head(toRl(machineId), ResourceLocation.parse(dimension), ownerDiscriminator, version, definitionHash, force);
     }
 
     public static final StreamCodec<FriendlyByteBuf, FsmSyncPayload> CODEC = StreamCodec.composite(
             Head.CODEC, FsmSyncPayload::head,
             LayerEntry.CODEC.apply(ByteBufCodecs.list()), FsmSyncPayload::layers,
             (head, layers) -> new FsmSyncPayload(
-                    head.machineId(), head.dimension(), head.ownerDiscriminator(),
+                    toId(head.machineId()), head.dimension().toString(), head.ownerDiscriminator(),
                     head.version(), head.definitionHash(), head.force(), layers)
     );
+
+    private static ResourceLocation toRl(Id id) {
+        return ResourceLocation.fromNamespaceAndPath(id.getNamespace(), id.getPath());
+    }
+
+    private static Id toId(ResourceLocation rl) {
+        return Id.fromNamespaceAndPath(rl.getNamespace(), rl.getPath());
+    }
 }

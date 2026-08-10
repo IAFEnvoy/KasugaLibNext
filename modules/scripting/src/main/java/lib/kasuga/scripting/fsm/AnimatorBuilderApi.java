@@ -14,6 +14,7 @@ import lib.kasuga.rendering.models.uml.dynamic.fsm.DefinitionStateMachineFactory
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmDefinitions;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmMachines;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmRegistries;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.ModelInstancePoseSink;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.PoseSink;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateContext;
@@ -33,7 +34,6 @@ import lib.kasuga.scripting.value.ScriptPrimitive;
 import lib.kasuga.scripting.value.ScriptReference;
 import lib.kasuga.scripting.value.ScriptValue;
 import lib.kasuga.scripting.value.ScriptValues;
-import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 
 import java.util.Map;
@@ -43,8 +43,8 @@ import java.util.function.Predicate;
 
 /**
  * Script-facing builder for the data-driven animation state machine. Scripts register guard
- * predicates and action callbacks by {@link ResourceLocation}, then reference those locations in
- * JSON definitions loaded by {@link lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachineDefinitionLoader}
+ * predicates and action callbacks by {@link Id}, then reference those locations in
+ * JSON definitions loaded by {@link lib.kasuga.rendering.models.mc.dynamic.fsm.StateMachineDefinitionLoader}
  * or registered via {@link #registerDefinition(String)}.
  *
  * <p>Definitions and instances are written to the injected {@link FsmRegistries}; the default instance
@@ -75,11 +75,11 @@ public final class AnimatorBuilderApi {
     private final ScriptEngine engine;
     /**
      * Pinned clones of JS callbacks registered via the {@code ScriptFunction} overloads, keyed by their
-     * {@link ResourceLocation}. Pinning keeps the underlying V8 function alive across ticks (otherwise the
+     * {@link Id}. Pinning keeps the underlying V8 function alive across ticks (otherwise the
      * engine could GC it between registration and first invocation). The clones belong to this engine's
      * runtime, so they are freed when the engine closes; re-registration replaces the entry.
      */
-    private final Map<ResourceLocation, ScriptFunction> pinnedCallbacks = new ConcurrentHashMap<>();
+    private final Map<Id, ScriptFunction> pinnedCallbacks = new ConcurrentHashMap<>();
 
     public AnimatorBuilderApi() {
         this(FsmRegistries.GLOBAL, null);
@@ -109,7 +109,7 @@ public final class AnimatorBuilderApi {
      */
     @Api
     public void registerCondition(String namespace, String path, Predicate<StateContext<?>> predicate) {
-        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(namespace, path);
+        Id id = Id.fromNamespaceAndPath(namespace, path);
         library.registerCondition(id, ctx -> predicate.test(ctx));
     }
 
@@ -119,7 +119,7 @@ public final class AnimatorBuilderApi {
      */
     @Api
     public void registerAction(String namespace, String path, Consumer<StateContext<?>> action) {
-        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(namespace, path);
+        Id id = Id.fromNamespaceAndPath(namespace, path);
         library.registerAction(id, ctx -> action.accept(ctx));
     }
 
@@ -134,7 +134,7 @@ public final class AnimatorBuilderApi {
      */
     @Api
     public void registerCondition(String namespace, String path, ScriptFunction guard) {
-        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(namespace, path);
+        Id id = Id.fromNamespaceAndPath(namespace, path);
         ScriptFunction clone = pinForCallback(id, guard);
         library.registerCondition(id, ctx -> {
             try {
@@ -155,7 +155,7 @@ public final class AnimatorBuilderApi {
      */
     @Api
     public void registerAction(String namespace, String path, ScriptFunction action) {
-        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(namespace, path);
+        Id id = Id.fromNamespaceAndPath(namespace, path);
         ScriptFunction clone = pinForCallback(id, action);
         library.registerAction(id, ctx -> {
             try {
@@ -170,7 +170,7 @@ public final class AnimatorBuilderApi {
      * Clone + pin a JS callback so it stays alive across ticks, remembering it by {@code id} so a
      * re-registration replaces the prior clone (the old clone is released when the engine closes).
      */
-    private ScriptFunction pinForCallback(ResourceLocation id, ScriptFunction callback) {
+    private ScriptFunction pinForCallback(Id id, ScriptFunction callback) {
         if (engine == null) {
             throw new IllegalArgumentException(
                     "ScriptFunction callbacks require an engine back-reference; use the Predicate/Consumer overload from Java hosts");
@@ -197,7 +197,7 @@ public final class AnimatorBuilderApi {
      */
     @Api
     public String registerStateVar(String namespace, String path, String type, Object defaultValue, boolean ephemeral) {
-        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(namespace, path);
+        Id id = Id.fromNamespaceAndPath(namespace, path);
         StateVarType<?> varType;
         try {
             varType = StateVarType.byToken(type);
@@ -238,7 +238,7 @@ public final class AnimatorBuilderApi {
                 .toArray(String[]::new);
     }
 
-    private static <T> StateVar<T> buildVar(ResourceLocation id, StateVarType<T> type, Object defaultValue, boolean ephemeral) {
+    private static <T> StateVar<T> buildVar(Id id, StateVarType<T> type, Object defaultValue, boolean ephemeral) {
         T resolved;
         if (defaultValue == null) {
             resolved = type.zeroDefault();
@@ -389,7 +389,7 @@ public final class AnimatorBuilderApi {
      */
     @Api
     public int instantiate(String id, Object owner, Object model) {
-        ResourceLocation location = ResourceLocation.tryParse(id);
+        Id location = Id.tryParse(id);
         StateMachineDefinition definition = location == null ? null : definitions.get(location);
         if (definition == null) {
             throw new IllegalArgumentException("Unknown state machine definition: " + id);

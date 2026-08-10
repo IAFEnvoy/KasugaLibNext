@@ -1,42 +1,42 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm.function;
 
-import net.minecraft.resources.ResourceLocation;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Runtime registry for data-driven FSM behavior. Java code and scripting engines register
- * guards ({@link FsmCondition}) and actions ({@link FsmAction}) by {@link ResourceLocation}, which JSON
+ * guards ({@link FsmCondition}) and actions ({@link FsmAction}) by {@link Id}, which JSON
  * definitions reference. The shared instance lives on the composition root
  * ({@link lib.kasuga.rendering.models.uml.dynamic.fsm.FsmRegistries}).
  */
 public final class FsmFunctionLibrary {
 
-    private final Map<ResourceLocation, FsmCondition<?>> conditions = new ConcurrentHashMap<>();
-    private final Map<ResourceLocation, FsmAction<?>> actions = new ConcurrentHashMap<>();
+    private final Map<Id, FsmCondition<?>> conditions = new ConcurrentHashMap<>();
+    private final Map<Id, FsmAction<?>> actions = new ConcurrentHashMap<>();
 
-    public <O> void registerCondition(ResourceLocation id, FsmCondition<O> condition) {
+    public <O> void registerCondition(Id id, FsmCondition<O> condition) {
         conditions.put(id, condition);
     }
 
-    public <O> void registerAction(ResourceLocation id, FsmAction<O> action) {
+    public <O> void registerAction(Id id, FsmAction<O> action) {
         actions.put(id, action);
     }
 
-    public FsmCondition<?> condition(ResourceLocation id) {
+    public FsmCondition<?> condition(Id id) {
         return conditions.get(id);
     }
 
-    public FsmAction<?> action(ResourceLocation id) {
+    public FsmAction<?> action(Id id) {
         return actions.get(id);
     }
 
-    public boolean hasCondition(ResourceLocation id) {
+    public boolean hasCondition(Id id) {
         return conditions.containsKey(id);
     }
 
-    public boolean hasAction(ResourceLocation id) {
+    public boolean hasAction(Id id) {
         return actions.containsKey(id);
     }
 

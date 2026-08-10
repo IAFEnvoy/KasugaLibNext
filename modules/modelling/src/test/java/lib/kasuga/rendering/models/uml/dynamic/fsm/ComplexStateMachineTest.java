@@ -2,7 +2,6 @@ package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
 import com.mojang.serialization.Codec;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -22,8 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class ComplexStateMachineTest {
 
-    private static ResourceLocation rl(String path) {
-        return ResourceLocation.fromNamespaceAndPath("kasuga_lib", path);
+    private static Id rl(String path) {
+        return Id.fromNamespaceAndPath("kasuga_lib", path);
     }
 
     static final StateVar<Float> SPEED = StateVar.of(rl("test/speed"), Float.class, Codec.FLOAT, 0f);

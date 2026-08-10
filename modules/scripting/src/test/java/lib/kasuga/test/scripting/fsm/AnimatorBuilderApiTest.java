@@ -1,12 +1,12 @@
 package lib.kasuga.test.scripting.fsm;
 
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmRegistries;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarRegistry;
 import lib.kasuga.scripting.fsm.AnimatorApi;
 import lib.kasuga.scripting.fsm.AnimatorBuilderApi;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -32,8 +32,8 @@ class AnimatorBuilderApiTest {
         boolean walking;
     }
 
-    private static final ResourceLocation MACHINE_ID =
-            ResourceLocation.fromNamespaceAndPath("test", "script_machine");
+    private static final Id MACHINE_ID =
+            Id.fromNamespaceAndPath("test", "script_machine");
 
     /** idle --(when: test:is_walking)--> walk(3 ticks) --(whenComplete)--> idle */
     private static final String MACHINE_JSON = """
@@ -79,11 +79,11 @@ class AnimatorBuilderApiTest {
         api.registerCondition("test", "is_walking", ctx -> ((Owner) ctx.owner()).walking);
         api.registerAction("test", "fired", ctx -> {});
 
-        assertNotNull(registries.functions().condition(ResourceLocation.fromNamespaceAndPath("test", "is_walking")));
-        assertNotNull(registries.functions().action(ResourceLocation.fromNamespaceAndPath("test", "fired")));
-        assertNull(FsmRegistries.GLOBAL.functions().condition(ResourceLocation.fromNamespaceAndPath("test", "is_walking")),
+        assertNotNull(registries.functions().condition(Id.fromNamespaceAndPath("test", "is_walking")));
+        assertNotNull(registries.functions().action(Id.fromNamespaceAndPath("test", "fired")));
+        assertNull(FsmRegistries.GLOBAL.functions().condition(Id.fromNamespaceAndPath("test", "is_walking")),
                 "condition must not leak into the GLOBAL library");
-        assertNull(FsmRegistries.GLOBAL.functions().action(ResourceLocation.fromNamespaceAndPath("test", "fired")),
+        assertNull(FsmRegistries.GLOBAL.functions().action(Id.fromNamespaceAndPath("test", "fired")),
                 "action must not leak into the GLOBAL library");
     }
 

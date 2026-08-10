@@ -1,4 +1,4 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm;
+package lib.kasuga.rendering.models.mc.dynamic.fsm;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;

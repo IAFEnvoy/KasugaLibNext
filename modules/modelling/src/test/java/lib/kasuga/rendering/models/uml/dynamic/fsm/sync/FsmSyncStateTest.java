@@ -1,6 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm.sync;
 
-import net.minecraft.resources.ResourceLocation;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -11,8 +11,8 @@ class FsmSyncStateTest {
 
     private static FsmSyncKey key(int seed) {
         return new FsmSyncKey(
-                ResourceLocation.fromNamespaceAndPath("test", "demo"),
-                ResourceLocation.fromNamespaceAndPath("test", "overworld"),
+                Id.fromNamespaceAndPath("test", "demo"),
+                "test:overworld",
                 seed
         );
     }

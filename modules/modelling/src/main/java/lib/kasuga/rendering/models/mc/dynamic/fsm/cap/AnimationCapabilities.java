@@ -1,7 +1,12 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm.cap;
+package lib.kasuga.rendering.models.mc.dynamic.fsm.cap;
 
+import lib.kasuga.rendering.models.uml.dynamic.fsm.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.function.*;
 import lib.kasuga.KasugaLib;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.AnimationHost;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.AnimationHost;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.capabilities.BlockCapability;
 import net.neoforged.neoforge.capabilities.EntityCapability;

@@ -2,12 +2,12 @@ package lib.kasuga.test.scripting.fsm;
 
 import com.mojang.serialization.Codec;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmRegistries;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.State;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarRegistry;
 import lib.kasuga.scripting.fsm.AnimatorApi;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,8 +26,8 @@ class AnimatorApiTest {
         boolean moving;
     }
 
-    private static final ResourceLocation MACHINE_ID =
-            ResourceLocation.fromNamespaceAndPath("test", "api_machine");
+    private static final Id MACHINE_ID =
+            Id.fromNamespaceAndPath("test", "api_machine");
 
     private static StateVar<Integer> intVar(StateVarRegistry reg, String path) {
         return reg.register(StateVar.of(rl(path), Integer.class, Codec.INT, 0));
@@ -41,8 +41,8 @@ class AnimatorApiTest {
         return reg.register(StateVar.of(rl(path), Boolean.class, Codec.BOOL, false));
     }
 
-    private static ResourceLocation rl(String path) {
-        return ResourceLocation.fromNamespaceAndPath("test", path);
+    private static Id rl(String path) {
+        return Id.fromNamespaceAndPath("test", path);
     }
 
     /** idle --(when: owner.moving)--> walk(2 ticks) --(whenComplete)--> idle */

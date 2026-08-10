@@ -1,5 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import lib.kasuga.rendering.models.mc.dynamic.fsm.StateMachineDefinitionLoader;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -103,7 +104,7 @@ class StateMachineDefinitionLoaderTest {
 
         loader.load(manager);
 
-        assertNotNull(definitions.get(ResourceLocation.fromNamespaceAndPath("test", "good")));
+        assertNotNull(definitions.get(Id.fromNamespaceAndPath("test", "good")));
     }
 
     @Test
@@ -116,8 +117,8 @@ class StateMachineDefinitionLoaderTest {
 
         loader.load(manager);
 
-        assertNull(definitions.get(ResourceLocation.fromNamespaceAndPath("test", "broken")));
-        assertNotNull(definitions.get(ResourceLocation.fromNamespaceAndPath("test", "good")));
+        assertNull(definitions.get(Id.fromNamespaceAndPath("test", "broken")));
+        assertNotNull(definitions.get(Id.fromNamespaceAndPath("test", "good")));
     }
 
     @Test
@@ -128,15 +129,15 @@ class StateMachineDefinitionLoaderTest {
         StubResourceManager first = new StubResourceManager()
                 .add(ResourceLocation.fromNamespaceAndPath("test", "state_machines/good.json"), GOOD_JSON);
         loader.load(first);
-        assertNotNull(definitions.get(ResourceLocation.fromNamespaceAndPath("test", "good")));
+        assertNotNull(definitions.get(Id.fromNamespaceAndPath("test", "good")));
 
         // a script definition on the same registry must survive reloads
-        ResourceLocation scriptId = ResourceLocation.fromNamespaceAndPath("test", "script_def");
-        definitions.register(scriptId, definitions.get(ResourceLocation.fromNamespaceAndPath("test", "good")));
+        Id scriptId = Id.fromNamespaceAndPath("test", "script_def");
+        definitions.register(scriptId, definitions.get(Id.fromNamespaceAndPath("test", "good")));
 
         // second load with an empty pack: RESOURCE definitions go away, SCRIPT stays
         loader.load(new StubResourceManager());
-        assertNull(definitions.get(ResourceLocation.fromNamespaceAndPath("test", "good")));
+        assertNull(definitions.get(Id.fromNamespaceAndPath("test", "good")));
         assertNotNull(definitions.get(scriptId));
     }
 
@@ -144,7 +145,7 @@ class StateMachineDefinitionLoaderTest {
     void hashTracksDefinitionIdentityAcrossReloadAndOverwrite() {
         FsmDefinitions definitions = new FsmDefinitions();
         StateMachineDefinitionLoader loader = new StateMachineDefinitionLoader(definitions);
-        ResourceLocation good = ResourceLocation.fromNamespaceAndPath("test", "good");
+        Id good = Id.fromNamespaceAndPath("test", "good");
         assertEquals(0, definitions.hash(good), "absent id hashes to 0");
 
         loader.load(new StubResourceManager()
@@ -170,6 +171,6 @@ class StateMachineDefinitionLoaderTest {
                 .add(ResourceLocation.fromNamespaceAndPath("test", "state_machines/good.json"), GOOD_JSON);
         loader.load(manager);
         loader.load(manager);
-        assertNotNull(definitions.get(ResourceLocation.fromNamespaceAndPath("test", "good")));
+        assertNotNull(definitions.get(Id.fromNamespaceAndPath("test", "good")));
     }
 }

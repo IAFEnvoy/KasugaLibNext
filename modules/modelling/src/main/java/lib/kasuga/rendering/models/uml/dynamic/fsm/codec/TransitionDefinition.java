@@ -2,7 +2,7 @@ package lib.kasuga.rendering.models.uml.dynamic.fsm.codec;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
-import net.minecraft.resources.ResourceLocation;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 
 import java.util.List;
 import java.util.Optional;
@@ -18,8 +18,8 @@ public record TransitionDefinition(
         Optional<String> triggerOn,
         boolean whenComplete,
         float crossFadeSeconds,
-        List<ResourceLocation> when,
-        List<ResourceLocation> onFire
+        List<Id> when,
+        List<Id> onFire
 ) {
 
     public static final Codec<TransitionDefinition> CODEC = RecordCodecBuilder.create(instance -> instance.group(
@@ -29,7 +29,7 @@ public record TransitionDefinition(
             Codec.STRING.optionalFieldOf("trigger_on").forGetter(TransitionDefinition::triggerOn),
             Codec.BOOL.optionalFieldOf("when_complete", false).forGetter(TransitionDefinition::whenComplete),
             Codec.FLOAT.optionalFieldOf("cross_fade_seconds", 0f).forGetter(TransitionDefinition::crossFadeSeconds),
-            ResourceLocation.CODEC.listOf().optionalFieldOf("when", List.of()).forGetter(TransitionDefinition::when),
-            ResourceLocation.CODEC.listOf().optionalFieldOf("on_fire", List.of()).forGetter(TransitionDefinition::onFire)
+            Id.CODEC.listOf().optionalFieldOf("when", List.of()).forGetter(TransitionDefinition::when),
+            Id.CODEC.listOf().optionalFieldOf("on_fire", List.of()).forGetter(TransitionDefinition::onFire)
     ).apply(instance, TransitionDefinition::new));
 }

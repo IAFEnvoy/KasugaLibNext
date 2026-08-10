@@ -6,7 +6,7 @@ import lib.kasuga.registration.factory.FactoryRegistry;
 import lib.kasuga.registration.minecraft.block.BlockReg;
 import lib.kasuga.registration.minecraft.block_entity.BlockEntityReg;
 import lib.kasuga.registration.minecraft.item.ItemReg;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmBlockEntityFactories;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.FsmBlockEntityFactories;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockBehaviour;

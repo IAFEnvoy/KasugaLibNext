@@ -3,7 +3,6 @@ package lib.kasuga.rendering.models.uml.dynamic.fsm;
 import com.mojang.logging.LogUtils;
 import com.mojang.serialization.JsonOps;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
-import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 
 import java.util.List;
@@ -12,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * The definition bucket: {@link StateMachineDefinition}s by {@link ResourceLocation}, split from the
+ * The definition bucket: {@link StateMachineDefinition}s by {@link Id}, split from the
  * instance bucket ({@link FsmMachines}) on purpose — a resource reload ({@link #clearResource()})
  * rebuilds this bucket without destroying live machines, whose lifecycle is owned by their host.
  *
@@ -46,10 +45,10 @@ public final class FsmDefinitions {
      * invalidation and for the composition root's inline-var cleanup.
      */
     public interface InvalidationListener {
-        void onInvalidated(ResourceLocation id);
+        void onInvalidated(Id id);
     }
 
-    private final Map<ResourceLocation, DefinitionEntry> definitionsById = new ConcurrentHashMap<>();
+    private final Map<Id, DefinitionEntry> definitionsById = new ConcurrentHashMap<>();
     private final List<InvalidationListener> listeners = new CopyOnWriteArrayList<>();
 
     /**
@@ -57,7 +56,7 @@ public final class FsmDefinitions {
      * resource definitions: if the id is already taken by a RESOURCE entry it is replaced, with a
      * warning — script wins.
      */
-    public void register(ResourceLocation id, StateMachineDefinition definition) {
+    public void register(Id id, StateMachineDefinition definition) {
         DefinitionEntry previous = definitionsById.put(id, new DefinitionEntry(definition, DefinitionSource.SCRIPT, hashOf(definition)));
         if (previous != null && previous.source() == DefinitionSource.RESOURCE) {
             LOGGER.warn("Script definition '{}' overwrote a resource definition; script wins", id);
@@ -69,7 +68,7 @@ public final class FsmDefinitions {
 
     /** Register a definition loaded from a resource pack. Does not clobber a SCRIPT definition of
      * the same id (script wins); later RESOURCE writes overwrite earlier ones. */
-    public void registerResource(ResourceLocation id, StateMachineDefinition definition) {
+    public void registerResource(Id id, StateMachineDefinition definition) {
         definitionsById.compute(id, (k, existing) -> {
             if (existing != null && existing.source() == DefinitionSource.SCRIPT) {
                 return existing;
@@ -94,7 +93,7 @@ public final class FsmDefinitions {
 
     /** Drop every definition, regardless of source. */
     public void clearAll() {
-        for (ResourceLocation id : definitionsById.keySet()) {
+        for (Id id : definitionsById.keySet()) {
             notifyInvalidated(id);
         }
         definitionsById.clear();
@@ -105,7 +104,7 @@ public final class FsmDefinitions {
      * a resource reload (which re-registers RESOURCE) can restore the resource version. Notifies
      * {@link InvalidationListener}s. Returns true if the id was present.
      */
-    public boolean remove(ResourceLocation id) {
+    public boolean remove(Id id) {
         DefinitionEntry previous = definitionsById.remove(id);
         if (previous == null) {
             return false;
@@ -114,7 +113,7 @@ public final class FsmDefinitions {
         return true;
     }
 
-    public StateMachineDefinition get(ResourceLocation id) {
+    public StateMachineDefinition get(Id id) {
         DefinitionEntry entry = definitionsById.get(id);
         return entry == null ? null : entry.definition();
     }
@@ -124,7 +123,7 @@ public final class FsmDefinitions {
      * as the per-definition identity check: it is independent per id, so re-registering an unrelated
      * definition does not invalidate other machines' sync.
      */
-    public int hash(ResourceLocation id) {
+    public int hash(Id id) {
         DefinitionEntry entry = definitionsById.get(id);
         return entry == null ? 0 : entry.contentHash();
     }
@@ -146,7 +145,7 @@ public final class FsmDefinitions {
         }
     }
 
-    private void notifyInvalidated(ResourceLocation id) {
+    private void notifyInvalidated(Id id) {
         for (InvalidationListener listener : listeners) {
             listener.onInvalidated(id);
         }

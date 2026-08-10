@@ -276,7 +276,7 @@ public final class AnimatorApi {
             return "";
         }
         BlendMode mode = m.layerMode(layerId);
-        return mode == null ? "" : mode.getSerializedName();
+        return mode == null ? "" : mode.serialName();
     }
 
     @Api

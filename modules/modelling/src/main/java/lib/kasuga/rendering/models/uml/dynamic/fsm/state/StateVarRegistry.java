@@ -1,7 +1,7 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm.state;
 
 import com.mojang.logging.LogUtils;
-import net.minecraft.resources.ResourceLocation;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import org.slf4j.Logger;
 
 import java.util.Map;
@@ -9,7 +9,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Process-wide registry of {@link StateVar}s by {@link ResourceLocation} — the FSM's typed-state analog of
+ * Process-wide registry of {@link StateVar}s by {@link Id} — the FSM's typed-state analog of
  * {@link lib.kasuga.rendering.models.uml.dynamic.fsm.function.FsmFunctionLibrary}. Java code, JSON definitions
  * and scripting engines resolve vars by id; the data-driven factory registers anonymous vars declared inline.
  *
@@ -22,9 +22,9 @@ public final class StateVarRegistry {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    private final Map<ResourceLocation, StateVar<?>> vars = new ConcurrentHashMap<>();
+    private final Map<Id, StateVar<?>> vars = new ConcurrentHashMap<>();
     /** machineId → the inline var ids that machine's definition registered via {@link #registerOwned}. */
-    private final Map<ResourceLocation, Set<ResourceLocation>> ownedByMachine = new ConcurrentHashMap<>();
+    private final Map<Id, Set<Id>> ownedByMachine = new ConcurrentHashMap<>();
 
     public StateVarRegistry() {}
 
@@ -45,7 +45,7 @@ public final class StateVarRegistry {
      * {@link #clearForMachine} drops exactly this var. Used by the data-driven factory for vars
      * declared inline in a machine definition.
      */
-    public <T> StateVar<T> registerOwned(StateVar<T> var, ResourceLocation machineId) {
+    public <T> StateVar<T> registerOwned(StateVar<T> var, Id machineId) {
         StateVar<T> registered = register(var);
         if (machineId != null) {
             ownedByMachine.computeIfAbsent(machineId, k -> ConcurrentHashMap.newKeySet()).add(var.id());
@@ -60,21 +60,21 @@ public final class StateVarRegistry {
                 && a.ephemeral() == b.ephemeral();
     }
 
-    public StateVar<?> get(ResourceLocation id) {
+    public StateVar<?> get(Id id) {
         return vars.get(id);
     }
 
-    public boolean has(ResourceLocation id) {
+    public boolean has(Id id) {
         return vars.containsKey(id);
     }
 
-    public Set<ResourceLocation> ids() {
+    public Set<Id> ids() {
         return vars.keySet();
     }
 
     /** Resolve a {@code "namespace:path"} string; {@code null} if unparseable or unregistered. */
     public StateVar<?> resolve(String id) {
-        ResourceLocation loc = ResourceLocation.tryParse(id);
+        Id loc = Id.tryParse(id);
         return loc == null ? null : vars.get(loc);
     }
 
@@ -92,13 +92,13 @@ public final class StateVarRegistry {
      * ownership table; for those this falls back to the historical prefix match
      * ({@code <machineId.path>/}), which can over-match sibling paths.
      */
-    public void clearForMachine(ResourceLocation machineId) {
+    public void clearForMachine(Id machineId) {
         if (machineId == null) {
             return;
         }
-        Set<ResourceLocation> owned = ownedByMachine.remove(machineId);
+        Set<Id> owned = ownedByMachine.remove(machineId);
         if (owned != null) {
-            for (ResourceLocation varId : owned) {
+            for (Id varId : owned) {
                 vars.remove(varId);
             }
             return;

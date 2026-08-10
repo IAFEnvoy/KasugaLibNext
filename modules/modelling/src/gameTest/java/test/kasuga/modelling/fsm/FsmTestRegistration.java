@@ -1,21 +1,26 @@
 package test.kasuga.modelling.fsm;
 
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.JsonOps;
 import io.micronaut.context.annotation.Context;
 import lib.kasuga.KasugaLibApplication;
 import lib.kasuga.registration.Reg;
+import lib.kasuga.registration.factory.FactoryRegistry;
 import lib.kasuga.registration.minecraft.block.BlockReg;
 import lib.kasuga.registration.minecraft.block_entity.BlockEntityReg;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.AnimationBlockEntity;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmBlock;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.AnimationBlockEntity;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.FsmBlock;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.FsmBlockEntityFactories;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmRegistries;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachineDefinitionLoader;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.StateMachineDefinitionLoader;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarRegistry;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 
 import java.util.Collection;
@@ -38,39 +43,39 @@ import java.util.Collection;
 @Context
 public final class FsmTestRegistration {
 
-    public static final ResourceLocation MACHINE_ID = ResourceLocation.parse("kasuga_lib:fsm_test_panel");
+    public static final Id MACHINE_ID = Id.parse("kasuga_lib:fsm_test_panel");
 
     /** Strongly-typed state vars for the typed-state fixture, registered into the shared {@link StateVarRegistry}
      * ({@link FsmRegistries#GLOBAL}). */
     public static final StateVar<Float> SPEED = StateVar.of(
-            ResourceLocation.parse("kasuga_lib:fsm_test_typed/speed"), Float.class, Codec.FLOAT, 0f);
+            Id.parse("kasuga_lib:fsm_test_typed/speed"), Float.class, Codec.FLOAT, 0f);
     public static final StateVar<Boolean> ARMED = StateVar.of(
-            ResourceLocation.parse("kasuga_lib:fsm_test_typed/armed"), Boolean.class, Codec.BOOL, false);
+            Id.parse("kasuga_lib:fsm_test_typed/armed"), Boolean.class, Codec.BOOL, false);
     public static final StateVar<Boolean> ATTACK = StateVar.builder(
-                    ResourceLocation.parse("kasuga_lib:fsm_test_typed/attack"), Boolean.class, Codec.BOOL)
+                    Id.parse("kasuga_lib:fsm_test_typed/attack"), Boolean.class, Codec.BOOL)
             .defaultValue(Boolean.FALSE)
             .ephemeral()
             .build();
 
     /** Written by the on_enter action on the "moving" state — proves the full condition→action→var chain runs. */
     public static final StateVar<Boolean> ACTION_RAN = StateVar.of(
-            ResourceLocation.parse("kasuga_lib:fsm_test_typed/action_ran"), Boolean.class, Codec.BOOL, false);
+            Id.parse("kasuga_lib:fsm_test_typed/action_ran"), Boolean.class, Codec.BOOL, false);
 
     /** A second machine id whose definition declares {@code state_vars} + a trigger transition. */
-    public static final ResourceLocation TYPED_MACHINE_ID = ResourceLocation.parse("kasuga_lib:fsm_test_typed");
+    public static final Id TYPED_MACHINE_ID = Id.parse("kasuga_lib:fsm_test_typed");
 
     // === Complex fixture: multi-layer locomotion + combat ===
 
     public static final StateVar<Boolean> JUMP = StateVar.trigger(
-            ResourceLocation.parse("kasuga_lib:fsm_test_complex/jump"));
+            Id.parse("kasuga_lib:fsm_test_complex/jump"));
     public static final StateVar<Boolean> ATTACK_TRIGGER = StateVar.trigger(
-            ResourceLocation.parse("kasuga_lib:fsm_test_complex/attack"));
+            Id.parse("kasuga_lib:fsm_test_complex/attack"));
     public static final StateVar<Integer> HIT_COUNT = StateVar.of(
-            ResourceLocation.parse("kasuga_lib:fsm_test_complex/hit_count"), Integer.class, Codec.INT, 0);
+            Id.parse("kasuga_lib:fsm_test_complex/hit_count"), Integer.class, Codec.INT, 0);
     public static final StateVar<Boolean> COMBAT_LOCK = StateVar.of(
-            ResourceLocation.parse("kasuga_lib:fsm_test_complex/combat_lock"), Boolean.class, Codec.BOOL, false);
-    public static final ResourceLocation COMPLEX_MACHINE_ID =
-            ResourceLocation.parse("kasuga_lib:fsm_test_complex");
+            Id.parse("kasuga_lib:fsm_test_complex/combat_lock"), Boolean.class, Codec.BOOL, false);
+    public static final Id COMPLEX_MACHINE_ID =
+            Id.parse("kasuga_lib:fsm_test_complex");
 
     /**
      * A machine id whose definition is provided ONLY by the data-driven {@link StateMachineDefinitionLoader}
@@ -78,8 +83,16 @@ public final class FsmTestRegistration {
      * inline-registered here. Used by {@code FsmDataDrivenGameTest} to prove the loader→registry→block→BE path
      * runs end-to-end in the real dedicated-server runtime.
      */
-    public static final ResourceLocation LOADER_MACHINE_ID =
-            ResourceLocation.parse("kasuga_lib:gametest_loader");
+    public static final Id LOADER_MACHINE_ID =
+            Id.parse("kasuga_lib:gametest_loader");
+
+    /**
+     * A machine id for the BE-as-owner demo ({@code BeaconOwnerGameTest}): a {@code kasuga_lib:beacon} machine
+     * whose guards read the bound {@link AnimationBlockEntity} ITSELF via {@code ctx.owner()} (its redstone
+     * power state) rather than a StateVar. Distinct from the typed/complex fixtures (which read StateVars).
+     */
+    public static final Id BEACON_MACHINE_ID =
+            Id.parse("kasuga_lib:beacon");
 
     private static final String DEFINITION_JSON = """
             {
@@ -147,6 +160,8 @@ public final class FsmTestRegistration {
         registerTypedTestBlock();
         registerComplexTestBlock();
         registerLoaderTestBlock();
+        registerBeaconGuards();
+        registerBeaconTestBlock();
     }
 
     /** Micronaut instantiates this @Context bean during mod construction — must be accessible. */
@@ -170,10 +185,10 @@ public final class FsmTestRegistration {
         FsmRegistries.GLOBAL.vars().register(ATTACK);
         FsmRegistries.GLOBAL.vars().register(ACTION_RAN);
         FsmRegistries.GLOBAL.functions().registerAction(
-                ResourceLocation.parse("kasuga_lib:fsm_test/record_active"),
+                Id.parse("kasuga_lib:fsm_test/record_active"),
                 ctx -> ctx.set(ACTION_RAN, true));
         FsmRegistries.GLOBAL.functions().registerCondition(
-                ResourceLocation.parse("kasuga_lib:fsm_test/is_moving"),
+                Id.parse("kasuga_lib:fsm_test/is_moving"),
                 ctx -> ctx.get(SPEED) > 0f);
         StateMachineDefinition typed = StateMachineDefinition.CODEC
                 .decode(JsonOps.INSTANCE, JsonParser.parseString(TYPED_DEFINITION_JSON))
@@ -214,6 +229,53 @@ public final class FsmTestRegistration {
     }
 
     /**
+     * BE-as-owner demo — guards only (the definition comes from a data-driven JSON resource). The
+     * {@code kasuga_lib:beacon} machine (dim↔lit) is loaded by the production {@link StateMachineDefinitionLoader}
+     * from {@code state_machines/beacon.json} (a gameTest resource); these guards read the bound
+     * {@link AnimationBlockEntity} via {@code ctx.owner()} — its redstone power ({@code level.hasNeighborSignal}).
+     * That makes the beacon instance fully data-driven: JSON definition (loader) + factory-chain block
+     * (registerBeaconTestBlock) + BE-as-owner guards (here).
+     */
+    private static void registerBeaconGuards() {
+        // Guards read the BE — the data-driven factory builds the machine with owner = the BE, so ctx.owner()
+        // IS the AnimationBlockEntity. (BE-specific — a script machine's owner is a JS object.)
+        FsmRegistries.GLOBAL.functions().registerCondition(
+                Id.parse("kasuga_lib:beacon_powered"),
+                ctx -> {
+                    AnimationBlockEntity be = (AnimationBlockEntity) ctx.owner();
+                    Level level = be.getLevel();
+                    return level != null && level.hasNeighborSignal(be.getBlockPos());
+                });
+        FsmRegistries.GLOBAL.functions().registerCondition(
+                Id.parse("kasuga_lib:beacon_unpowered"),
+                ctx -> {
+                    AnimationBlockEntity be = (AnimationBlockEntity) ctx.owner();
+                    Level level = be.getLevel();
+                    return level == null || !level.hasNeighborSignal(be.getBlockPos());
+                });
+    }
+
+    /**
+     * Register the beacon test block via the data-driven FACTORY CHAIN ({@code fsm_block} + {@code fsm_be} via
+     * {@link FactoryRegistry}), mirroring the production {@code fsm_blocks.json} path — NOT the direct
+     * {@code BlockReg.of} used by {@link #registerFsmBlock}. The BE params ({@code state_machine}) are built
+     * inline (the production {@code BlockEntityTypeHandler.extractEmbedded} does this in the data-driven module,
+     * which modelling doesn't depend on); the factories themselves ({@link FsmBlockEntityFactories}) are the
+     * built-in modelling registrations.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void registerBeaconTestBlock() {
+        FsmBlockEntityFactories.registerBuiltin();
+        JsonObject beParams = new JsonObject();
+        beParams.addProperty("state_machine", BEACON_MACHINE_ID.toString());
+        Reg<?, Block> blockReg = (Reg<?, Block>) FactoryRegistry.get("fsm_block").create("fsm_test_beacon_block", null);
+        Reg<?, ?> beReg = FactoryRegistry.getBlockEntityFactory("fsm_be")
+                .create("fsm_test_beacon_block_be", () -> new Block[]{ blockReg.getEntry() }, beParams);
+        blockReg.addChild((Reg) beReg);
+        KasugaLibApplication.REGISTRY.addChild((Reg) blockReg);
+    }
+
+    /**
      * Complex multi-layer machine:
      * <p>Layer "locomotion" (BASE): idle ↔ walk ↔ run (speed-driven), jump trigger → air → land → idle.
      * <p>Layer "combat" (OVERRIDE): none → windup → hit → recover → none (attack trigger chain),
@@ -227,31 +289,31 @@ public final class FsmTestRegistration {
         // re-use SPEED from the typed fixture
 
         FsmRegistries.GLOBAL.functions().registerCondition(
-                ResourceLocation.parse("kasuga_lib:fsm_test/is_walking"),
+                Id.parse("kasuga_lib:fsm_test/is_walking"),
                 ctx -> ctx.get(SPEED) > 0f && ctx.get(SPEED) <= 5f);
         FsmRegistries.GLOBAL.functions().registerCondition(
-                ResourceLocation.parse("kasuga_lib:fsm_test/is_running"),
+                Id.parse("kasuga_lib:fsm_test/is_running"),
                 ctx -> ctx.get(SPEED) > 5f);
         FsmRegistries.GLOBAL.functions().registerCondition(
-                ResourceLocation.parse("kasuga_lib:fsm_test/is_standing"),
+                Id.parse("kasuga_lib:fsm_test/is_standing"),
                 ctx -> ctx.get(SPEED) <= 0f);
         FsmRegistries.GLOBAL.functions().registerCondition(
-                ResourceLocation.parse("kasuga_lib:fsm_test/combat_active"),
+                Id.parse("kasuga_lib:fsm_test/combat_active"),
                 ctx -> ctx.get(COMBAT_LOCK));
         FsmRegistries.GLOBAL.functions().registerAction(
-                ResourceLocation.parse("kasuga_lib:fsm_test/start_combat_lock"),
+                Id.parse("kasuga_lib:fsm_test/start_combat_lock"),
                 ctx -> {
                     ctx.set(COMBAT_LOCK, true);
                     ctx.lockLayer("locomotion", 30);
                 });
         FsmRegistries.GLOBAL.functions().registerAction(
-                ResourceLocation.parse("kasuga_lib:fsm_test/end_combat_lock"),
+                Id.parse("kasuga_lib:fsm_test/end_combat_lock"),
                 ctx -> {
                     ctx.set(COMBAT_LOCK, false);
                     ctx.unlockLayer("locomotion");
                 });
         FsmRegistries.GLOBAL.functions().registerAction(
-                ResourceLocation.parse("kasuga_lib:fsm_test/record_hit"),
+                Id.parse("kasuga_lib:fsm_test/record_hit"),
                 ctx -> ctx.set(HIT_COUNT, ctx.get(HIT_COUNT) + 1));
 
         String complexJson = """
@@ -331,7 +393,7 @@ public final class FsmTestRegistration {
     private static void registerFsmBlock(
             String blockName,
             String beName,
-            ResourceLocation machineId,
+            Id machineId,
             ResourceLocation modelLoc,
             String modelName
     ) {

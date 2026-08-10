@@ -2,7 +2,6 @@ package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
 import com.mojang.serialization.Codec;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -15,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 class AttackChainTest {
 
     static final StateVar<Boolean> ATTACK = StateVar.builder(
-            ResourceLocation.fromNamespaceAndPath("kasuga_lib", "test/attack"),
+            Id.fromNamespaceAndPath("kasuga_lib", "test/attack"),
             Boolean.class,
             Codec.BOOL
     ).defaultValue(Boolean.FALSE).ephemeral().build();

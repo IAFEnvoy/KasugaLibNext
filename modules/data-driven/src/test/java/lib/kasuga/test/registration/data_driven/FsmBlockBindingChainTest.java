@@ -5,7 +5,7 @@ import lib.kasuga.registration.Reg;
 import lib.kasuga.registration.data_driven.handler.BlockEntityTypeHandler;
 import lib.kasuga.registration.factory.FactoryRegistry;
 import lib.kasuga.registration.minecraft.block_entity.BlockEntityReg;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmBlockEntityFactories;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.FsmBlockEntityFactories;
 import net.minecraft.world.level.block.Block;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;

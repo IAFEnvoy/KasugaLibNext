@@ -1,6 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm.function;
 
-import net.minecraft.resources.ResourceLocation;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -11,8 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** {@link FsmFunctionLibrary#clearNamespace} must only drop the given namespace. */
 class FsmFunctionLibraryTest {
 
-    private static ResourceLocation rl(String namespace, String path) {
-        return ResourceLocation.fromNamespaceAndPath(namespace, path);
+    private static Id rl(String namespace, String path) {
+        return Id.fromNamespaceAndPath(namespace, path);
     }
 
     @Test

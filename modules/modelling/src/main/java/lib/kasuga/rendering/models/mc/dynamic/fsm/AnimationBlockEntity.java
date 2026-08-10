@@ -1,11 +1,16 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm;
+package lib.kasuga.rendering.models.mc.dynamic.fsm;
 
+import lib.kasuga.rendering.models.uml.dynamic.fsm.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.function.*;
 import com.mojang.logging.LogUtils;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.FsmSyncClient;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncClient;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.FsmSyncKey;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.FsmSyncServer;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncServer;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
@@ -50,7 +55,7 @@ public class AnimationBlockEntity extends BlockEntity implements AnimationHost {
     public static final FsmSyncServer SYNC_SERVER = FsmSyncServer.GLOBAL;
 
     @Nullable
-    private ResourceLocation stateMachineId;
+    private Id stateMachineId;
     @Nullable
     private ResourceLocation modelLoc;
     @Nullable
@@ -70,7 +75,7 @@ public class AnimationBlockEntity extends BlockEntity implements AnimationHost {
     }
 
     public AnimationBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state,
-                                @Nullable ResourceLocation stateMachineId,
+                                @Nullable Id stateMachineId,
                                 @Nullable ResourceLocation modelLoc, @Nullable String modelName) {
         this(type, pos, state);
         this.stateMachineId = stateMachineId;
@@ -79,7 +84,7 @@ public class AnimationBlockEntity extends BlockEntity implements AnimationHost {
     }
 
     /** Programmatic machine assignment; takes effect on the next tick (machine rebuilt lazily). */
-    public void stateMachine(@Nullable ResourceLocation id) {
+    public void stateMachine(@Nullable Id id) {
         if (Objects.equals(stateMachineId, id)) {
             return;
         }
@@ -110,7 +115,7 @@ public class AnimationBlockEntity extends BlockEntity implements AnimationHost {
 
     /** The state-machine definition id this BE is bound to (persisted across world reload; {@code null} = none). */
     @Nullable
-    public ResourceLocation stateMachineId() {
+    public Id stateMachineId() {
         return stateMachineId;
     }
 
@@ -134,14 +139,14 @@ public class AnimationBlockEntity extends BlockEntity implements AnimationHost {
     /** The three programmatic ids persisted to NBT. Runtime state is NOT persisted — the machine rebuilds
      *  lazily from the restored definition id. */
     public record PersistedIds(
-            @Nullable ResourceLocation stateMachineId,
+            @Nullable Id stateMachineId,
             @Nullable ResourceLocation modelLoc,
             @Nullable String modelName
     ) {
         /** Read the persisted ids from a tag (fields absent when null at save time). */
         public static PersistedIds read(CompoundTag tag) {
             return new PersistedIds(
-                    tag.contains("stateMachine") ? ResourceLocation.tryParse(tag.getString("stateMachine")) : null,
+                    tag.contains("stateMachine") ? Id.tryParse(tag.getString("stateMachine")) : null,
                     tag.contains("modelLoc") ? ResourceLocation.tryParse(tag.getString("modelLoc")) : null,
                     tag.contains("modelName") ? tag.getString("modelName") : null);
         }
@@ -149,7 +154,7 @@ public class AnimationBlockEntity extends BlockEntity implements AnimationHost {
 
     /** Write the persisted ids to a tag (omits nulls). Static + pure so it can be unit-tested without a BE. */
     public static void writePersistedIds(CompoundTag tag,
-                                         @Nullable ResourceLocation stateMachineId,
+                                         @Nullable Id stateMachineId,
                                          @Nullable ResourceLocation modelLoc,
                                          @Nullable String modelName) {
         if (stateMachineId != null) {
@@ -288,7 +293,8 @@ public class AnimationBlockEntity extends BlockEntity implements AnimationHost {
     }
 
     private FsmSyncKey syncKey() {
-        ResourceLocation dimension = level != null ? level.dimension().location() : Level.OVERWORLD.location();
+        // FsmSyncKey.dimension is a pure String (the uml layer is MC-free); convert the MC dimension RL here.
+        String dimension = (level != null ? level.dimension().location() : Level.OVERWORLD.location()).toString();
         return new FsmSyncKey(stateMachineId, dimension, ownerDiscriminator());
     }
 

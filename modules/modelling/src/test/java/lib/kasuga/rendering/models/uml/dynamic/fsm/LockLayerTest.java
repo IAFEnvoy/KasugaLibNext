@@ -2,7 +2,6 @@ package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
 import com.mojang.serialization.Codec;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -11,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class LockLayerTest {
 
     static final StateVar<Boolean> GO = StateVar.builder(
-            ResourceLocation.fromNamespaceAndPath("kasuga_lib", "test/go"),
+            Id.fromNamespaceAndPath("kasuga_lib", "test/go"),
             Boolean.class,
             Codec.BOOL
     ).defaultValue(Boolean.FALSE).ephemeral().build();

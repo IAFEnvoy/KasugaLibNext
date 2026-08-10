@@ -1,6 +1,6 @@
 package test.kasuga.modelling.fsm;
 
-import lib.kasuga.rendering.models.uml.dynamic.fsm.AnimationBlockEntity;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.AnimationBlockEntity;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmRegistries;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;

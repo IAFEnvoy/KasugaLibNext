@@ -2,18 +2,22 @@ package lib.kasuga.rendering.models.uml.dynamic.fsm.state;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.DataResult;
-import net.minecraft.resources.ResourceLocation;
 import org.joml.Vector3f;
 
 import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Built-in {@link StateVar} value types — the catalog the data-driven codec dispatches on by token
  * (see {@code StateVarDefinition#type()}). Each entry bundles the {@link Codec} and {@link Class} token the
  * factory and the script boundary need to (de)serialize and runtime-type-check values.
+ *
+ * <p>The catalog is a <b>mutable</b> registry seeded with the pure (MC-free) types ({@link #BOOL},
+ * {@link #INT}, {@link #FLOAT}, {@link #STRING}, {@link #VEC3}). The Minecraft layer can re-add MC-typed
+ * entries (e.g. a resource-location value type) via {@link #register(StateVarType)} so this uml.fsm package
+ * keeps no {@code net.minecraft.*} dependency.
  */
 public record StateVarType<T>(String token, Class<T> type, Codec<T> codec) {
 
@@ -21,8 +25,6 @@ public record StateVarType<T>(String token, Class<T> type, Codec<T> codec) {
     public static final StateVarType<Integer> INT = new StateVarType<>("int", Integer.class, Codec.INT);
     public static final StateVarType<Float> FLOAT = new StateVarType<>("float", Float.class, Codec.FLOAT);
     public static final StateVarType<String> STRING = new StateVarType<>("string", String.class, Codec.STRING);
-    public static final StateVarType<ResourceLocation> RESOURCE =
-            new StateVarType<>("resource", ResourceLocation.class, ResourceLocation.CODEC);
     public static final StateVarType<Vector3f> VEC3 = new StateVarType<>("vec3", Vector3f.class, vec3Codec());
 
     private static final Map<String, StateVarType<?>> BY_TOKEN = buildCatalog();
@@ -37,14 +39,22 @@ public record StateVarType<T>(String token, Class<T> type, Codec<T> codec) {
     }
 
     private static Map<String, StateVarType<?>> buildCatalog() {
-        Map<String, StateVarType<?>> map = new LinkedHashMap<>();
+        Map<String, StateVarType<?>> map = new ConcurrentHashMap<>();
         map.put(BOOL.token(), BOOL);
         map.put(INT.token(), INT);
         map.put(FLOAT.token(), FLOAT);
         map.put(STRING.token(), STRING);
-        map.put(RESOURCE.token(), RESOURCE);
         map.put(VEC3.token(), VEC3);
-        return Map.copyOf(map);
+        return map;
+    }
+
+    /**
+     * Register an additional {@link StateVarType} (e.g. an MC-typed entry such as a resource-location value
+     * type) so the data-driven codec and script boundary can dispatch on its token. Idempotent overwrite by
+     * token.
+     */
+    public static void register(StateVarType<?> type) {
+        BY_TOKEN.put(type.token(), type);
     }
 
     /** Resolve a type by its serialization token; throws on unknown tokens. */
@@ -72,7 +82,7 @@ public record StateVarType<T>(String token, Class<T> type, Codec<T> codec) {
 
     /**
      * A sensible zero/default value for this type ({@code false}, {@code 0}, {@code 0f}, {@code ""},
-     * {@code minecraft:empty}, {@code (0,0,0)}). Used when a var is declared without an explicit default.
+     * {@code (0,0,0)}). Used when a var is declared without an explicit default.
      */
     @SuppressWarnings("unchecked")
     public T zeroDefault() {
@@ -85,8 +95,6 @@ public record StateVarType<T>(String token, Class<T> type, Codec<T> codec) {
             value = 0f;
         } else if (this == STRING) {
             value = "";
-        } else if (this == RESOURCE) {
-            value = ResourceLocation.fromNamespaceAndPath("minecraft", "empty");
         } else if (this == VEC3) {
             value = new Vector3f();
         } else {

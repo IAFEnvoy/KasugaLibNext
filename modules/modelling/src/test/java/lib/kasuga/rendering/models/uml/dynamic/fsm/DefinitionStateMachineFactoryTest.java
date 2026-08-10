@@ -8,7 +8,6 @@ import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.function.FsmFunctionLibrary;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarRegistry;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -201,7 +200,7 @@ class DefinitionStateMachineFactoryTest {
     @Test
     void whenGuardRegisteredInLibraryFires() {
         FsmFunctionLibrary library = new FsmFunctionLibrary();
-        library.registerCondition(ResourceLocation.fromNamespaceAndPath("test", "always"), ctx -> true);
+        library.registerCondition(Id.fromNamespaceAndPath("test", "always"), ctx -> true);
         StateMachine<Object> machine = build("""
                 { "id": "test:guard", "layers": [ {
                     "id": "g", "initial_state": "a",

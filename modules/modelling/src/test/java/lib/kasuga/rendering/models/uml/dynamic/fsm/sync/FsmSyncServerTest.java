@@ -1,8 +1,9 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm.sync;
 
+import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncServer;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.State;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -38,8 +39,8 @@ class FsmSyncServerTest {
 
     private static FsmSyncKey key() {
         return new FsmSyncKey(
-                ResourceLocation.fromNamespaceAndPath("test", "demo"),
-                ResourceLocation.fromNamespaceAndPath("test", "overworld"),
+                Id.fromNamespaceAndPath("test", "demo"),
+                "test:overworld",
                 1L
         );
     }

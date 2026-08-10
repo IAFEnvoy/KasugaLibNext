@@ -1,6 +1,6 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm.cap;
+package lib.kasuga.rendering.models.mc.dynamic.fsm.cap;
 
-import lib.kasuga.rendering.models.uml.dynamic.fsm.AnimationHost;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.AnimationHost;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.neoforged.neoforge.capabilities.ICapabilityProvider;
 

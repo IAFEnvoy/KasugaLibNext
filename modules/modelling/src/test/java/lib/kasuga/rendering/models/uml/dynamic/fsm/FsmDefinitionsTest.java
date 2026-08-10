@@ -1,7 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -18,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Definition bucketing: source semantics (script wins), per-id content hash, unified invalidation notifications. */
 class FsmDefinitionsTest {
 
-    private static ResourceLocation rl(String path) {
-        return ResourceLocation.fromNamespaceAndPath("test", path);
+    private static Id rl(String path) {
+        return Id.fromNamespaceAndPath("test", path);
     }
 
     private static StateMachineDefinition definition(String id) {
@@ -41,7 +40,7 @@ class FsmDefinitionsTest {
     @Test
     void clearResourceKeepsScriptDefinitions() {
         FsmDefinitions definitions = new FsmDefinitions();
-        List<ResourceLocation> notified = new ArrayList<>();
+        List<Id> notified = new ArrayList<>();
         definitions.addListener(notified::add);
         definitions.registerResource(rl("r1"), definition("r1"));
         definitions.register(rl("s1"), definition("s1"));
@@ -56,7 +55,7 @@ class FsmDefinitionsTest {
     @Test
     void removeNotifiesAndReportsPresence() {
         FsmDefinitions definitions = new FsmDefinitions();
-        List<ResourceLocation> notified = new ArrayList<>();
+        List<Id> notified = new ArrayList<>();
         definitions.addListener(notified::add);
         definitions.register(rl("a"), definition("a"));
 
@@ -70,7 +69,7 @@ class FsmDefinitionsTest {
     @Test
     void overwriteAndClearAllNotifyPerId() {
         FsmDefinitions definitions = new FsmDefinitions();
-        List<ResourceLocation> notified = new ArrayList<>();
+        List<Id> notified = new ArrayList<>();
         definitions.addListener(notified::add);
         definitions.register(rl("a"), definition("a"));
 

@@ -1,6 +1,11 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm;
+package lib.kasuga.rendering.models.mc.dynamic.fsm;
 
-import lib.kasuga.rendering.models.uml.dynamic.fsm.cap.AnimationCapabilities;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.function.*;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.cap.AnimationCapabilities;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;

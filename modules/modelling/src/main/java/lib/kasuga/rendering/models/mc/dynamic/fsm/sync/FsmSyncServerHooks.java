@@ -1,4 +1,4 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm.sync;
+package lib.kasuga.rendering.models.mc.dynamic.fsm.sync;
 
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;

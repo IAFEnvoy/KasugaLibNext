@@ -1,5 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
+import lib.kasuga.rendering.models.mc.dynamic.fsm.AnimationBlockEntity;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
@@ -20,12 +21,16 @@ class AnimationBlockEntityPersistenceTest {
         return ResourceLocation.parse(s);
     }
 
+    private static Id id(String s) {
+        return Id.parse(s);
+    }
+
     @Test
     void roundTripsAllThreeFields() {
         CompoundTag tag = new CompoundTag();
-        AnimationBlockEntity.writePersistedIds(tag, rl("kasuga_lib:typed"), rl("kasuga_lib:cube.obj"), "cube");
+        AnimationBlockEntity.writePersistedIds(tag, id("kasuga_lib:typed"), rl("kasuga_lib:cube.obj"), "cube");
         AnimationBlockEntity.PersistedIds ids = AnimationBlockEntity.PersistedIds.read(tag);
-        assertEquals(rl("kasuga_lib:typed"), ids.stateMachineId());
+        assertEquals(id("kasuga_lib:typed"), ids.stateMachineId());
         assertEquals(rl("kasuga_lib:cube.obj"), ids.modelLoc());
         assertEquals("cube", ids.modelName());
     }
@@ -44,9 +49,9 @@ class AnimationBlockEntityPersistenceTest {
     @Test
     void mixedPresentAndAbsentFields() {
         CompoundTag tag = new CompoundTag();
-        AnimationBlockEntity.writePersistedIds(tag, rl("kasuga_lib:typed"), null, null);
+        AnimationBlockEntity.writePersistedIds(tag, id("kasuga_lib:typed"), null, null);
         AnimationBlockEntity.PersistedIds ids = AnimationBlockEntity.PersistedIds.read(tag);
-        assertEquals(rl("kasuga_lib:typed"), ids.stateMachineId());
+        assertEquals(id("kasuga_lib:typed"), ids.stateMachineId());
         assertNull(ids.modelLoc());
         assertNull(ids.modelName());
         assertEquals(1, tag.size(), "only the present field is written");

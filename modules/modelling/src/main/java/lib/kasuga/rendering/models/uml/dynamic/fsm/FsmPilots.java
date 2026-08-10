@@ -2,7 +2,6 @@ package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
 import com.mojang.serialization.Codec;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
-import net.minecraft.resources.ResourceLocation;
 
 /**
  * Pilot factory: builds a small reference-style machine for an owner. Generic (uses trigger +
@@ -12,7 +11,7 @@ public final class FsmPilots {
 
     /** Tick-scoped trigger fired to start the demo machine. */
     public static final StateVar<Boolean> ACTIVATE = StateVar.builder(
-            ResourceLocation.fromNamespaceAndPath("kasuga_lib", "pilot/activate"),
+            Id.fromNamespaceAndPath("kasuga_lib", "pilot/activate"),
             Boolean.class,
             Codec.BOOL
     ).defaultValue(Boolean.FALSE).ephemeral().build();

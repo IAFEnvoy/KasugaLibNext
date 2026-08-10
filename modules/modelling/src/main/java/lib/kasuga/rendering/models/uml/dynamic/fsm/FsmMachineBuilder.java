@@ -2,7 +2,6 @@ package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
 import com.mojang.logging.LogUtils;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
-import net.minecraft.resources.ResourceLocation;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
@@ -45,7 +44,7 @@ public final class FsmMachineBuilder {
 
     /** Resolve a definition from the shared definition bucket ({@link FsmRegistries#GLOBAL}). */
     @Nullable
-    public static StateMachineDefinition findDefinition(ResourceLocation id) {
+    public static StateMachineDefinition findDefinition(Id id) {
         if (id == null) {
             return null;
         }

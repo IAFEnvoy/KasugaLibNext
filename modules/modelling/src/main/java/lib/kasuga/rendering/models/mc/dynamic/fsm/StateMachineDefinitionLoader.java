@@ -1,5 +1,10 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm;
+package lib.kasuga.rendering.models.mc.dynamic.fsm;
 
+import lib.kasuga.rendering.models.uml.dynamic.fsm.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.function.*;
 import com.google.gson.JsonParseException;
 import com.mojang.logging.LogUtils;
 import com.mojang.serialization.JsonOps;
@@ -84,7 +89,7 @@ public final class StateMachineDefinitionLoader implements ScopedResourceManager
                         .resultOrPartial(error -> LOGGER.error("Failed to decode state machine '{}': {}", loc, error))
                         .ifPresent(result -> {
                             StateMachineDefinition definition = result.getFirst();
-                            ResourceLocation id = definition.id();
+                            Id id = definition.id();
                             definitions.registerResource(id, definition);
                             LOGGER.info("Loaded state machine definition '{}' from {}", id, loc);
                         });

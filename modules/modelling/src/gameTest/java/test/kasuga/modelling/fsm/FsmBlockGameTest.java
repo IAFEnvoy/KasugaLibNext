@@ -1,6 +1,7 @@
 package test.kasuga.modelling.fsm;
 
-import lib.kasuga.rendering.models.uml.dynamic.fsm.AnimationBlockEntity;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.AnimationBlockEntity;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gametest.framework.GameTest;
@@ -99,7 +100,7 @@ public final class FsmBlockGameTest {
     @GameTest(template = "empty", templateNamespace = "kasuga_lib", timeoutTicks = 40)
     public static void persistedIdsSurviveNbtRoundTrip(GameTestHelper helper) {
         CompoundTag tag = new CompoundTag();
-        ResourceLocation machineId = FsmTestRegistration.MACHINE_ID;
+        Id machineId = FsmTestRegistration.MACHINE_ID;
         ResourceLocation modelLoc = ResourceLocation.parse("kasuga_lib:models/fsm/test_cube.obj");
         AnimationBlockEntity.writePersistedIds(tag, machineId, modelLoc, "cube");
 

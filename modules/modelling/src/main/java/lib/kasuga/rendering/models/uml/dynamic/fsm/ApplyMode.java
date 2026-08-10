@@ -1,10 +1,9 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
 import com.mojang.serialization.Codec;
-import net.minecraft.util.StringRepresentable;
 
 /** How a bone-channel target is applied when flushing a blended pose to the skeleton. */
-public enum ApplyMode implements StringRepresentable {
+public enum ApplyMode {
     /** Replace the bone's transform entirely. */
     REPLACE("replace"),
     /** Multiply onto the current transform (additive bone delta). */
@@ -12,25 +11,26 @@ public enum ApplyMode implements StringRepresentable {
     /** Add a translation delta onto the current transform. */
     ADD("add");
 
-    public static final Codec<ApplyMode> CODEC = StringRepresentable.fromEnum(ApplyMode::values);
+    public static final Codec<ApplyMode> CODEC = Codec.STRING.xmap(ApplyMode::byName, m -> m.serialName);
 
-    private final String name;
+    private final String serialName;
 
-    ApplyMode(String name) {
-        this.name = name;
+    ApplyMode(String serialName) {
+        this.serialName = serialName;
     }
 
-    @Override
-    public String getSerializedName() {
-        return name;
+    /** Lowercase serialized name (stable JSON form). */
+    public String serialName() {
+        return serialName;
     }
 
+    /** Lookup by serialized name; {@code null}/unknown falls back to {@link #REPLACE} (the default apply mode). */
     public static ApplyMode byName(String name) {
         if (name == null) {
             return REPLACE;
         }
         for (ApplyMode mode : values()) {
-            if (mode.name.equals(name)) {
+            if (mode.serialName.equals(name)) {
                 return mode;
             }
         }

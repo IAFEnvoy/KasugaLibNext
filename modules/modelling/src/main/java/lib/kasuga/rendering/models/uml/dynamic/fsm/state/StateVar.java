@@ -1,9 +1,7 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm.state;
 
 import com.mojang.serialization.Codec;
-import net.minecraft.network.RegistryFriendlyByteBuf;
-import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.resources.ResourceLocation;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import org.joml.Vector3f;
 
 import java.util.Objects;
@@ -12,35 +10,33 @@ import java.util.function.Predicate;
 /**
  * Strongly-typed state variable — the FSM analog of Minecraft's {@code DataComponentType<T>}. Each var
  * bundles its value type {@code T}, a {@link Codec} (serialization / data-driven default), a default value,
- * an optional validator, an optional {@link StreamCodec} (reserved for a future network-sync layer), and an
- * {@code ephemeral} flag (tick-scoped: cleared at the end of every tick, used for triggers).
+ * an optional validator, and an {@code ephemeral} flag (tick-scoped: cleared at the end of every tick, used
+ * for triggers).
  *
- * <p>Identity is by {@link ResourceLocation} <b>alone</b>: two vars with the same id are equal, so a var
- * works as a {@link java.util.HashMap} key and resolves by id from JSON/scripts. The value type {@code T} is
- * erased at runtime; type safety is by construction — {@link MutableStateMap#set} only stores a value of the
- * var's own type and throws {@link IllegalStateException} on a same-id-different-type collision, so
- * {@link StateMap#get} is type-safe.
+ * <p>Identity is by {@link Id} <b>alone</b>: two vars with the same id are equal, so a var works as a
+ * {@link java.util.HashMap} key and resolves by id from JSON/scripts. The value type {@code T} is erased at
+ * runtime; type safety is by construction — {@link MutableStateMap#set} only stores a value of the var's own
+ * type and throws {@link IllegalStateException} on a same-id-different-type collision, so {@link StateMap#get}
+ * is type-safe.
  *
- * <p>Build with {@link #builder(ResourceLocation, Class, Codec)} (mirrors {@code DataComponentType.Builder})
- * or the {@link #of} shortcut.
+ * <p>Build with {@link #builder(Id, Class, Codec)} (mirrors {@code DataComponentType.Builder}) or the
+ * {@link #of} shortcut.
  */
 public final class StateVar<T> {
 
-    private final ResourceLocation id;
+    private final Id id;
     private final Class<T> type;
     private final Codec<T> codec;
     private final T defaultValue;
     private final Predicate<? super T> validator;
-    private final StreamCodec<? super RegistryFriendlyByteBuf, T> streamCodec;
     private final boolean ephemeral;
 
     private StateVar(
-            ResourceLocation id,
+            Id id,
             Class<T> type,
             Codec<T> codec,
             T defaultValue,
             Predicate<? super T> validator,
-            StreamCodec<? super RegistryFriendlyByteBuf, T> streamCodec,
             boolean ephemeral
     ) {
         this.id = Objects.requireNonNull(id, "id");
@@ -48,7 +44,6 @@ public final class StateVar<T> {
         this.codec = Objects.requireNonNull(codec, "codec");
         this.defaultValue = Objects.requireNonNull(defaultValue, "defaultValue");
         this.validator = validator;
-        this.streamCodec = streamCodec;
         this.ephemeral = ephemeral;
         if (!isValid(defaultValue)) {
             throw new IllegalArgumentException(
@@ -56,7 +51,7 @@ public final class StateVar<T> {
         }
     }
 
-    public ResourceLocation id() {
+    public Id id() {
         return id;
     }
 
@@ -115,11 +110,11 @@ public final class StateVar<T> {
         return "StateVar[" + id + "]";
     }
 
-    public static <T> Builder<T> builder(ResourceLocation id, Class<T> type, Codec<T> codec) {
+    public static <T> Builder<T> builder(Id id, Class<T> type, Codec<T> codec) {
         return new Builder<>(id, type, codec);
     }
 
-    public static <T> StateVar<T> of(ResourceLocation id, Class<T> type, Codec<T> codec, T defaultValue) {
+    public static <T> StateVar<T> of(Id id, Class<T> type, Codec<T> codec, T defaultValue) {
         return builder(id, type, codec).defaultValue(defaultValue).build();
     }
 
@@ -129,22 +124,21 @@ public final class StateVar<T> {
      * {@code StateMachine.trigger(var)}. For a latched (buffered) trigger use a <em>non-ephemeral</em> bool
      * var with {@code Transition.onBuffered(var)} + {@code StateMachine.triggerBuffered(var)}.
      */
-    public static StateVar<Boolean> trigger(ResourceLocation id) {
+    public static StateVar<Boolean> trigger(Id id) {
         return builder(id, Boolean.class, Codec.BOOL).defaultValue(Boolean.FALSE).ephemeral().build();
     }
 
     /** Fluent builder, mirroring {@code DataComponentType.Builder}. */
     public static final class Builder<T> {
 
-        private final ResourceLocation id;
+        private final Id id;
         private final Class<T> type;
         private final Codec<T> codec;
         private T defaultValue;
         private Predicate<? super T> validator;
-        private StreamCodec<? super RegistryFriendlyByteBuf, T> streamCodec;
         private boolean ephemeral;
 
-        private Builder(ResourceLocation id, Class<T> type, Codec<T> codec) {
+        private Builder(Id id, Class<T> type, Codec<T> codec) {
             this.id = id;
             this.type = type;
             this.codec = codec;
@@ -160,15 +154,6 @@ public final class StateVar<T> {
             return this;
         }
 
-        /**
-         * <b>Reserved</b> for a future network-sync layer. Setting this has <b>no effect today</b> — no code
-         * consumes it; it is kept so that adding var sync later is a single builder call here.
-         */
-        public Builder<T> streamCodec(StreamCodec<? super RegistryFriendlyByteBuf, T> streamCodec) {
-            this.streamCodec = streamCodec;
-            return this;
-        }
-
         /** Mark this var tick-scoped: cleared at the end of every tick (use for triggers). */
         public Builder<T> ephemeral() {
             this.ephemeral = true;
@@ -176,7 +161,7 @@ public final class StateVar<T> {
         }
 
         public StateVar<T> build() {
-            return new StateVar<>(id, type, codec, defaultValue, validator, streamCodec, ephemeral);
+            return new StateVar<>(id, type, codec, defaultValue, validator, ephemeral);
         }
     }
 }

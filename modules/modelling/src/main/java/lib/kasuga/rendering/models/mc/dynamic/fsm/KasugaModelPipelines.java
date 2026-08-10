@@ -1,4 +1,4 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm;
+package lib.kasuga.rendering.models.mc.dynamic.fsm;
 
 import com.mojang.logging.LogUtils;
 import lib.kasuga.rendering.models.mc.Constants;

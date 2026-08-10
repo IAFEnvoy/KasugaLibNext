@@ -1,6 +1,5 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -16,8 +15,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Handle minting/reversal, latest-pointer semantics, release, and invalidation notifications. */
 class FsmMachinesTest {
 
-    private static ResourceLocation rl(String path) {
-        return ResourceLocation.fromNamespaceAndPath("test", path);
+    private static Id rl(String path) {
+        return Id.fromNamespaceAndPath("test", path);
     }
 
     private static StateMachine<Object> machine() {
@@ -97,7 +96,7 @@ class FsmMachinesTest {
     @Test
     void removeAllNotifiesAndCleans() {
         FsmMachines machines = new FsmMachines();
-        List<ResourceLocation> notified = new ArrayList<>();
+        List<Id> notified = new ArrayList<>();
         machines.addListener(notified::add);
         StateMachine<?> m = machine();
         long handle = machines.register(rl("a"), m);
@@ -115,7 +114,7 @@ class FsmMachinesTest {
     @Test
     void reRegisterNotifiesLatestChange() {
         FsmMachines machines = new FsmMachines();
-        List<ResourceLocation> notified = new ArrayList<>();
+        List<Id> notified = new ArrayList<>();
         machines.addListener(notified::add);
         machines.register(rl("a"), machine());
         assertTrue(notified.isEmpty(), "first registration does not notify");

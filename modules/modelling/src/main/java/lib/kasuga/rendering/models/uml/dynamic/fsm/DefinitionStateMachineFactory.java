@@ -13,7 +13,6 @@ import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarRegistry;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarType;
 import lib.kasuga.rendering.models.uml.math.Transform;
-import net.minecraft.resources.ResourceLocation;
 import org.joml.Vector3f;
 import org.slf4j.Logger;
 
@@ -103,7 +102,7 @@ public final class DefinitionStateMachineFactory<O> {
         return byName;
     }
 
-    private StateVar<?> resolveReference(ResourceLocation machineId, String reference) {
+    private StateVar<?> resolveReference(Id machineId, String reference) {
         StateVar<?> var = stateVars.resolve(reference);
         if (var == null) {
             LOGGER.warn("State machine '{}' references unknown state var '{}'", machineId, reference);
@@ -112,7 +111,7 @@ public final class DefinitionStateMachineFactory<O> {
     }
 
     @SuppressWarnings("unchecked")
-    private <T> StateVar<T> resolveInline(ResourceLocation machineId, StateVarDefinition def) {
+    private <T> StateVar<T> resolveInline(Id machineId, StateVarDefinition def) {
         StateVarType<T> type = (StateVarType<T>) StateVarType.byToken(def.type());
         T defaultValue = def.defaultValue().isPresent()
                 ? decodeOrDefault(type.codec(), def.defaultValue().get(), type.zeroDefault(), def.name())
@@ -134,13 +133,13 @@ public final class DefinitionStateMachineFactory<O> {
                 .orElse(fallback);
     }
 
-    private static ResourceLocation idFor(ResourceLocation machineId, String name) {
-        return ResourceLocation.fromNamespaceAndPath(machineId.getNamespace(), machineId.getPath() + "/" + name);
+    private static Id idFor(Id machineId, String name) {
+        return Id.fromNamespaceAndPath(machineId.getNamespace(), machineId.getPath() + "/" + name);
     }
 
     //endregion
 
-    private Layer<O> buildLayer(LayerDefinition layerDef, Map<String, StateVar<?>> varsByName, ResourceLocation machineId) {
+    private Layer<O> buildLayer(LayerDefinition layerDef, Map<String, StateVar<?>> varsByName, Id machineId) {
         Layer<O> layer = new Layer<>(layerDef.id());
         layer.weight(layerDef.weight());
         switch (layerDef.mode()) {
@@ -173,13 +172,13 @@ public final class DefinitionStateMachineFactory<O> {
     private void configureState(State<O> state, StateDefinition def) {
         def.durationTicks().ifPresent(state::durationTicks);
         applyPose(state, def.pose());
-        for (ResourceLocation id : def.onEnter()) {
+        for (Id id : def.onEnter()) {
             state.onEnter(action(id));
         }
-        for (ResourceLocation id : def.onExit()) {
+        for (Id id : def.onExit()) {
             state.onExit(action(id));
         }
-        for (ResourceLocation id : def.onUpdate()) {
+        for (Id id : def.onUpdate()) {
             state.onUpdate(action(id));
         }
     }
@@ -188,7 +187,7 @@ public final class DefinitionStateMachineFactory<O> {
             Transition<O> transition,
             TransitionDefinition def,
             Map<String, StateVar<?>> varsByName,
-            ResourceLocation machineId
+            Id machineId
     ) {
         transition.crossFade(def.crossFadeSeconds());
         if (def.whenComplete()) {
@@ -200,15 +199,15 @@ public final class DefinitionStateMachineFactory<O> {
                 transition.on(trigger);
             }
         });
-        for (ResourceLocation id : def.when()) {
+        for (Id id : def.when()) {
             transition.when(condition(id));
         }
-        for (ResourceLocation id : def.onFire()) {
+        for (Id id : def.onFire()) {
             transition.onFire(action(id));
         }
     }
 
-    private StateVar<Boolean> resolveTrigger(String id, Map<String, StateVar<?>> varsByName, ResourceLocation machineId) {
+    private StateVar<Boolean> resolveTrigger(String id, Map<String, StateVar<?>> varsByName, Id machineId) {
         StateVar<?> var = varsByName.get(id);
         if (var == null) {
             var = stateVars.resolve(id);
@@ -253,13 +252,13 @@ public final class DefinitionStateMachineFactory<O> {
     }
 
     @SuppressWarnings("unchecked")
-    private Predicate<StateContext<O>> condition(ResourceLocation id) {
+    private Predicate<StateContext<O>> condition(Id id) {
         FsmCondition<?> condition = library.condition(id);
         return condition != null ? ctx -> ((FsmCondition<O>) condition).test(ctx) : ctx -> false;
     }
 
     @SuppressWarnings("unchecked")
-    private Consumer<StateContext<O>> action(ResourceLocation id) {
+    private Consumer<StateContext<O>> action(Id id) {
         FsmAction<?> action = library.action(id);
         return action != null ? ((FsmAction<O>) action)::accept : ctx -> {};
     }
@@ -276,13 +275,13 @@ public final class DefinitionStateMachineFactory<O> {
             Set<String> stateIds = new HashSet<>();
             for (StateDefinition stateDef : layerDef.states()) {
                 stateIds.add(stateDef.id());
-                for (ResourceLocation id : stateDef.onEnter()) {
+                for (Id id : stateDef.onEnter()) {
                     if (!library.hasAction(id)) missing.add(id.toString());
                 }
-                for (ResourceLocation id : stateDef.onExit()) {
+                for (Id id : stateDef.onExit()) {
                     if (!library.hasAction(id)) missing.add(id.toString());
                 }
-                for (ResourceLocation id : stateDef.onUpdate()) {
+                for (Id id : stateDef.onUpdate()) {
                     if (!library.hasAction(id)) missing.add(id.toString());
                 }
             }
@@ -297,10 +296,10 @@ public final class DefinitionStateMachineFactory<O> {
                 if (!stateIds.contains(transDef.to())) {
                     missing.add(layerDef.id() + ": transition '" + transDef.id() + "' unknown to '" + transDef.to() + "'");
                 }
-                for (ResourceLocation id : transDef.when()) {
+                for (Id id : transDef.when()) {
                     if (!library.hasCondition(id)) missing.add(id.toString());
                 }
-                for (ResourceLocation id : transDef.onFire()) {
+                for (Id id : transDef.onFire()) {
                     if (!library.hasAction(id)) missing.add(id.toString());
                 }
             }

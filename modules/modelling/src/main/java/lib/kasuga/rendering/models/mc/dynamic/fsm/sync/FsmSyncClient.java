@@ -1,14 +1,19 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm.sync;
+package lib.kasuga.rendering.models.mc.dynamic.fsm.sync;
 
+import lib.kasuga.rendering.models.uml.dynamic.fsm.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.function.*;
 import com.mojang.logging.LogUtils;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmMachines;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmRegistries;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.Layer;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.State;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachineSnapshot;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.Transition;
-import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -32,7 +37,7 @@ public final class FsmSyncClient {
 
     private final FsmSyncState syncState;
     private final Map<FsmSyncKey, StateMachine<?>> machines = new ConcurrentHashMap<>();
-    private final Function<ResourceLocation, Integer> definitionHash;
+    private final Function<Id, Integer> definitionHash;
 
     /** Defaults the definition-hash source to the shared bucket ({@link FsmRegistries#GLOBAL}). */
     public FsmSyncClient() {
@@ -40,12 +45,12 @@ public final class FsmSyncClient {
     }
 
     /** Testable entry: inject the per-id definition-hash source. */
-    public FsmSyncClient(Function<ResourceLocation, Integer> definitionHash) {
+    public FsmSyncClient(Function<Id, Integer> definitionHash) {
         this(new FsmSyncState(), definitionHash);
     }
 
     /** Fully injectable entry. */
-    public FsmSyncClient(FsmSyncState syncState, Function<ResourceLocation, Integer> definitionHash) {
+    public FsmSyncClient(FsmSyncState syncState, Function<Id, Integer> definitionHash) {
         this.syncState = syncState;
         this.definitionHash = definitionHash;
     }

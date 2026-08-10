@@ -1,10 +1,12 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm.sync;
 
+import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncPayload;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncClient;
 import io.netty.buffer.Unpooled;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.State;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -15,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** FsmSyncPayload wire round-trip + FsmSyncClient.apply: index→id conversion and validation. */
 class FsmSyncPayloadCodecTest {
 
-    private static ResourceLocation rl(String path) {
-        return ResourceLocation.fromNamespaceAndPath("test", path);
+    private static Id rl(String path) {
+        return Id.fromNamespaceAndPath("test", path);
     }
 
     private static StateMachine<Object> machine() {
@@ -32,7 +34,7 @@ class FsmSyncPayloadCodecTest {
 
     private static FsmSyncPayload samplePayload() {
         return new FsmSyncPayload(
-                rl("demo"), rl("overworld"), 123L, 7, 9, false,
+                rl("demo"), "test:overworld", 123L, 7, 9, false,
                 List.of(new FsmSyncPayload.LayerEntry(0, 1, 3, -1, 0f))
         );
     }
@@ -48,7 +50,7 @@ class FsmSyncPayloadCodecTest {
 
     @Test
     void emptyLayersRoundTrip() {
-        FsmSyncPayload payload = new FsmSyncPayload(rl("demo"), rl("overworld"), 0L, 1, 2, true, List.of());
+        FsmSyncPayload payload = new FsmSyncPayload(rl("demo"), "test:overworld", 0L, 1, 2, true, List.of());
         FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
         FsmSyncPayload.CODEC.encode(buf, payload);
         assertEquals(payload, FsmSyncPayload.CODEC.decode(buf));
@@ -63,12 +65,12 @@ class FsmSyncPayloadCodecTest {
 
         StateMachine<Object> client = machine();
         FsmSyncClient clientSync = new FsmSyncClient(new FsmSyncState(), id -> 9);
-        FsmSyncKey key = new FsmSyncKey(rl("demo"), rl("overworld"), 123L);
+        FsmSyncKey key = new FsmSyncKey(rl("demo"), "test:overworld", 123L);
         clientSync.bind(key, client);
 
         // hand-built server payload: indices taken from the server machine's own structure
         FsmSyncPayload payload = new FsmSyncPayload(
-                rl("demo"), rl("overworld"), 123L, server.version(), 9, false,
+                rl("demo"), "test:overworld", 123L, server.version(), 9, false,
                 List.of(new FsmSyncPayload.LayerEntry(
                         0,
                         server.layer("loco").activeStateIndex(),
@@ -90,17 +92,17 @@ class FsmSyncPayloadCodecTest {
     void staleVersionsAreIgnoredAfterApply() {
         StateMachine<Object> client = machine();
         FsmSyncClient clientSync = new FsmSyncClient(new FsmSyncState(), id -> 9);
-        FsmSyncKey key = new FsmSyncKey(rl("demo"), rl("overworld"), 123L);
+        FsmSyncKey key = new FsmSyncKey(rl("demo"), "test:overworld", 123L);
         clientSync.bind(key, client);
 
         clientSync.apply(new FsmSyncPayload(
-                rl("demo"), rl("overworld"), 123L, 3, 9, false,
+                rl("demo"), "test:overworld", 123L, 3, 9, false,
                 List.of(new FsmSyncPayload.LayerEntry(0, 1, 0, -1, 0f))
         ));
         assertEquals(1, client.version()); // conform applied
 
         clientSync.apply(new FsmSyncPayload(
-                rl("demo"), rl("overworld"), 123L, 3, 9, false,
+                rl("demo"), "test:overworld", 123L, 3, 9, false,
                 List.of(new FsmSyncPayload.LayerEntry(0, 0, 0, -1, 0f))
         ));
         assertEquals(1, client.version()); // stale: dropped before conform
@@ -110,11 +112,11 @@ class FsmSyncPayloadCodecTest {
     void outOfBoundsIndicesAreSkippedWithoutThrowing() {
         StateMachine<Object> client = machine();
         FsmSyncClient clientSync = new FsmSyncClient(new FsmSyncState(), id -> 9);
-        FsmSyncKey key = new FsmSyncKey(rl("demo"), rl("overworld"), 123L);
+        FsmSyncKey key = new FsmSyncKey(rl("demo"), "test:overworld", 123L);
         clientSync.bind(key, client);
 
         FsmSyncPayload payload = new FsmSyncPayload(
-                rl("demo"), rl("overworld"), 123L, 1, 9, false,
+                rl("demo"), "test:overworld", 123L, 1, 9, false,
                 List.of(
                         new FsmSyncPayload.LayerEntry(9, 0, 0, -1, 0f), // layer index OOB
                         new FsmSyncPayload.LayerEntry(0, 9, 0, -1, 0f), // state index OOB
@@ -131,11 +133,11 @@ class FsmSyncPayloadCodecTest {
     void definitionHashMismatchIsRejected() {
         StateMachine<Object> client = machine();
         FsmSyncClient clientSync = new FsmSyncClient(new FsmSyncState(), id -> 9);
-        FsmSyncKey key = new FsmSyncKey(rl("demo"), rl("overworld"), 123L);
+        FsmSyncKey key = new FsmSyncKey(rl("demo"), "test:overworld", 123L);
         clientSync.bind(key, client);
 
         FsmSyncPayload payload = new FsmSyncPayload(
-                rl("demo"), rl("overworld"), 123L, 1, 8, false, // server def hash 8 ≠ local 9
+                rl("demo"), "test:overworld", 123L, 1, 8, false, // server def hash 8 ≠ local 9
                 List.of(new FsmSyncPayload.LayerEntry(0, 1, 0, -1, 0f))
         );
         clientSync.apply(payload);
@@ -148,18 +150,18 @@ class FsmSyncPayloadCodecTest {
     void forceHeartbeatBypassesStalenessAndApplies() {
         StateMachine<Object> client = machine();
         FsmSyncClient clientSync = new FsmSyncClient(new FsmSyncState(), id -> 9);
-        FsmSyncKey key = new FsmSyncKey(rl("demo"), rl("overworld"), 123L);
+        FsmSyncKey key = new FsmSyncKey(rl("demo"), "test:overworld", 123L);
         clientSync.bind(key, client);
 
         clientSync.apply(new FsmSyncPayload(
-                rl("demo"), rl("overworld"), 123L, 5, 9, false,
+                rl("demo"), "test:overworld", 123L, 5, 9, false,
                 List.of(new FsmSyncPayload.LayerEntry(0, 0, 0, -1, 0f))
         ));
         assertTrue(client.version() > 0);
 
         // a forced replay of an older version must still apply
         clientSync.apply(new FsmSyncPayload(
-                rl("demo"), rl("overworld"), 123L, 2, 9, true,
+                rl("demo"), "test:overworld", 123L, 2, 9, true,
                 List.of(new FsmSyncPayload.LayerEntry(0, 1, 5, -1, 0f))
         ));
         assertEquals("walk", client.layer("loco").active().id());

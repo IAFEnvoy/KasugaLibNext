@@ -1,5 +1,10 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm;
+package lib.kasuga.rendering.models.mc.dynamic.fsm;
 
+import lib.kasuga.rendering.models.uml.dynamic.fsm.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.function.*;
 import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
 import lib.kasuga.registration.Reg;
@@ -52,7 +57,7 @@ public final class FsmBlockEntityFactories {
     }
 
     private static Reg<?, ?> createFsmBeReg(String id, Supplier<Block[]> validBlocks, @Nullable JsonObject params) {
-        ResourceLocation machineId = readResourceLocation(params, "state_machine");
+        Id machineId = readId(params, "state_machine");
         if (machineId == null) {
             LOGGER.warn("[fsm_be] '{}' has no valid 'state_machine' param; its block entity will not run a machine", id);
         }
@@ -63,6 +68,14 @@ public final class FsmBlockEntityFactories {
         reg.withProperty(Collection.class,
                 col -> { col.addAll(Arrays.asList(validBlocks.get())); return col; });
         return reg;
+    }
+
+    @Nullable
+    private static Id readId(@Nullable JsonObject params, String key) {
+        if (params == null || !params.has(key) || !params.get(key).isJsonPrimitive()) {
+            return null;
+        }
+        return Id.tryParse(params.get(key).getAsString());
     }
 
     @Nullable

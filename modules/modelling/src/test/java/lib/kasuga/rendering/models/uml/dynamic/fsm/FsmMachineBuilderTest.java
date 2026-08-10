@@ -5,7 +5,6 @@ import com.google.gson.JsonParser;
 import com.mojang.serialization.DataResult;
 import com.mojang.serialization.JsonOps;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -22,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class FsmMachineBuilderTest {
 
-    private static final ResourceLocation DEF_ID = ResourceLocation.fromNamespaceAndPath("test", "builder_flow");
+    private static final Id DEF_ID = Id.fromNamespaceAndPath("test", "builder_flow");
 
     /** idle（1 tick）→ when_complete → active：1 次 tick 后必然产生状态变更。 */
     private static final String MAIN_JSON = """
@@ -84,7 +83,7 @@ class FsmMachineBuilderTest {
     @Test
     void missingDefinitionReturnsNull() {
         assertNull(FsmMachineBuilder.build(new Object(), null, null));
-        assertNull(FsmMachineBuilder.findDefinition(ResourceLocation.fromNamespaceAndPath("test", "definitely_missing")));
+        assertNull(FsmMachineBuilder.findDefinition(Id.fromNamespaceAndPath("test", "definitely_missing")));
     }
 
     @Test

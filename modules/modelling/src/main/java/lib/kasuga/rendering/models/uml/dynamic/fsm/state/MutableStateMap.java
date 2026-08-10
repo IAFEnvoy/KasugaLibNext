@@ -1,6 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm.state;
 
-import net.minecraft.resources.ResourceLocation;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -13,7 +13,7 @@ import java.util.Set;
  * Mutable {@link StateMap} — the FSM analog of Minecraft's {@code PatchedDataComponentMap}, minus the
  * prototype indirection (defaults live on each {@link StateVar}, so a flat map keyed by id is enough).
  *
- * <p>Backed by {@code Map<ResourceLocation, Entry>}. Because {@link StateVar} equality is by id alone, two vars
+ * <p>Backed by {@code Map<Id, Entry>}. Because {@link StateVar} equality is by id alone, two vars
  * with the same id but different value types would otherwise collide silently and {@code get} would
  * unchecked-cast at the call site; instead {@link #set} detects the type mismatch and throws
  * {@link IllegalStateException} at the offender. {@link #get} returns the var's default (defensively copied for
@@ -23,7 +23,7 @@ public final class MutableStateMap implements StateMap {
 
     private record Entry(StateVar<?> var, Object value) {}
 
-    private final Map<ResourceLocation, Entry> values = new HashMap<>();
+    private final Map<Id, Entry> values = new HashMap<>();
 
     public MutableStateMap() {}
 

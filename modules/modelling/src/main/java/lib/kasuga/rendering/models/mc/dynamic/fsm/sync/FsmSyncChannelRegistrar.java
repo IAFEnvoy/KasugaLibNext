@@ -1,4 +1,4 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm.sync;
+package lib.kasuga.rendering.models.mc.dynamic.fsm.sync;
 
 import io.micronaut.context.annotation.Context;
 import jakarta.annotation.PostConstruct;

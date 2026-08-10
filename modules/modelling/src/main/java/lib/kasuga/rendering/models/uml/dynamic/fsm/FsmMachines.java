@@ -1,7 +1,5 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
-import net.minecraft.resources.ResourceLocation;
-
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,24 +29,24 @@ public final class FsmMachines {
      * ({@link #removeAll} / {@link #clear}) — reserved for hosts that rebuild machines on invalidation.
      */
     public interface InvalidationListener {
-        void onInvalidated(ResourceLocation id);
+        void onInvalidated(Id id);
     }
 
     /** The full record behind a handle: the machine and the id it was registered under. */
-    private record Entry(ResourceLocation id, StateMachine<?> machine) {}
+    private record Entry(Id id, StateMachine<?> machine) {}
 
     private final Map<Long, Entry> byHandle = new ConcurrentHashMap<>();
-    private final Map<ResourceLocation, Long> latestHandleById = new ConcurrentHashMap<>();
+    private final Map<Id, Long> latestHandleById = new ConcurrentHashMap<>();
     private final AtomicLong nextHandle = new AtomicLong(1);
     private final List<InvalidationListener> listeners = new CopyOnWriteArrayList<>();
 
     /**
      * Register a runtime machine instance and obtain a scripting handle. Each call mints a <b>fresh</b>
      * handle — re-registering the same id does NOT invalidate prior handles (multi-instance): each handle
-     * resolves to its own machine. {@link #latest(ResourceLocation)} returns the most-recently registered
+     * resolves to its own machine. {@link #latest(Id)} returns the most-recently registered
      * machine for the id. Listeners are notified when an id's latest machine changes.
      */
-    public long register(ResourceLocation id, StateMachine<?> machine) {
+    public long register(Id id, StateMachine<?> machine) {
         long handle = nextHandle.getAndIncrement();
         byHandle.put(handle, new Entry(id, machine));
         Long previousLatest = latestHandleById.put(id, handle);
@@ -66,7 +64,7 @@ public final class FsmMachines {
 
     /** The most-recently registered machine for {@code id} (or {@code null} — also after its latest
      * handle was released). */
-    public StateMachine<?> latest(ResourceLocation id) {
+    public StateMachine<?> latest(Id id) {
         Long handle = latestHandleById.get(id);
         if (handle == null) {
             return null;
@@ -78,7 +76,7 @@ public final class FsmMachines {
     /**
      * Release a single scripting handle. Only that handle is dropped — any other handles for the id
      * remain live. If this was the id's latest handle, the id's latest pointer is cleared (so
-     * {@link #latest(ResourceLocation)} returns {@code null} and a later re-register is treated as fresh).
+     * {@link #latest(Id)} returns {@code null} and a later re-register is treated as fresh).
      */
     public void release(long handle) {
         Entry entry = byHandle.remove(handle);
@@ -91,7 +89,7 @@ public final class FsmMachines {
      * Remove every machine registered under {@code id} (the id's latest pointer plus all of its handles);
      * notifies listeners if anything was removed.
      */
-    public void removeAll(ResourceLocation id) {
+    public void removeAll(Id id) {
         boolean hadLatest = latestHandleById.remove(id) != null;
         boolean removedHandles = byHandle.entrySet().removeIf(entry -> id.equals(entry.getValue().id()));
         if (hadLatest || removedHandles) {
@@ -112,7 +110,7 @@ public final class FsmMachines {
         }
     }
 
-    private void notifyInvalidated(ResourceLocation id) {
+    private void notifyInvalidated(Id id) {
         for (InvalidationListener listener : listeners) {
             listener.onInvalidated(id);
         }

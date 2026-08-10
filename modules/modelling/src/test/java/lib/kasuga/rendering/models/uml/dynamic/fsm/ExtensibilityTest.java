@@ -24,15 +24,19 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  */
 class ExtensibilityTest {
 
-    static final StateVar<Float> SPEED = StateVar.of(rl("test/speed"), Float.class, Codec.FLOAT, 0f);
-    static final StateVar<String> MODE = StateVar.of(rl("test/mode"), String.class, Codec.STRING, "idle");
-    static final StateVar<String> NOTE = StateVar.of(rl("test/note"), String.class, Codec.STRING, "");
+    static final StateVar<Float> SPEED = StateVar.of(id("test/speed"), Float.class, Codec.FLOAT, 0f);
+    static final StateVar<String> MODE = StateVar.of(id("test/mode"), String.class, Codec.STRING, "idle");
+    static final StateVar<String> NOTE = StateVar.of(id("test/note"), String.class, Codec.STRING, "");
     static final Blackboard.Key<Boolean> ARMED = Blackboard.Key.of("armed");
 
     static final class Actor {}
 
     private static ResourceLocation rl(String path) {
         return ResourceLocation.fromNamespaceAndPath("kasuga_lib", path);
+    }
+
+    private static Id id(String path) {
+        return Id.fromNamespaceAndPath("kasuga_lib", path);
     }
 
     @Test

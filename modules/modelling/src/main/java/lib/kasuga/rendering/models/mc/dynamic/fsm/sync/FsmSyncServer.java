@@ -1,12 +1,17 @@
-package lib.kasuga.rendering.models.uml.dynamic.fsm.sync;
+package lib.kasuga.rendering.models.mc.dynamic.fsm.sync;
 
+import lib.kasuga.rendering.models.uml.dynamic.fsm.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.*;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.function.*;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmRegistries;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.Layer;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.State;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.Transition;
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
@@ -37,7 +42,7 @@ public class FsmSyncServer {
 
     final FsmSyncDedup dedup = new FsmSyncDedup();
 
-    private final Function<ResourceLocation, Integer> definitionHash;
+    private final Function<Id, Integer> definitionHash;
 
     /** Defaults the definition-hash source to the shared bucket ({@link FsmRegistries#GLOBAL}). */
     public FsmSyncServer() {
@@ -45,7 +50,7 @@ public class FsmSyncServer {
     }
 
     /** Testable entry: inject the per-id definition-hash source. */
-    public FsmSyncServer(Function<ResourceLocation, Integer> definitionHash) {
+    public FsmSyncServer(Function<Id, Integer> definitionHash) {
         this.definitionHash = definitionHash;
     }
 

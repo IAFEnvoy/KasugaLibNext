@@ -5,12 +5,11 @@ import com.mojang.serialization.JsonOps;
 import io.netty.buffer.Unpooled;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.function.FsmFunctionLibrary;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.FsmSyncClient;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncClient;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.FsmSyncKey;
-import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.FsmSyncPayload;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncPayload;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.FsmSyncState;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -59,8 +58,8 @@ class FsmDataDrivenEndToEndTest {
 
     private static final int DEFINITION_HASH = 7;
     private static final FsmSyncKey KEY = new FsmSyncKey(
-            ResourceLocation.parse("test:panel"),
-            ResourceLocation.parse("minecraft:overworld"),
+            Id.parse("test:panel"),
+            "minecraft:overworld",
             42L);
 
     private static StateMachine<Object> machine() {

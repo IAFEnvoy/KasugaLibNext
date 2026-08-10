@@ -4,7 +4,6 @@ import com.google.gson.JsonParser;
 import com.mojang.serialization.JsonOps;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarRegistry;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,8 +41,8 @@ class InlineStateVarLifecycleTest {
                 .orElseThrow().getFirst();
     }
 
-    private static ResourceLocation varId(String name) {
-        return ResourceLocation.fromNamespaceAndPath("test", "inline/" + name);
+    private static Id varId(String name) {
+        return Id.fromNamespaceAndPath("test", "inline/" + name);
     }
 
     @Test
@@ -51,7 +50,7 @@ class InlineStateVarLifecycleTest {
         FsmRegistries registries = FsmRegistries.create();
         StateVarRegistry stateVars = registries.vars();
         StateMachineDefinition def = decode();
-        registries.definitions().register(ResourceLocation.parse("test:inline"), def);
+        registries.definitions().register(Id.parse("test:inline"), def);
 
         // before any build, no inline var is registered
         assertNull(stateVars.get(varId("speed")));
@@ -79,11 +78,11 @@ class InlineStateVarLifecycleTest {
         FsmRegistries registries = FsmRegistries.create();
         StateVarRegistry stateVars = registries.vars();
         StateMachineDefinition def = decode();
-        registries.definitions().register(ResourceLocation.parse("test:inline"), def);
+        registries.definitions().register(Id.parse("test:inline"), def);
         new DefinitionStateMachineFactory<Object>(registries.functions(), stateVars).build(new Object(), def, null);
         assertNotNull(stateVars.get(varId("speed")));
 
-        assertTrue(registries.definitions().remove(ResourceLocation.parse("test:inline")));
+        assertTrue(registries.definitions().remove(Id.parse("test:inline")));
         assertFalse(stateVars.ids().stream().anyMatch(id -> id.getPath().startsWith("inline/")),
                 "remove must clean the removed definition's inline vars");
     }
@@ -97,8 +96,8 @@ class InlineStateVarLifecycleTest {
     void clearingMachineDoesNotTouchSiblingPathVars() {
         FsmRegistries registries = FsmRegistries.create();
         StateVarRegistry stateVars = registries.vars();
-        ResourceLocation parent = ResourceLocation.parse("test:a");
-        ResourceLocation sibling = ResourceLocation.parse("test:a/b");
+        Id parent = Id.parse("test:a");
+        Id sibling = Id.parse("test:a/b");
 
         DefinitionStateMachineFactory<Object> factory =
                 new DefinitionStateMachineFactory<>(registries.functions(), stateVars);
@@ -109,8 +108,8 @@ class InlineStateVarLifecycleTest {
         factory.build(new Object(), parentDef, null);
         factory.build(new Object(), siblingDef, null);
 
-        ResourceLocation parentVar = ResourceLocation.parse("test:a/speed");
-        ResourceLocation siblingVar = ResourceLocation.parse("test:a/b/speed");
+        Id parentVar = Id.parse("test:a/speed");
+        Id siblingVar = Id.parse("test:a/b/speed");
         assertNotNull(stateVars.get(parentVar));
         assertNotNull(stateVars.get(siblingVar));
 
@@ -123,7 +122,7 @@ class InlineStateVarLifecycleTest {
     }
 
     /** A definition with a single inline float var, decodable via the inline path of the factory. */
-    private static StateMachineDefinition definitionWithInlineVar(ResourceLocation machineId, String varName) {
+    private static StateMachineDefinition definitionWithInlineVar(Id machineId, String varName) {
         String json = """
                 {
                   "id": "%s",
