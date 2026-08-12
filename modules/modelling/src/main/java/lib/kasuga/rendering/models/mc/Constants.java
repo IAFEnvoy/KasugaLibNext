@@ -1,6 +1,5 @@
 package lib.kasuga.rendering.models.mc;
 
-import com.google.gson.JsonObject;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -28,33 +27,18 @@ import lib.kasuga.rendering.models.mc.backend.data_type.KasugaShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaGlobalBatchShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.ui.UIBackend;
 import lib.kasuga.rendering.models.mc.compat.iris.IrisCompat;
-import lib.kasuga.rendering.models.mc.java_and_bedrock.loader.be.BEModelLoader;
-import lib.kasuga.rendering.models.mc.java_and_bedrock.loader.je.JEModelLoader;
-import lib.kasuga.rendering.models.mc.source.model.zip.FileZipModelSource;
-import lib.kasuga.rendering.models.mc.source.model.zip.JarZipModelSource;
-import lib.kasuga.rendering.models.mc.source.model.zip.ZipModelSourceManager;
-import lib.kasuga.rendering.models.mc.source.texture.BufferedImageTextureSource;
-import lib.kasuga.rendering.models.mc.typo.KsgObjLoader;
+import lib.kasuga.rendering.models.mc.registry.PipelineRegistry;
 import lib.kasuga.rendering.models.mc.source.model.*;
-import lib.kasuga.rendering.models.mc.source.model.json.FileJsonModelSource;
-import lib.kasuga.rendering.models.mc.source.model.json.JarJsonModelSource;
-import lib.kasuga.rendering.models.mc.source.model.json.JsonModelSourceManager;
-import lib.kasuga.rendering.models.mc.source.model.str.FileStrModelSource;
-import lib.kasuga.rendering.models.mc.source.model.str.JarStrModelSource;
-import lib.kasuga.rendering.models.mc.source.model.str.StrModelSourceManager;
+import lib.kasuga.rendering.models.mc.source.texture.BufferedImageTextureSource;
 import lib.kasuga.rendering.models.mc.source.texture.CombinedTextureManager;
 import lib.kasuga.rendering.models.mc.source.texture.FileTextureSource;
 import lib.kasuga.rendering.models.mc.source.texture.JarTextureSource;
 import lib.kasuga.rendering.models.mc.source.texture.bake.PbrBakeCoordinator;
 import lib.kasuga.rendering.models.mc.source.texture.bake.PbrBakeState;
-import lib.kasuga.rendering.models.mc.typo.KsgPmxLoader;
-import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipHelper;
-import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipResource;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
 import lib.kasuga.rendering.models.uml.loaders.sources.SourceType;
 import lib.kasuga.rendering.models.uml.math.Transform;
-import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.AlertScreen;
@@ -83,11 +67,8 @@ import static lib.kasuga.rendering.models.mc.backend.RenderState.UML_VERTEX_FORM
 @EventBusSubscriber(value = Dist.CLIENT)
 public class Constants {
 
-    public static ModelPipeLine BE_PIPELINE, OBJ_PIPELINE, MMD_PIPELINE, JE_PIPELINE;
     public static CombinedTextureManager TEXTURE_BASIC;
     public static SourceType TEXTURE_TYPE, MODEL_TYPE;
-    public static MCBackend MC_BACKEND;
-    public static KsgPmxLoader PMX_LOADER;
     public static UIBackend UI_BACKEND;
 
     public static ModelInstance currentInstance;
@@ -157,76 +138,16 @@ public class Constants {
 
         TEXTURE_BASIC = basic;
 
-        KasugaModelManager modelManager = new KasugaModelManager(List.of(basic));
-        JsonModelSourceManager jsonSource = new JsonModelSourceManager("json");
-        StrModelSourceManager strSource = new StrModelSourceManager("str");
-        ZipModelSourceManager zipSource = new ZipModelSourceManager("zip");
+        PipelineRegistry.registerBuiltins(basic);
 
         KasugaPipeLineRouter router = new KasugaPipeLineRouter();
-        router.registerByExtension(".geo.json", () -> BE_PIPELINE);
-        router.registerByExtension(".obj", () -> OBJ_PIPELINE);
-        router.registerByExtension(".mmd.zip", () -> MMD_PIPELINE);
-        router.registerByExtension(".json", () -> JE_PIPELINE);
+        PipelineRegistry.registerDefaultRoutes(router);
+
+        KasugaModelManager modelManager = new KasugaModelManager(List.of(basic));
         modelManager.registerRouter(router);
         modelManager.registerModelScanner(new KasugaModelScanner());
 
         event.registerReloadListener(modelManager);
-
-        FileJsonModelSource fileJsonModelSource = new FileJsonModelSource("file_json");
-        JarJsonModelSource jarJsonModelSource = new JarJsonModelSource("jar_json");
-        FileStrModelSource fileStrModelSource = new FileStrModelSource("file_str");
-        JarStrModelSource jarStrModelSource = new JarStrModelSource("jar_str");
-        FileZipModelSource fileZipModelSource = new FileZipModelSource("file_zip");
-        JarZipModelSource jarZipModelSource = new JarZipModelSource("jar_zip");
-
-
-        jsonSource.registerSource(fileJsonModelSource);
-        jsonSource.registerSource(jarJsonModelSource);
-        strSource.registerSource(fileStrModelSource);
-        strSource.registerSource(jarStrModelSource);
-        zipSource.registerSource(fileZipModelSource);
-        zipSource.registerSource(jarZipModelSource);
-
-        BEModelLoader loader = new BEModelLoader("be_model", KasugaLib.MODID);
-        MCBridge mcBridge = new MCBridge();
-        MCBackend mcBackend = new MCBackend();
-        MC_BACKEND = mcBackend;
-
-        BE_PIPELINE = new ModelPipeLine.Builder<JsonObject, BackendInstance, ResourceLocation,
-                ResourceLocation, String>()
-                .withModelSource(jsonSource)
-                .withSidedSource(basic.getType(), "mc_layer_0", basic)
-                .withLoader(loader)
-                .withBridge("mc_bridge", mcBridge)
-                .withBackend("mc_backend", mcBackend)
-                .build();
-
-        JE_PIPELINE = new ModelPipeLine.Builder<JsonObject, BackendInstance, ResourceLocation,
-                ResourceLocation, String >()
-                .withModelSource(jsonSource)
-                .withSidedSource(basic.getType(), "mc_layer_0", basic)
-                .withLoader(new JEModelLoader("je_model"))
-                .withBridge("mc_bridge", mcBridge)
-                .withBackend("mc_backend", mcBackend)
-                .build();
-
-        OBJ_PIPELINE = new ModelPipeLine.Builder<String, BackendInstance, ResourceLocation,
-                ResourceLocation, String>().withModelSource(strSource)
-                .withSidedSource(basic.getType(), "mc_layer_0", basic)
-                .withLoader(new KsgObjLoader("obj_model"))
-                .withBridge("mc_bridge", mcBridge)
-                .withBackend("mc_backend", mcBackend)
-                .build();
-
-        PMX_LOADER = new KsgPmxLoader("pmx_model");
-
-        MMD_PIPELINE = new ModelPipeLine.Builder<ZipHelper, BackendInstance, ResourceLocation, ResourceLocation, ZipResource>()
-                .withModelSource(zipSource)
-                .withSidedSource(basic.getType(), "mc_layer_0", basic)
-                .withLoader(PMX_LOADER)
-                .withBridge("mc_bridge", mcBridge)
-                .withBackend("mc_backend", mcBackend)
-                .build();
     }
 
     @SubscribeEvent
@@ -444,7 +365,8 @@ public class Constants {
         // Keep the currently published generation untouched and skip custom
         // rendering until textures and models are atomically swapped.
         if (LoadingIndicator.snapshot().active()) return;
-        if (MC_BACKEND == null) return;
+        MCBackend mcBackend = PipelineRegistry.backend();
+        if (mcBackend == null) return;
 
         PoseStack poseStack = pipelineContext.poseStack();
         RenderBuffers renderBuffers = pipelineContext.renderBuffers();
@@ -461,7 +383,7 @@ public class Constants {
         poseStack.translate(- pos.x(), - pos.y(), - pos.z());
         try {
             testModel();
-            MC_BACKEND.renderAllObjects(context);
+            mcBackend.renderAllObjects(context);
         } finally {
             source.endBatch(renderType);
         }
@@ -507,13 +429,14 @@ public class Constants {
     }
 
     private static void testMMD(String fileName, String modelName, String instanceName, float lateralOffset) {
-        ResourceLocation rl = PMX_LOADER.getLocByFileAndName(
+        ResourceLocation rl = PipelineRegistry.pmxLoader().getLocByFileAndName(
                 ResourceLocation.tryBuild("kasuga_lib", "models/pmx/" + fileName),
                 modelName
         );
         if (rl == null) return;
         ResourceLocation instanceLoc = ResourceLocation.tryBuild("kasuga_lib", instanceName);
-        if (MMD_PIPELINE.hasInstance(rl, instanceLoc)) {
+        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> mmd = PipelineRegistry.pmx();
+        if (mmd.hasInstance(rl, instanceLoc)) {
             return;
         }
         Minecraft minecraft = Minecraft.getInstance();
@@ -527,24 +450,26 @@ public class Constants {
         Vec3 spawn = player.add(horizontal.scale(4.0)).add(right.scale(lateralOffset));
         Transform worldTransform = new Transform().translate(
                 (float) spawn.x, (float) player.y, (float) spawn.z);
-        currentInstance = MMD_PIPELINE.createInstance(rl, instanceLoc, worldTransform, null, null);
-        MMD_PIPELINE.addToRenderer(rl, instanceLoc, "mc_bridge", "mc_backend");
+        currentInstance = mmd.createInstance(rl, instanceLoc, worldTransform, null, null);
+        mmd.addToRenderer(rl, instanceLoc, "mc_bridge", "mc_backend");
     }
 
     public static void testObj() {
         ResourceLocation loc =  ResourceLocation.tryBuild("kasuga_lib", "models/obj/df5_frame.obj");
         ResourceLocation instanceLoc = ResourceLocation.tryBuild("kasuga_lib", "test_wheel");
-        if (OBJ_PIPELINE.hasInstance(loc, instanceLoc)) return;
-        OBJ_PIPELINE.createInstance(loc, instanceLoc, null, null, null);
-        OBJ_PIPELINE.addToRenderer(loc, instanceLoc, "mc_bridge", "mc_backend");
+        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> obj = PipelineRegistry.obj();
+        if (obj.hasInstance(loc, instanceLoc)) return;
+        obj.createInstance(loc, instanceLoc, null, null, null);
+        obj.addToRenderer(loc, instanceLoc, "mc_bridge", "mc_backend");
     }
 
     public static void testBe() {
         ResourceLocation loc = ResourceLocation.tryBuild("kasuga_lib", "geometry.unknown");
         ResourceLocation instanceLoc = ResourceLocation.tryBuild("kasuga_lib", "test_model");
-        if (BE_PIPELINE.hasInstance(loc, instanceLoc)) return;
-        BE_PIPELINE.createInstance(loc, instanceLoc, null, null, null);
-        BE_PIPELINE.addToRenderer(loc, instanceLoc, "mc_bridge", "mc_backend");
+        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> be = PipelineRegistry.be();
+        if (be.hasInstance(loc, instanceLoc)) return;
+        be.createInstance(loc, instanceLoc, null, null, null);
+        be.addToRenderer(loc, instanceLoc, "mc_bridge", "mc_backend");
     }
 
     public static void testJe() {
@@ -553,14 +478,15 @@ public class Constants {
         ResourceLocation instanceA = ResourceLocation.tryBuild("kasuga_lib", "test_je_a");
         ResourceLocation instanceB = ResourceLocation.tryBuild("kasuga_lib", "test_je_b");
 
-        if (!JE_PIPELINE.hasInstance(locA, instanceA)) {
-            JE_PIPELINE.createInstance(locA, instanceA, null, null, null);
-            JE_PIPELINE.addToRenderer(locA, instanceA, "mc_bridge", "mc_backend");
+        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> je = PipelineRegistry.je();
+        if (!je.hasInstance(locA, instanceA)) {
+            je.createInstance(locA, instanceA, null, null, null);
+            je.addToRenderer(locA, instanceA, "mc_bridge", "mc_backend");
         }
-        if (!JE_PIPELINE.hasInstance(locB, instanceB)) {
+        if (!je.hasInstance(locB, instanceB)) {
             Transform offsetB = new Transform().translate(2, 0, 0);
-            JE_PIPELINE.createInstance(locB, instanceB, offsetB, null, null);
-            JE_PIPELINE.addToRenderer(locB, instanceB, "mc_bridge", "mc_backend");
+            je.createInstance(locB, instanceB, offsetB, null, null);
+            je.addToRenderer(locB, instanceB, "mc_bridge", "mc_backend");
         }
     }
 }

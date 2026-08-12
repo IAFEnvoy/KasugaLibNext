@@ -21,7 +21,6 @@ public class MCRenderableContext extends BackendContext<MCBridge, BackendInstanc
 
     @Override
     public MCBackend.BackendTransform beforeRender(MCBackendContext context) {
-        applyRootTransform(context.getPoseStack(), getModelInstance().getSkeletonInstance().getTransform());
         return DEFAULT_TRANSFORM;
     }
 
