@@ -42,6 +42,7 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
     public final ExecutorService executor;
 
     private float t = 0;
+    private final GlobalModelBatcher globalBatcher = new GlobalModelBatcher();
 
     public MCBackend() {
         executor = newFixedThreadPool(Runtime.getRuntime().availableProcessors());
@@ -70,11 +71,27 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
         BackendInstance instance = renderable.apply();
         instance.updateLightData(lightData.packedLight(), overlay, lightData.brightness());
-        instance.drawBuffer(poseStack.last(), RenderState.getRenderType(),
-                context.getModelViewMatrix(), context.getProjectionMatrix(),
-                emissive);
+        if (!globalBatcher.isCollecting()
+                || !globalBatcher.submit(instance, poseStack.last().pose(), poseStack.last().normal(), emissive)) {
+            instance.drawBuffer(poseStack.last(), RenderState.getRenderType(),
+                    context.getModelViewMatrix(), context.getProjectionMatrix(), emissive);
+        }
 
         poseStack.popPose();
+    }
+
+    @Override
+    public void renderAllObjects(MCBackendContext context) {
+        if (BackendInstance.isIrisEnabled() || RenderState.GLOBAL_BATCH_RENDER_TYPE == null) {
+            super.renderAllObjects(context);
+            return;
+        }
+        globalBatcher.begin(context.getModelViewMatrix(), context.getProjectionMatrix());
+        try {
+            super.renderAllObjects(context);
+        } finally {
+            globalBatcher.flush();
+        }
     }
 
     private boolean isVisible(MCBackendContext context, @Nullable BackendTransform transform, KsgVertexBuffer buffer) {
@@ -91,6 +108,7 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
     @Override
     public void close() throws Exception {
+        globalBatcher.close();
         executor.shutdown();
     }
 

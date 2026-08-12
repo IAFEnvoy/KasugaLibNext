@@ -60,7 +60,7 @@ public class BoneChunk extends Chunk {
         }
         Number externalParentBone = -1;
         if (flags.hasForeignParentBone) {
-            externalParentBone = (Number) boneIndexLoader.load(buffer, context);
+            externalParentBone = BasicLoaders.INT.load(buffer, context);
         }
         PmxIKBone ik = null;
         if (flags.isIKBone) {

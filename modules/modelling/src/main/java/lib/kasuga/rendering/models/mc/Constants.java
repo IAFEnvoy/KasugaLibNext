@@ -25,6 +25,7 @@ import lib.kasuga.rendering.effect.shader.ShaderPreparationScheduler;
 import lib.kasuga.rendering.effect.shader.ShaderParameterPersistence;
 import lib.kasuga.rendering.models.mc.backend.*;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaShaderInstance;
+import lib.kasuga.rendering.models.mc.backend.data_type.KasugaGlobalBatchShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.ui.UIBackend;
 import lib.kasuga.rendering.models.mc.compat.iris.IrisCompat;
 import lib.kasuga.rendering.models.mc.java_and_bedrock.loader.be.BEModelLoader;
@@ -240,6 +241,16 @@ public class Constants {
         } catch (IOException e) {
             throw new RuntimeException("Failed to load shader 'ksglib_main'", e);
         }
+        try {
+            ShaderInstance shaderInstance = new KasugaGlobalBatchShaderInstance(
+                    provider, ResourceLocation.tryBuild("kasuga_lib", "ksglib_global_batch"),
+                    UML_VERTEX_FORMAT
+            );
+            event.registerShader(shaderInstance,
+                    instance -> RenderState.GLOBAL_BATCH_SHADER_INSTANCE = instance);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to load shader 'ksglib_global_batch'", e);
+        }
         RenderShaderRegistry.registerShaders(event);
     }
 
@@ -270,6 +281,31 @@ public class Constants {
         );
         RenderState.RENDER_TYPE = typeDefault;
 
+        RenderType globalBatch = RenderType.create(
+                "kasuga_lib:uml_global_batch_render_type",
+                UML_VERTEX_FORMAT,
+                VertexFormat.Mode.QUADS,
+                64 * 1024 * 1024,
+                true,
+                true,
+                RenderType.CompositeState.builder()
+                        .setTextureState(RenderState.UML_TEXTURE_STATE)
+                        .setShaderState(RenderState.GLOBAL_BATCH_SHADER)
+                        .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                        .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
+                        .setCullState(RenderStateShard.CULL)
+                        .setLightmapState(RenderStateShard.LIGHTMAP)
+                        .setOverlayState(RenderStateShard.OVERLAY)
+                        .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
+                        .setOutputState(RenderStateShard.MAIN_TARGET)
+                        .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
+                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
+                        .setLineState(RenderStateShard.DEFAULT_LINE)
+                        .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
+                        .createCompositeState(false)
+        );
+        RenderState.GLOBAL_BATCH_RENDER_TYPE = globalBatch;
+
         RenderType typeIris = RenderType.create(
                 "kasuga_lib:iris_compat_render_type",
                 DefaultVertexFormat.NEW_ENTITY,
@@ -296,6 +332,7 @@ public class Constants {
         RenderState.IRIS_COMPAT_RENDER_TYPE = typeIris;
 
         event.registerRenderBuffer(typeDefault);
+        event.registerRenderBuffer(globalBatch);
         event.registerRenderBuffer(typeIris);
     }
 
@@ -447,7 +484,8 @@ public class Constants {
         String name3 = "OL制服弱音散发.pmx";
         String name4 = "tda bunny miku 2.0.pmx";
         String name5 = "unfading_flowers_miku_black.pmx";
-        testMMD(fileName2, name5, "test_mmd");
+        testMMD(fileName2, name5, "test_mmd_left", -1.1f);
+        testMMD(fileName2, name5, "test_mmd_right", 1.1f);
     }
 
     public static void testUI() {
@@ -465,6 +503,10 @@ public class Constants {
     }
 
     public static void testMMD(String fileName, String modelName, String instanceName) {
+        testMMD(fileName, modelName, instanceName, 0f);
+    }
+
+    private static void testMMD(String fileName, String modelName, String instanceName, float lateralOffset) {
         ResourceLocation rl = PMX_LOADER.getLocByFileAndName(
                 ResourceLocation.tryBuild("kasuga_lib", "models/pmx/" + fileName),
                 modelName
@@ -472,12 +514,20 @@ public class Constants {
         if (rl == null) return;
         ResourceLocation instanceLoc = ResourceLocation.tryBuild("kasuga_lib", instanceName);
         if (MMD_PIPELINE.hasInstance(rl, instanceLoc)) {
-//            currentInstance.getSkeletonInstance().rotateRoot(QuaternionHelper.fromXYZAngle(0, 1f, 0, true));
-            Bone rootBone = currentInstance.getSkeletonInstance().getSkeleton().getRoot();
-//            currentInstance.getSkeletonInstance().rotate(rootBone, QuaternionHelper.fromXYZAngle(0, 1f, 0, true));
             return;
         }
-        currentInstance = MMD_PIPELINE.createInstance(rl, instanceLoc, null, null, null);
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null) return;
+        Vec3 player = minecraft.player.position();
+        Vec3 look = minecraft.player.getLookAngle();
+        Vec3 horizontal = new Vec3(look.x, 0, look.z);
+        if (horizontal.lengthSqr() < 1.0e-6) horizontal = new Vec3(0, 0, 1);
+        horizontal = horizontal.normalize();
+        Vec3 right = new Vec3(-horizontal.z, 0, horizontal.x);
+        Vec3 spawn = player.add(horizontal.scale(4.0)).add(right.scale(lateralOffset));
+        Transform worldTransform = new Transform().translate(
+                (float) spawn.x, (float) player.y, (float) spawn.z);
+        currentInstance = MMD_PIPELINE.createInstance(rl, instanceLoc, worldTransform, null, null);
         MMD_PIPELINE.addToRenderer(rl, instanceLoc, "mc_bridge", "mc_backend");
     }
 

@@ -26,6 +26,7 @@
 
 - Use `RenderPipelineScope` for dynamic content. A scope supplies the same registration methods as an event registrar.
 
+
 - Each registrar has one non-null owner. Each registration and diagnostic snapshot keeps this owner.
 
 The client registration event supplies a registrar for static content:

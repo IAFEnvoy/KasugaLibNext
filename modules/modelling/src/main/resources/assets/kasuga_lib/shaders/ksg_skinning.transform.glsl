@@ -15,10 +15,14 @@ in vec3 sdefC;
 
 uniform samplerBuffer ksg_BoneTransforms;
 
+#ifndef KSG_BONE_INDEX_OFFSET
+#define KSG_BONE_INDEX_OFFSET 0
+#endif
+
 out vec3 tf_Position;
 
 mat4 ksg_readBoneTransform(int boneIndex, int offset) {
-    int base = boneIndex * 9 + offset;
+    int base = (boneIndex + KSG_BONE_INDEX_OFFSET) * 9 + offset;
     vec4 col0 = texelFetch(ksg_BoneTransforms, base);
     vec4 col1 = texelFetch(ksg_BoneTransforms, base + 1);
     vec4 col2 = texelFetch(ksg_BoneTransforms, base + 2);

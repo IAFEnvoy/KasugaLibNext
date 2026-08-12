@@ -27,7 +27,7 @@ public class BoneTransformMorph<IdType> implements MorphType<Bone, Transform, Id
     @Override
     public Transform morph(Bone input, float percentage, float factor) {
         float weight = percentage * factor;
-        Transform current = original.getTransform();
+        Transform current = new Transform();
         Matrix4f curM4 = current.transform();
         Matrix3f curM3 = current.normal();
         Matrix4f tarM4 = targetTransform.transform();

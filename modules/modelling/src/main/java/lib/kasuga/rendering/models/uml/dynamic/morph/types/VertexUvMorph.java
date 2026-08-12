@@ -32,10 +32,10 @@ public class VertexUvMorph<IdType> implements MorphType<Vertex, Vector2f, IdType
     public Vector2f morph(Vertex input, float percentage, float factor) {
         float weight = percentage * factor;
         Vector2f currentUv = original.getUV(mesh, material);
-        if (currentUv == null) return new Vector2f(targetUv);
+        if (currentUv == null) return new Vector2f(targetUv).mul(weight);
         return new Vector2f(
-                currentUv.x() + (targetUv.x() - currentUv.x()) * weight,
-                currentUv.y() + (targetUv.y() - currentUv.y()) * weight
+                (targetUv.x() - currentUv.x()) * weight,
+                (targetUv.y() - currentUv.y()) * weight
         );
     }
 }

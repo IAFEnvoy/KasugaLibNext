@@ -14,6 +14,8 @@ public class MaterialResult implements IMorphResult<Material> {
 
     private Vector4f color;
     private BlendMode colorBlendMode;
+    private Vector4f colorMultiply;
+    private Vector4f colorAdd;
 
     private Vector4f specular;
     private BlendMode specularBlendMode;
@@ -42,8 +44,15 @@ public class MaterialResult implements IMorphResult<Material> {
 
     /** Multiply color multiplier (MULTIPLY mode stacks multiplicatively). */
     public void addColor(Vector4f delta, BlendMode mode) {
-        if (this.color == null) { this.color = new Vector4f(delta); this.colorBlendMode = mode; }
-        else this.color.mul(delta);
+        if (mode == BlendMode.MULTIPLY) {
+            if (colorMultiply == null) colorMultiply = new Vector4f(1f);
+            colorMultiply.mul(delta);
+        } else {
+            if (colorAdd == null) colorAdd = new Vector4f(0f, 0f, 0f, 0f);
+            colorAdd.add(delta);
+        }
+        this.color = mode == BlendMode.MULTIPLY ? colorMultiply : colorAdd;
+        this.colorBlendMode = mode;
     }
     /** Add specular delta (ADD mode stacks additively). */
     public void addSpecular(Vector4f delta, BlendMode mode) {
@@ -78,6 +87,7 @@ public class MaterialResult implements IMorphResult<Material> {
     @Override
     public void reset() {
         this.color = null; this.colorBlendMode = null;
+        this.colorMultiply = null; this.colorAdd = null;
         this.specular = null; this.specularBlendMode = null;
         this.ambient = null; this.ambientBlendMode = null;
         this.edgeColor = null; this.edgeColorBlendMode = null;
