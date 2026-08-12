@@ -2,6 +2,7 @@ package lib.kasuga.rendering.models.mc.source.model;
 
 import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
 import net.minecraft.resources.ResourceLocation;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 import java.util.function.Predicate;
@@ -33,6 +34,11 @@ public class KasugaPipeLineRouter implements PipeLineRouter {
     @Override
     public void registerRoute(Predicate<ResourceLocation> matcher, Supplier<ModelPipeLine> pipelineSupplier) {
         register(matcher, pipelineSupplier);
+    }
+
+    @Nullable
+    public ModelPipeLine resolve(ResourceLocation modelKey) {
+        return findMatchingPipeLine(modelKey);
     }
 
     @Override

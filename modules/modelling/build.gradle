@@ -85,9 +85,22 @@ sourceSets {
     }
 }
 
+tasks.named('processContentTestingResources', ProcessResources) {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+tasks.named('sourcesJar').configure {
+    dependsOn(':modules:core:generateModMetadata')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
 
 neoForge {
     // Specify the version of NeoForge to use.
@@ -117,6 +130,10 @@ neoForge {
             systemProperty 'kasuga.profileModel.animateBoneCount', '32'
             systemProperty 'kasuga.profileModel.animateTranslation', '0.2'
             systemProperty 'kasuga.modelGpuSkinning', 'true'
+            def quickPlayWorld = providers.gradleProperty('kasugaQuickPlayWorld')
+            if (quickPlayWorld.isPresent()) {
+                programArguments.addAll '--quickPlaySingleplayer', quickPlayWorld.get()
+            }
         }
 
         server {
@@ -157,6 +174,7 @@ neoForge {
 
     unitTest {
         enable()
+        testedMod = mods.named(mod_id)
     }
 }
 
@@ -165,6 +183,9 @@ configurations {
 }
 
 dependencies {
+    api project(":modules:shader")
+    additionalRuntimeClasspath project(":modules:shader")
+
     implementation ("io.micronaut:micronaut-inject:4.9.10") {
         exclude group : 'org.slf4j', module: 'slf4j-api'
     }
@@ -190,6 +211,9 @@ dependencies {
 
     gameTestAnnotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
 
+    additionalRuntimeClasspath 'org.jgrapht:jgrapht-core:1.5.2'
+    additionalRuntimeClasspath 'com.google.zxing:core:3.5.3'
+
     implementation("com.google.guava:guava:32.1.2-jre")
 
     // Core's development-only runtime dependencies are not propagated through
@@ -214,6 +238,9 @@ dependencies {
     compileOnly("libs:iris:neoforge-mc1.21.1-1.8.12")
     compileOnly("libs:sodium:neoforge-mc1.21.1-0.6.13")
     shadow("libs:iris:mc1.21-1.7.3")
+    // Optional renderer integrations belong to development runs only. Keeping
+    // them on localRuntime preserves the client test setup without publishing
+    // the non-resolvable flatDir coordinates to downstream consumers.
     localRuntime("libs:iris:neoforge-mc1.21.1-1.8.12")
     localRuntime("libs:sodium:neoforge-mc1.21.1-0.6.13")
 }
@@ -262,6 +289,14 @@ publishing {
         maven {
             url "file://${project.projectDir}/repo"
         }
+    }
+}
+
+shadowJar {
+    zip64 = true
+    dependencies {
+        exclude(dependency('libs:iris:.*'))
+        exclude(dependency('libs:sodium:.*'))
     }
 }
 

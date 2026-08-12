@@ -1,7 +1,8 @@
 package lib.kasuga.rendering.models.mc.dynamic.fsm;
 
 import com.mojang.logging.LogUtils;
-import lib.kasuga.rendering.models.mc.Constants;
+import lib.kasuga.rendering.models.mc.registry.PipelineRegistry;
+import lib.kasuga.rendering.models.mc.typo.KsgPmxLoader;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
 import lib.kasuga.rendering.models.uml.math.Transform;
@@ -107,33 +108,22 @@ public final class KasugaModelPipelines {
         if (modelLoc == null) {
             return null;
         }
-        String path = modelLoc.getPath();
-        if (path.endsWith(".mmd.zip")) {
-            return Constants.MMD_PIPELINE;
-        }
-        if (path.endsWith(".obj")) {
-            return Constants.OBJ_PIPELINE;
-        }
-        if (path.endsWith(".geo.json")) {
-            return Constants.BE_PIPELINE;
-        }
-        if (path.endsWith(".json")) {
-            return Constants.JE_PIPELINE;
-        }
-        if (warned.add("route:" + modelLoc)) {
+        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> pipeline = PipelineRegistry.resolve(modelLoc);
+        if (pipeline == null && warned.add("route:" + modelLoc)) {
             LOGGER.warn("[KasugaModelPipelines] no pipeline for model '{}'", modelLoc);
         }
-        return null;
+        return pipeline;
     }
 
-    /** MMD models resolve their internal entry via {@code PMX_LOADER}; other pipelines use the location directly. */
+    /** MMD models resolve their internal entry via {@code PipelineRegistry.pmxLoader()}; other pipelines use the location directly. */
     @Nullable
     private static ResourceLocation resolveLoc(ResourceLocation modelLoc, @Nullable String modelName,
                                                ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> pipeline) {
-        if (pipeline != Constants.MMD_PIPELINE) {
+        if (pipeline != PipelineRegistry.pmx()) {
             return modelLoc;
         }
-        if (Constants.PMX_LOADER == null) {
+        KsgPmxLoader pmxLoader = PipelineRegistry.pmxLoader();
+        if (pmxLoader == null) {
             return null;
         }
         if (modelName == null) {
@@ -142,7 +132,7 @@ public final class KasugaModelPipelines {
             }
             return null;
         }
-        return Constants.PMX_LOADER.getLocByFileAndName(modelLoc, modelName);
+        return pmxLoader.getLocByFileAndName(modelLoc, modelName);
     }
 
     //endregion

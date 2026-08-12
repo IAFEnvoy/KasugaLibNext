@@ -58,7 +58,12 @@ public class BECubeLayer extends Layer<JsonObject> {
         boolean emissive = JsonHelper.jsonToBool(input, "emissive", false);
         float inflate = JsonHelper.jsonToFloat(input, "inflate", 0) / 16f;
 
-        transform.scale(1 + inflate / size.x(), 1 + inflate / size.y(), 1 + inflate / size.z());
+        // transform.scale(1 + inflate / size.x(), 1 + inflate / size.y(), 1 + inflate / size.z());
+        float sx = size.x() == 0 ? 1f : 1f + inflate / size.x();
+        float sy = size.y() == 0 ? 1f : 1f + inflate / size.y();
+        float sz = size.z() == 0 ? 1f : 1f + inflate / size.z();
+        transform.scale(sx, sy, sz);
+
         Transform parentAbs = transformMap.getOrDefault(parent, Pair.of(null, new Transform())).getSecond();
         Transform absTransform = parentAbs.copy().mul(transform);
         context.setTemp("abs_transform", absTransform);

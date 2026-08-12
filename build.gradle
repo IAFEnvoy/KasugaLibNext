@@ -35,3 +35,19 @@ idea {
         downloadJavadoc = true
     }
 }
+
+tasks.register('renderingReleaseCheck') {
+    group = 'verification'
+    description = 'Builds and verifies the custom rendering pipeline and shader DSL release surface.'
+    dependsOn(
+            gradle.includedBuild('gradle-plugin').task(':test'),
+            ':modules:shader:test',
+            ':modules:shader:assemble',
+            ':modules:modelling:modelUnitTest',
+            ':modules:modelling:compileContentTestingJava',
+            ':modules:modelling:jar',
+            ':modules:modelling:sourcesJar',
+            ':modules:modelling:javadocJar',
+            ':modules:library:assemble'
+    )
+}
