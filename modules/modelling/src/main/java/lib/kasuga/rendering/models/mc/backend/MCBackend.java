@@ -52,6 +52,10 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         PoseStack poseStack = context.getPoseStack();
         poseStack.pushPose();
 
+        // Drive any attached pose driver (e.g. FSM) at frame rate before the GPU upload in drawBuffer. No-op for
+        // static models (no driver) — the shared render path is unaffected.
+        renderable.getModelInstance().sample(context.getPartialTickFraction());
+
         BackendTransform transform = renderable.beforeRender(context);
         LightData lightData;
         int overlay;
