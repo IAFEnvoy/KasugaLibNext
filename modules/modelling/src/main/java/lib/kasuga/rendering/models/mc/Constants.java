@@ -390,7 +390,7 @@ public class Constants {
     }
 
     private static void testModel() {
-        testMMD();
+//        testMMD();
 //        testUI();
 //        testObj();
 //        testBe();
@@ -406,8 +406,7 @@ public class Constants {
         String name3 = "OL制服弱音散发.pmx";
         String name4 = "tda bunny miku 2.0.pmx";
         String name5 = "unfading_flowers_miku_black.pmx";
-        testMMD(fileName2, name5, "test_mmd_left", -1.1f);
-        testMMD(fileName2, name5, "test_mmd_right", 1.1f);
+        testMMD(fileName2, name5, "test_mmd");
     }
 
     public static void testUI() {
@@ -425,10 +424,6 @@ public class Constants {
     }
 
     public static void testMMD(String fileName, String modelName, String instanceName) {
-        testMMD(fileName, modelName, instanceName, 0f);
-    }
-
-    private static void testMMD(String fileName, String modelName, String instanceName, float lateralOffset) {
         ResourceLocation rl = PipelineRegistry.pmxLoader().getLocByFileAndName(
                 ResourceLocation.tryBuild("kasuga_lib", "models/pmx/" + fileName),
                 modelName
@@ -439,17 +434,7 @@ public class Constants {
         if (mmd.hasInstance(rl, instanceLoc)) {
             return;
         }
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.player == null) return;
-        Vec3 player = minecraft.player.position();
-        Vec3 look = minecraft.player.getLookAngle();
-        Vec3 horizontal = new Vec3(look.x, 0, look.z);
-        if (horizontal.lengthSqr() < 1.0e-6) horizontal = new Vec3(0, 0, 1);
-        horizontal = horizontal.normalize();
-        Vec3 right = new Vec3(-horizontal.z, 0, horizontal.x);
-        Vec3 spawn = player.add(horizontal.scale(4.0)).add(right.scale(lateralOffset));
-        Transform worldTransform = new Transform().translate(
-                (float) spawn.x, (float) player.y, (float) spawn.z);
+        Transform worldTransform = new Transform().translate(0, 0, 0);
         currentInstance = mmd.createInstance(rl, instanceLoc, worldTransform, null, null);
         mmd.addToRenderer(rl, instanceLoc, "mc_bridge", "mc_backend");
     }
