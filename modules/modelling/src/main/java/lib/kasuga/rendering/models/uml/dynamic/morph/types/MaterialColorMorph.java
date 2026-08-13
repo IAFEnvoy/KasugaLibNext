@@ -2,6 +2,7 @@ package lib.kasuga.rendering.models.uml.dynamic.morph.types;
 
 import lib.kasuga.rendering.models.uml.structure.material.Material;
 import lombok.Getter;
+import lib.kasuga.rendering.models.uml.dynamic.morph.BlendMode;
 import org.joml.Vector4f;
 
 @Getter
@@ -10,11 +11,17 @@ public class MaterialColorMorph<IdType> implements MorphType<Material, Vector4f,
     private final Material original;
     private final IdType identifier;
     private final Vector4f targetColor;
+    private final BlendMode blendMode;
 
     public MaterialColorMorph(Material original, IdType identifier, Vector4f targetColor) {
+        this(original, identifier, targetColor, BlendMode.MULTIPLY);
+    }
+
+    public MaterialColorMorph(Material original, IdType identifier, Vector4f targetColor, BlendMode blendMode) {
         this.original = original;
         this.identifier = identifier;
         this.targetColor = targetColor;
+        this.blendMode = blendMode;
     }
 
     @Override
@@ -25,7 +32,9 @@ public class MaterialColorMorph<IdType> implements MorphType<Material, Vector4f,
     @Override
     public Vector4f morph(Material input, float percentage, float factor) {
         float weight = percentage * factor;
-        // MULTIPLY blend: output is the multiplier relative to white (1,1,1,1)
+        if (blendMode == BlendMode.ADD) {
+            return new Vector4f(targetColor).mul(weight);
+        }
         return new Vector4f(
                 1f + (targetColor.x() - 1f) * weight,
                 1f + (targetColor.y() - 1f) * weight,

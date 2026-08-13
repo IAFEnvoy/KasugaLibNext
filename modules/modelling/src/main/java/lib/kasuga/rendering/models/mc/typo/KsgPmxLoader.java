@@ -29,11 +29,14 @@ import lib.kasuga.rendering.models.uml.structure.material.Texture;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.PMXLoader;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.PmxBone;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.MmdModelData;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.PmxTail;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.PmxBoneBinding;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.header.PmxHeader;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.material.PmxMaterial;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.mesh.PmxMesh;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.vertex.PmxVertex;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.pmd.PmdToPmxConverter;
 import lib.kasuga.structure.Pair;
 import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
 import net.minecraft.resources.ResourceLocation;
@@ -319,8 +322,18 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
     }
 
     @Override
+    protected Vector3f scaleMmdTranslation(Vector3f value) {
+        return value.mul(modelScale);
+    }
+
+    @Override
     public @Nullable ModelData getModelData(PmxHeader header) {
         return header;
+    }
+
+    @Override
+    public @Nullable ModelData getModelData(PmxHeader header, PmxTail tail) {
+        return new MmdModelData(header, tail);
     }
 
     @Override
@@ -336,6 +349,9 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
         ByteBuffer buffer = loadingModel.buffer().duplicate();
         buffer.order(loadingModel.buffer().order());
         buffer.position(0);
+        if (buffer.remaining() >= 3 && buffer.get(0) == 'P' && buffer.get(1) == 'm' && buffer.get(2) == 'd') {
+            return new PmdToPmxConverter().convert(buffer);
+        }
         return buffer;
     }
 
@@ -406,12 +422,15 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
         loadedPbrTextureVariants.clear();
         loadingFile = input;
         try {
-            List<ZipResource> models = input.searchNameForResource(name -> name.endsWith(".pmx"));
+            List<ZipResource> models = input.searchNameForResource(name -> {
+                String lower = name.toLowerCase(Locale.ROOT);
+                return lower.endsWith(".pmx") || lower.endsWith(".pmd");
+            });
             if (models.isEmpty()) return new HashMap<>();
             Map<ResourceLocation, Model> result = new HashMap<>();
             for (int modelIndex = 0; modelIndex < models.size(); modelIndex++) {
                 ZipResource model = models.get(modelIndex);
-                LoadingIndicator.label("Loading PMX " + model.name() + " (" + (modelIndex + 1) + "/" + models.size() + ")");
+                LoadingIndicator.label("Loading MMD " + model.name() + " (" + (modelIndex + 1) + "/" + models.size() + ")");
                 loadingModel = model;
                 registerDefaultTextures();
                 ResourceLocation rl = getLocation(s, model);
@@ -419,7 +438,7 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
                 loadingMaterialIndex = 0;
                 Map<ResourceLocation, Model> loadedModels = super.load(rl, input);
                 result.putAll(loadedModels);
-                LOGGER.info("Loaded PMX '{}' from {} as {} ({} model entries, {} textures)",
+                LOGGER.info("Loaded MMD model '{}' from {} as {} ({} model entries, {} textures)",
                         model.name(), s, rl, loadedModels.size(), loadedTextures.size());
                 this.loadedModelMap.computeIfAbsent(s, k -> new HashMap<>()).put(model.name(), rl);
                 loadedTextures.clear();

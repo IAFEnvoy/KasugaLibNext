@@ -14,10 +14,17 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 
 public class ZipHelper implements AutoCloseable {
+
+    private static final List<Charset> LEGACY_ZIP_CHARSETS = List.of(
+            Charset.forName("windows-31j"),
+            Charset.forName("GB18030"),
+            Charset.forName("IBM437")
+    );
 
     @Getter
     private final Map<ZipEntry, ByteBuffer> entries;
@@ -177,7 +184,27 @@ public class ZipHelper implements AutoCloseable {
     }
 
     public static ZipHelper fromFile(String filePath) throws Exception {
-        return new ZipHelper(new ZipFile(filePath));
+        ZipException utf8Failure;
+        try {
+            return readFile(filePath, StandardCharsets.UTF_8);
+        } catch (ZipException e) {
+            utf8Failure = e;
+        }
+
+        for (Charset charset : LEGACY_ZIP_CHARSETS) {
+            try {
+                return readFile(filePath, charset);
+            } catch (ZipException e) {
+                utf8Failure.addSuppressed(e);
+            }
+        }
+        throw utf8Failure;
+    }
+
+    private static ZipHelper readFile(String filePath, Charset charset) throws Exception {
+        try (ZipFile file = new ZipFile(filePath, charset)) {
+            return new ZipHelper(file);
+        }
     }
 
     public static @Nullable ZipHelper fromResource(ResourceManager manager, ResourceLocation rl) throws Exception {

@@ -9,11 +9,17 @@ import lib.kasuga.rendering.models.uml.structure.basic.Vertex;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Skeleton;
 import lib.kasuga.rendering.models.uml.structure.skeleton.data.SkeletonInstanceData;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.IKLimitation;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.ParentBoneInherit;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.PmxBone;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.PmxIKBone;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.PmxIKChain;
 import lib.kasuga.structure.Pair;
 import lombok.Getter;
 import lombok.NonNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Quaternionf;
+import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
 
 import java.util.*;
@@ -26,6 +32,9 @@ public class SkeletonInstance {
 
     private final HashMap<Bone, Transform> transforms;
     private final HashMap<Bone, Transform> absoluteTransforms;
+    private final HashMap<Bone, Transform> evaluatedTransforms;
+    private final HashMap<Bone, Transform> ikTransforms;
+    private final HashMap<String, Boolean> ikEnabled;
     private final Set<Bone> dirtyBones;
     private Set<Bone> lastDirtyBones;
 
@@ -48,6 +57,9 @@ public class SkeletonInstance {
         shouldUpdate = false;
         this.transforms = new HashMap<>();
         this.absoluteTransforms = new HashMap<>();
+        this.evaluatedTransforms = new HashMap<>();
+        this.ikTransforms = new HashMap<>();
+        this.ikEnabled = new HashMap<>();
         this.dirtyBones = new HashSet<>();
         this.lastDirtyBones = Collections.emptySet();
         this.data = data;
@@ -65,24 +77,9 @@ public class SkeletonInstance {
 
     public void updateTransform() {
         Set<Bone> updatedBones = collectUpdatedBones();
-        updateQueue.clear();
-        Bone rootBone = skeleton.getRoot();
-        // Fix (Bug #2): 根骨骼的绝对变换应包含骨架实例变换和根骨骼自身的绑定变换。
-        // 原代码: Transform transform1 = transforms.getOrDefault(rootBone, new Transform());
-        // 问题: 仅从动画数据获取根骨骼变换（默认 identity），忽略了:
-        //       1. this.transform（骨架实例级别变换，即 transformRoot() 设置的值）
-        //       2. rootBone.getTransform()（根骨骼在PMX中定义的绑定姿态变换）
-        //       这两个变换的缺失导致所有骨骼的绝对变换计算错误，蒙皮后顶点位置偏移。
-        // 修复: absTransform = this.transform * rootBone.bindTransform * morph * animation。
-        //       这样在绑定姿态下 abs * inv = identity（因为两边都包含 rootBindTransform 而抵消），
-        //       transformRoot() API 也能正确生效。
-        Transform transform1 = this.transform.copy().mul(rootBone.getTransform());
-        getMorphTransform(rootBone, transform1);
-        Transform anim = transforms.get(rootBone);
-        if (anim != null) { transform1.mul(anim); }
-        absoluteTransforms.put(rootBone, transform1);
-        updateQueue.add(Pair.of(rootBone, transform1));
-        recursiveUpdate();
+        ikTransforms.clear();
+        evaluateHierarchy();
+        solvePmxIk();
         lastFullUpdate = fullUpdateRequested || updatedBones.isEmpty();
         lastDirtyBones = lastFullUpdate ? Collections.emptySet() : updatedBones;
         dirtyBones.clear();
@@ -257,6 +254,38 @@ public class SkeletonInstance {
         return transforms.isEmpty() && transform.isIdentity();
     }
 
+    public boolean setIkEnabled(String boneName, boolean enabled) {
+        Bone bone = skeleton.getBoneMap().get(boneName);
+        if (bone == null || !(bone.getBoneData() instanceof PmxBone pmx) || pmx.ik == null) return false;
+        ikEnabled.put(boneName, enabled);
+        requestFullUpdate();
+        return true;
+    }
+
+    public void resetIkEnabled() {
+        if (ikEnabled.isEmpty()) return;
+        ikEnabled.clear();
+        requestFullUpdate();
+    }
+
+    public boolean isIkEnabled(String boneName) {
+        return ikEnabled.getOrDefault(boneName, true);
+    }
+
+    private void evaluateHierarchy() {
+        updateQueue.clear();
+        evaluatedTransforms.clear();
+        absoluteTransforms.clear();
+        Bone rootBone = skeleton.getRoot();
+        Transform rootLocal = evaluatedLocalTransform(rootBone);
+        Transform rootAbsolute = transform.copy().mul(rootBone.getTransform());
+        getMorphTransform(rootBone, rootAbsolute);
+        rootAbsolute.mul(rootLocal);
+        absoluteTransforms.put(rootBone, rootAbsolute);
+        updateQueue.add(Pair.of(rootBone, rootAbsolute));
+        recursiveUpdate();
+    }
+
     private void recursiveUpdate() {
         Transform cache = new Transform();
         while (!updateQueue.isEmpty()) {
@@ -271,13 +300,116 @@ public class SkeletonInstance {
                 cache.set(child.getTransform());
                 getMorphTransform(child, cache);
                 cache = parentTransform.copy().mul(cache);
-                Transform anim = transforms.get(child);
-                if (anim != null) {cache.mul(anim);}
+                cache.mul(evaluatedLocalTransform(child));
                 Transform t = cache.copy();
                 absoluteTransforms.put(child, t);
                 updateQueue.add(Pair.of(child, t));
             }
         }
+    }
+
+    private Transform evaluatedLocalTransform(Bone bone) {
+        Transform result = transforms.getOrDefault(bone, new Transform()).copy();
+        if (bone.getBoneData() instanceof PmxBone pmx) {
+            applyGrant(result, pmx);
+            applyFixedAxis(result, pmx);
+        }
+        Transform ik = ikTransforms.get(bone);
+        if (ik != null) result.mul(ik);
+        evaluatedTransforms.put(bone, result.copy());
+        return result;
+    }
+
+    private void applyGrant(Transform result, PmxBone pmx) {
+        ParentBoneInherit inherit = pmx.inherit;
+        if (inherit == null) return;
+        Bone source = pmxBone(inherit.parentIndex().intValue());
+        if (source == null) return;
+        Transform sourceTransform = evaluatedTransforms.getOrDefault(source,
+                transforms.getOrDefault(source, new Transform()));
+        float weight = inherit.weight();
+        if (pmx.flags.inheritParentTranslation) {
+            result.translateWorld(new Vector3f(sourceTransform.getPosition()).mul(weight));
+        }
+        if (pmx.flags.inheritParentRotation) {
+            result.mul(new Quaternionf().identity().slerp(sourceTransform.getRotation(), weight));
+        }
+    }
+
+    private void applyFixedAxis(Transform result, PmxBone pmx) {
+        if (!pmx.flags.isAxisFixed || pmx.fixedAxis == null || pmx.fixedAxis.lengthSquared() < 1e-8f) return;
+        Vector3f axis = new Vector3f(pmx.fixedAxis).normalize();
+        Quaternionf rotation = result.getRotation();
+        Vector3f vector = new Vector3f(rotation.x, rotation.y, rotation.z);
+        float projection = vector.dot(axis);
+        Quaternionf twist = new Quaternionf(axis.x * projection, axis.y * projection,
+                axis.z * projection, rotation.w).normalize();
+        result.set(new org.joml.Matrix4f().translationRotateScale(
+                result.getPosition(), twist, result.transform().getScale(new Vector3f())));
+    }
+
+    private void solvePmxIk() {
+        for (Bone controller : skeleton.getBones()) {
+            if (!(controller.getBoneData() instanceof PmxBone pmx) || pmx.ik == null
+                    || !isIkEnabled(controller.getName())) continue;
+            solveIk(controller, pmx.ik);
+        }
+    }
+
+    private void solveIk(Bone controller, PmxIKBone ik) {
+        Bone effector = pmxBone(ik.boneIndex.intValue());
+        if (effector == null || absoluteTransforms.get(controller) == null) return;
+        int iterations = Math.min(Math.max(ik.CCD_Count, 0), 256);
+        for (int iteration = 0; iteration < iterations; iteration++) {
+            boolean converged = false;
+            for (PmxIKChain chain : ik.chains) {
+                Bone link = pmxBone(chain.boneIndex.intValue());
+                if (link == null || absoluteTransforms.get(link) == null) continue;
+                Vector3f linkPosition = absoluteTransforms.get(link).getPosition();
+                Vector3f effectorDirection = absoluteTransforms.get(effector).getPosition()
+                        .sub(linkPosition, new Vector3f());
+                Vector3f targetDirection = absoluteTransforms.get(controller).getPosition()
+                        .sub(linkPosition, new Vector3f());
+                if (effectorDirection.lengthSquared() < 1e-10f || targetDirection.lengthSquared() < 1e-10f) continue;
+                effectorDirection.normalize();
+                targetDirection.normalize();
+                float angle = (float) Math.acos(Math.clamp(effectorDirection.dot(targetDirection), -1f, 1f));
+                angle = Math.min(angle, Math.abs(ik.boneRotationLimit));
+                if (angle < 1e-6f) continue;
+                Vector3f axis = effectorDirection.cross(targetDirection, new Vector3f());
+                if (axis.lengthSquared() < 1e-10f) continue;
+                Quaternionf delta = new Quaternionf(new AxisAngle4f(angle, axis.normalize()));
+                Transform correction = ikTransforms.computeIfAbsent(link, ignored -> new Transform());
+                correction.mul(delta);
+                if (chain.useRotationLimit && chain.limit != null) clampIk(correction, chain.limit);
+                evaluateHierarchy();
+                if (absoluteTransforms.get(effector).getPosition()
+                        .distanceSquared(absoluteTransforms.get(controller).getPosition()) < 1e-8f) {
+                    converged = true;
+                    break;
+                }
+            }
+            if (converged) break;
+        }
+    }
+
+    private void clampIk(Transform correction, IKLimitation limit) {
+        Vector3f euler = correction.getRotation().getEulerAnglesXYZ(new Vector3f());
+        euler.set(
+                Math.clamp(euler.x, limit.min().x, limit.max().x),
+                Math.clamp(euler.y, limit.min().y, limit.max().y),
+                Math.clamp(euler.z, limit.min().z, limit.max().z));
+        correction.set(new org.joml.Matrix4f().rotationXYZ(euler.x, euler.y, euler.z));
+    }
+
+    private Bone pmxBone(int pmxIndex) {
+        if (pmxIndex < 0) return null;
+        int current = 0;
+        for (Bone bone : skeleton.getBones()) {
+            if (!(bone.getBoneData() instanceof PmxBone)) continue;
+            if (current++ == pmxIndex) return bone;
+        }
+        return null;
     }
 
     private void markDirty(Bone bone) {

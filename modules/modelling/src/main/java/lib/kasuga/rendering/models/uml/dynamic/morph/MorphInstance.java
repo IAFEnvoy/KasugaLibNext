@@ -145,13 +145,18 @@ public class MorphInstance<IdType> {
         GroupMorph<IdType> group = morph.getGroup(id);
         if (group != null) return activateGroup(group, Math.clamp(value, 0f, 1f), factor);
 
-        MorphType<?, ?, IdType> mt = morph.getMorph(id);
-        if (mt == null) return false;
+        List<MorphType<?, ?, IdType>> definitions = morph.getMorphs(id);
+        if (definitions.isEmpty()) return false;
         float v = Math.clamp(value, 0f, 1f);
-        if (mt instanceof FlipMorph<?> flip) {
-            return applySingle((MorphType<?, ?, IdType>) flip.getReferenceMorph(), 1f - v, factor);
+        boolean applied = false;
+        for (MorphType<?, ?, IdType> mt : definitions) {
+            if (mt instanceof FlipMorph<?> flip) {
+                applied |= applySingle((MorphType<?, ?, IdType>) flip.getReferenceMorph(), 1f - v, factor);
+            } else {
+                applied |= applySingle(mt, v, factor);
+            }
         }
-        return applySingle(mt, v, factor);
+        return applied;
     }
 
     @SuppressWarnings("unchecked")
@@ -324,8 +329,8 @@ public class MorphInstance<IdType> {
             Float[] val = activeFactors.get(mt);
             if (val == null || val[0] <= 0f) continue;
 
-            if (mt instanceof MaterialColorMorph) {
-                r.addColor((Vector4f) mt.morph(m, val[0], val[1]), BlendMode.MULTIPLY);
+            if (mt instanceof MaterialColorMorph<?> colorMorph) {
+                r.addColor((Vector4f) mt.morph(m, val[0], val[1]), colorMorph.getBlendMode());
             } else if (mt instanceof MaterialSpecularMorph) {
                 r.addSpecular((Vector4f) mt.morph(m, val[0], val[1]), BlendMode.ADD);
             } else if (mt instanceof MaterialAmbientMorph) {
@@ -420,12 +425,10 @@ public class MorphInstance<IdType> {
     /** Material color: MULTIPLY → original × delta, ADD → original + delta. Falls back to white. */
     public void getMaterialColor(Material material, Sprite sprite, Vector4f dest) {
         MaterialResult r = materialResults.get(material);
-        if (r != null && r.getColor() != null) {
-            if (r.getColorBlendMode() == BlendMode.MULTIPLY) {
-                dest.set(sprite.color).mul(r.getColor());
-            } else {
-                dest.set(sprite.color).add(r.getColor());
-            }
+        if (r != null && (r.getColorMultiply() != null || r.getColorAdd() != null)) {
+            dest.set(sprite.color);
+            if (r.getColorMultiply() != null) dest.mul(r.getColorMultiply());
+            if (r.getColorAdd() != null) dest.add(r.getColorAdd());
             return;
         }
         dest.set(sprite.color);

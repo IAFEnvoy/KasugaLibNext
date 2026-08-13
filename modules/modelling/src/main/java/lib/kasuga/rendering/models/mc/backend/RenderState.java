@@ -28,6 +28,7 @@ public class RenderState {
     public static final VertexFormat UML_VERTEX_FORMAT;
     public static RenderType RENDER_TYPE;
     public static RenderType IRIS_COMPAT_RENDER_TYPE;
+    public static RenderType GLOBAL_BATCH_RENDER_TYPE;
     public static final RenderStateShard.EmptyTextureStateShard UML_TEXTURE_STATE;
     public static final ResourceLocation DEFAULT_TRANSPARENCY = ResourceLocation.tryBuild(KasugaLib.MODID, "textures/atlas/default_transparency.png");
 
@@ -49,7 +50,9 @@ public class RenderState {
     public static final ResourceLocation KSG_IRIS_RENDER_TYPE = ResourceLocation.tryBuild(KasugaLib.MODID, "iris_render_type");
 
     public static RenderStateShard.ShaderStateShard UML_SHADER;
+    public static RenderStateShard.ShaderStateShard GLOBAL_BATCH_SHADER;
     public static ShaderInstance UML_SHADER_INSTANCE;
+    public static ShaderInstance GLOBAL_BATCH_SHADER_INSTANCE;
     private static final ResourceMetadata SPRITE_METADATA;
 
 
@@ -150,6 +153,7 @@ public class RenderState {
         UML_TEXTURE_STATE = new KasugaTextureStateShard(() -> Constants.TEXTURE_BASIC);
 
         UML_SHADER =  new RenderStateShard.ShaderStateShard(() -> UML_SHADER_INSTANCE);
+        GLOBAL_BATCH_SHADER = new RenderStateShard.ShaderStateShard(() -> GLOBAL_BATCH_SHADER_INSTANCE);
     }
 
     public static SpriteContents createDefaultSprite(ResourceLocation rl, Supplier<NativeImage> imageSup) {

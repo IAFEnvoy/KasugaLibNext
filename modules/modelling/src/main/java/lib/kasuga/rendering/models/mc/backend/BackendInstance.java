@@ -139,6 +139,27 @@ public class BackendInstance {
         data.setBrightness(brightness);
     }
 
+    boolean prepareForGlobalBatch() {
+        boolean updated = data.updateModel();
+        if (!cpuSkinning && tbo != null && updated) {
+            tbo.updateForVersion();
+        }
+        return true;
+    }
+
+    boolean usesCpuSkinning() {
+        return cpuSkinning;
+    }
+
+    @Nullable
+    BoneTransformTBO getBoneTransformTBO() {
+        return tbo;
+    }
+
+    void clearBatchDirtyVertices() {
+        data.getDirtyVertices().clear();
+    }
+
     protected void drawBuffer(PoseStack.Pose pose, RenderType renderType,
                               Matrix4f modelViewMatrix, Matrix4f projectionMatrix,
                               float emissiveStrength) {

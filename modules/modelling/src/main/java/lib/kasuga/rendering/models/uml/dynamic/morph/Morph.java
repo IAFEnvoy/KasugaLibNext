@@ -22,6 +22,7 @@ public class Morph<IdType> {
     protected final Model model;
 
     protected final Map<IdType, MorphType<?, ?, IdType>> morphMap;
+    protected final Map<IdType, List<MorphType<?, ?, IdType>>> morphsById;
     protected final Map<IdType, GroupMorph<IdType>> groupMorphs;
     protected final Map<Vertex, Set<MorphType<Vertex, ?, IdType>>> vertexMorphs;
     protected final Map<Mesh, Set<MorphType<Mesh, ?, IdType>>> meshMorphs;
@@ -31,6 +32,7 @@ public class Morph<IdType> {
     public Morph(Model model) {
         this.model = model;
         this.morphMap = new HashMap<>();
+        this.morphsById = new HashMap<>();
         this.groupMorphs = new HashMap<>();
         this.vertexMorphs = new HashMap<>();
         this.meshMorphs = new HashMap<>();
@@ -40,7 +42,8 @@ public class Morph<IdType> {
 
     @SuppressWarnings("unchecked")
     public void addMorph(IdType id, MorphType<?, ?, IdType> morph) {
-        morphMap.put(id, morph);
+        morphMap.putIfAbsent(id, morph);
+        morphsById.computeIfAbsent(id, ignored -> new ArrayList<>()).add(morph);
         Object original = morph instanceof FlipMorph<?> flip
                 ? flip.getReferenceMorph().getOriginal()
                 : morph.getOriginal();
@@ -66,5 +69,8 @@ public class Morph<IdType> {
     public void addGroup(IdType id, GroupMorph<IdType> group) { groupMorphs.put(id, group); }
 
     @Nullable public MorphType<?, ?, IdType> getMorph(IdType id) { return morphMap.get(id); }
+    public List<MorphType<?, ?, IdType>> getMorphs(IdType id) {
+        return morphsById.getOrDefault(id, List.of());
+    }
     @Nullable public GroupMorph<IdType> getGroup(IdType id)    { return groupMorphs.get(id); }
 }

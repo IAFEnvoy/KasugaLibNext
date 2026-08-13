@@ -8,6 +8,15 @@ import lib.kasuga.rendering.models.uml.loaders.serial.byte_stream.StreamLoader;
 import lib.kasuga.rendering.models.uml.loaders.serial.byte_stream.basic.BasicLoaders;
 import lib.kasuga.rendering.models.uml.loaders.serial.byte_stream.basic.TextLoader;
 import lib.kasuga.rendering.models.uml.math.Transform;
+import lib.kasuga.rendering.models.uml.dynamic.morph.BlendMode;
+import lib.kasuga.rendering.models.uml.dynamic.morph.Morph;
+import lib.kasuga.rendering.models.uml.dynamic.morph.holder.GroupMorph;
+import lib.kasuga.rendering.models.uml.dynamic.morph.holder.MorphHolder;
+import lib.kasuga.rendering.models.uml.dynamic.morph.types.BoneTransformMorph;
+import lib.kasuga.rendering.models.uml.dynamic.morph.types.MaterialColorMorph;
+import lib.kasuga.rendering.models.uml.dynamic.morph.types.MorphType;
+import lib.kasuga.rendering.models.uml.dynamic.morph.types.VertexPosMorph;
+import lib.kasuga.rendering.models.uml.dynamic.morph.types.VertexUvMorph;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.basic.BoneBinding;
 import lib.kasuga.rendering.models.uml.structure.basic.Mesh;
@@ -32,6 +41,8 @@ import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.chunk.texture.Textur
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.chunk.vertex.VertexChunk;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.chunk.vertex.VertexSetChunk;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.PmxBoneBinding;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.PmxTail;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.PmxTail.*;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.*;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.header.PmxHeader;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.material.PmxMaterial;
@@ -68,6 +79,7 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
     private final TextLoader textLoader;
 
     private final BoneSetChunk boneSetChunk;
+    private final PmxTailReader tailReader;
 
     @Getter
     private boolean textureLoading;
@@ -93,6 +105,9 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
     @Getter
     private List<PmxBone> bones;
 
+    @Getter
+    private PmxTail tail;
+
     public PMXLoader(String name) {
         this.name = name;
         this.textLoader = new TextLoader(StandardCharsets.UTF_8);
@@ -107,6 +122,8 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
         registerLoader(materialSetChunk);
         boneSetChunk = new BoneSetChunk();
         registerLoader(boneSetChunk);
+        tailReader = new PmxTailReader(this);
+        registerLoader(tailReader);
         textureLoading = false;
     }
 
@@ -130,6 +147,8 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
             this.materials = (List<PmxMaterial>) result;
         } else if (loader == boneSetChunk) {
             this.bones = (List<PmxBone>) result;
+        } else if (loader == tailReader) {
+            this.tail = (PmxTail) result;
         }
     }
 
@@ -180,9 +199,12 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
         Mesh[] meshesArray = new Mesh[meshes.size()];
         for (i = 0; i < meshes.size(); i++) {
             PmxMesh m = meshes.get(i);
-            Vertex v1 = verticesArray[mappings[m.getVertex1().intValue()]];
-            Vertex v2 = verticesArray[mappings[m.getVertex2().intValue()]];
-            Vertex v3 = verticesArray[mappings[m.getVertex3().intValue()]];
+            int source1 = checkedVertexIndex(m.getVertex1().intValue(), mappings.length);
+            int source2 = checkedVertexIndex(m.getVertex2().intValue(), mappings.length);
+            int source3 = checkedVertexIndex(m.getVertex3().intValue(), mappings.length);
+            Vertex v1 = verticesArray[mappings[source1]];
+            Vertex v2 = verticesArray[mappings[source2]];
+            Vertex v3 = verticesArray[mappings[source3]];
             Mesh mesh = getMesh(v1, v2, v3, m);
             meshesArray[i] = mesh;
         }
@@ -191,6 +213,10 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
         for (i = 0; i < materials.size(); i++) {
             PmxMaterial m = materials.get(i);
             int count = m.meshCount / 3;
+            if (m.meshCount < 0 || m.meshCount % 3 != 0 || offset + count > meshes.size()) {
+                throw new PmxFormatException("Invalid PMX material surface count at material " + i
+                        + ": " + m.meshCount);
+            }
             Material material = materialMap.get(m);
             for (int j = offset; j < offset + count; j++) {
                 PmxMesh pMesh = meshes.get(j);
@@ -213,6 +239,10 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
                 );
             }
             offset += count;
+        }
+        if (offset != meshes.size()) {
+            throw new PmxFormatException("PMX materials cover " + (offset * 3)
+                    + " surface indices, expected " + (meshes.size() * 3));
         }
 
         // PMX stores normals per source vertex, but equivalent vertices can be
@@ -243,22 +273,8 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
                     childOfRoot.add(bone);
                     continue;
                 }
-                PmxBone dummyRoot = new PmxBone(
-                        "dummy_root",
-                        "dummy_root",
-                        new Vector3f(),
-                        -1,
-                        0,
-                        new PmxBoneFlags(),
-                        new Vector3f(),
-                        null,
-                        null,
-                        null,
-                        -1,
-                        null
-                );
                 childOfRoot.add(rootBone);
-                rootBone = new Bone("dummy_root", new Transform(), dummyRoot);
+                rootBone = createSyntheticRoot();
                 childOfRoot.add(bone);
                 hasMultiRootBone = true;
             }
@@ -274,6 +290,10 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
                 if (childOfRoot.contains(bone)) parentBone = rootBone;
                 else continue;
             } else {
+                if (parentIndex < 0 || parentIndex >= boneArray.length) {
+                    throw new PmxFormatException("PMX bone " + i
+                            + " references invalid parent " + parentIndex);
+                }
                 parentBone = boneArray[parentIndex];
             }
             bone.setParent(parentBone);
@@ -294,21 +314,26 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
         for (i = 0; i < sortedVertices.size(); i++) {
             PmxVertex v = sortedVertices.get(i);
             PmxBoneBinding b = v.binding;
-            Pair<Bone, Float>[] weights = new Pair[b.boneWeights.size()];
-            int j = 0;
+            List<Pair<Bone, Float>> validWeights = new ArrayList<>(b.boneWeights.size());
             for (Map.Entry<Number, Float> entry : b.boneWeights.entrySet()) {
                 int boneIndex = entry.getKey().intValue();
                 if (boneIndex < 0 || boneIndex >= boneArray.length) {
                     continue;
                 }
                 Bone bone = boneArray[boneIndex];
-                weights[j++] = Pair.of(bone, entry.getValue());
+                validWeights.add(Pair.of(bone, entry.getValue()));
             }
+            Pair<Bone, Float>[] weights = validWeights.toArray(Pair[]::new);
             BoneBinding binding = new BoneBinding(weights, b.toBindingFunc(), b);
             verticesArray[i].setBinding(binding);
         }
 
-        if (hasMultiRootBone) {
+        Bone[] pmxBoneArray = boneArray.clone();
+
+        if (rootBone == null) {
+            rootBone = createSyntheticRoot();
+            boneArray = new Bone[]{rootBone};
+        } else if (hasMultiRootBone) {
             Bone[] bones1 = new Bone[boneArray.length + 1];
             System.arraycopy(boneArray, 0, bones1, 1, boneArray.length);
             bones1[0] = rootBone;
@@ -316,7 +341,6 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
         }
         Skeleton skeleton = new Skeleton(boneArray, rootBone, new Anchor[0], null, new Transform());
 
-        // TODO: 补充这里的morph
         Model model = new Model(
                 verticesArray,
                 meshesArray,
@@ -324,9 +348,10 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
                 skeleton,
                 materialSet,
                 MeshMode.TRIANGLES,
-                getModelData(header),
+                getModelData(header, tail),
                 null
         );
+        buildMorphs(model, mappings, verticesArray, meshesArray, materialMap, pmxBoneArray);
 
         vertexMapping.clear();
         vertexIndices.clear();
@@ -337,27 +362,12 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
 
     public Transform calculateBoneTransform(List<PmxBone> bones, PmxBone current) {
         Transform transform = new Transform();
-        Object tailObject = current.tailObject;
-        Vector3f dir;
-        Quaternionf rotation;
-        Vector3f defaultDir = new Vector3f(0, 1, 0);
-        if (tailObject instanceof Vector3f vector3f) {
-            if (vector3f.length() != 0) {
-                dir = new Vector3f(vector3f).sub(current.position).normalize();
-                rotation = new Quaternionf().rotationTo(defaultDir, dir);
-            } else rotation = new Quaternionf();
-        } else if (tailObject instanceof Number boneIndex) {
-            int index = boneIndex.intValue();
-            if (index >= 0 && index < bones.size()) {
-                PmxBone bone = bones.get(index);
-                Vector3f tailPos = bone.position;
-                dir = new Vector3f(tailPos).sub(current.position).normalize();
-                rotation = new Quaternionf().rotationTo(defaultDir, dir);
-            } else rotation = new Quaternionf();
-        } else rotation = new Quaternionf();
-
-        transform.translate(current.position);
-        transform.mul(rotation);
+        Vector3f localPosition = new Vector3f(current.position);
+        int parentIndex = current.parentBoneIndex.intValue();
+        if (parentIndex >= 0 && parentIndex < bones.size()) {
+            localPosition.sub(bones.get(parentIndex).position);
+        }
+        transform.translate(localPosition);
         return transform;
     }
 
@@ -399,6 +409,126 @@ public abstract class PMXLoader<InputType, OutputIdentifier, TextureIdentifier, 
     public abstract Bone getBone(List<PmxBone> bones, PmxBone bone);
 
     public abstract @Nullable ModelData getModelData(PmxHeader header);
+
+    public @Nullable ModelData getModelData(PmxHeader header, PmxTail tail) {
+        return getModelData(header);
+    }
+
+    protected Vector3f scaleMmdTranslation(Vector3f value) {
+        return value;
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private void buildMorphs(Model model, int[] vertexMappings, Vertex[] builtVertices,
+                             Mesh[] builtMeshes, Map<Object, Material> materialMap,
+                             Bone[] pmxBones) {
+        if (tail == null || tail.morphs().isEmpty()) return;
+        Morph<String> runtime = model.getMorph();
+        List<List<MorphType<?, ?, String>>> definitions = new ArrayList<>(tail.morphs().size());
+        IdentityHashMap<Vertex, List<UvTarget>> uvTargets = new IdentityHashMap<>();
+        for (Mesh mesh : builtMeshes) {
+            for (Vertex vertex : mesh.getVertices()) {
+                for (Material material : mesh.getMaterials()) {
+                    if (vertex.getUV(mesh, material) != null) {
+                        uvTargets.computeIfAbsent(vertex, ignored -> new ArrayList<>())
+                                .add(new UvTarget(mesh, material));
+                    }
+                }
+            }
+        }
+
+        for (PmxMorph pmxMorph : tail.morphs()) {
+            String id = pmxMorph.localName();
+            List<MorphType<?, ?, String>> current = new ArrayList<>();
+            if (pmxMorph.kind() == MorphKind.VERTEX) {
+                for (PmxMorphOffset raw : pmxMorph.offsets()) {
+                    VertexOffset offset = (VertexOffset) raw;
+                    Vertex vertex = mappedVertex(offset.vertexIndex(), vertexMappings, builtVertices);
+                    if (vertex == null) continue;
+                    Vector3f target = new Vector3f(vertex.getPosition())
+                            .add(scaleMmdTranslation(new Vector3f(offset.displacement())));
+                    current.add(new VertexPosMorph<>(vertex, id, target));
+                }
+            } else if (pmxMorph.kind() == MorphKind.BONE) {
+                for (PmxMorphOffset raw : pmxMorph.offsets()) {
+                    BoneOffset offset = (BoneOffset) raw;
+                    if (offset.boneIndex() < 0 || offset.boneIndex() >= pmxBones.length) continue;
+                    Bone bone = pmxBones[offset.boneIndex()];
+                    Transform delta = new Transform()
+                            .translate(scaleMmdTranslation(new Vector3f(offset.translation())))
+                            .mul(new Quaternionf(offset.rotation()));
+                    current.add(new BoneTransformMorph<>(bone, id, delta));
+                }
+            } else if (pmxMorph.kind() == MorphKind.UV) {
+                for (PmxMorphOffset raw : pmxMorph.offsets()) {
+                    UvOffset offset = (UvOffset) raw;
+                    if (offset.layer() != 0) continue;
+                    Vertex vertex = mappedVertex(offset.vertexIndex(), vertexMappings, builtVertices);
+                    if (vertex == null) continue;
+                    for (UvTarget uvTarget : uvTargets.getOrDefault(vertex, List.of())) {
+                        Vector2f base = vertex.getUV(uvTarget.mesh(), uvTarget.material());
+                        Vector2f target = new Vector2f(base).add(offset.displacement().x, offset.displacement().y);
+                        current.add(new VertexUvMorph<>(vertex, id, uvTarget.mesh(), uvTarget.material(), target));
+                    }
+                }
+            } else if (pmxMorph.kind() == MorphKind.MATERIAL) {
+                for (PmxMorphOffset raw : pmxMorph.offsets()) {
+                    MaterialOffset offset = (MaterialOffset) raw;
+                    BlendMode mode = offset.operation() == 0 ? BlendMode.MULTIPLY : BlendMode.ADD;
+                    if (offset.materialIndex() == -1) {
+                        for (Material material : materialMap.values()) {
+                            current.add(new MaterialColorMorph<>(material, id,
+                                    new Vector4f(offset.diffuse()), mode));
+                        }
+                    } else if (offset.materialIndex() >= 0 && offset.materialIndex() < materials.size()) {
+                        Material material = materialMap.get(materials.get(offset.materialIndex()));
+                        if (material != null) current.add(new MaterialColorMorph<>(material, id,
+                                new Vector4f(offset.diffuse()), mode));
+                    }
+                }
+            }
+            for (MorphType<?, ?, String> definition : current) runtime.addMorph(id, definition);
+            definitions.add(current);
+        }
+
+        for (int index = 0; index < tail.morphs().size(); index++) {
+            PmxMorph pmxMorph = tail.morphs().get(index);
+            if (pmxMorph.kind() != MorphKind.GROUP && pmxMorph.kind() != MorphKind.FLIP) continue;
+            GroupMorph<String> group = new GroupMorph<>(pmxMorph.localName());
+            for (PmxMorphOffset raw : pmxMorph.offsets()) {
+                GroupOffset offset = (GroupOffset) raw;
+                if (offset.morphIndex() < 0 || offset.morphIndex() >= definitions.size()) continue;
+                for (MorphType<?, ?, String> referenced : definitions.get(offset.morphIndex())) {
+                    group.addHolder(new MorphHolder(referenced.getIdentifier(), referenced), offset.weight());
+                }
+            }
+            runtime.addGroup(pmxMorph.localName(), group);
+        }
+    }
+
+    private Vertex mappedVertex(int sourceIndex, int[] mappings, Vertex[] vertices) {
+        if (sourceIndex < 0 || sourceIndex >= mappings.length) return null;
+        int mapped = mappings[sourceIndex];
+        return mapped >= 0 && mapped < vertices.length ? vertices[mapped] : null;
+    }
+
+    private int checkedVertexIndex(int index, int vertexCount) {
+        if (index < 0 || index >= vertexCount) {
+            throw new PmxFormatException("PMX surface references invalid vertex " + index
+                    + " (vertex count " + vertexCount + ")");
+        }
+        return index;
+    }
+
+    private record UvTarget(Mesh mesh, Material material) {}
+
+    private static Bone createSyntheticRoot() {
+        PmxBone data = new PmxBone(
+                "dummy_root", "dummy_root", new Vector3f(), -1, 0,
+                new PmxBoneFlags(), new Vector3f(), null, null, null, -1, null
+        );
+        return new Bone("dummy_root", new Transform(), data);
+    }
 
     public void scaleBone(PmxBone bone) {}
 
