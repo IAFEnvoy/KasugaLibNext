@@ -44,6 +44,15 @@ public class ModelInstance implements AutoCloseable {
     @Setter
     private MeshMode meshMode;
 
+    /**
+     * Optional pose driver — the animation source that advances this instance's pose one tick at a time.
+     * {@code null} for a static instance. Set by the host (e.g. an {@code FsmPoseDriver}); advanced via
+     * {@link #animate(float)}, separately from {@link #update()}.
+     */
+    @Setter
+    @Nullable
+    private PoseDriver poseDriver;
+
     private boolean shouldUpdate;
 
     public ModelInstance(Model model, @Nullable Transform initTransform,
@@ -83,6 +92,30 @@ public class ModelInstance implements AutoCloseable {
     public void updateImmediate() {
         forceUpdate();
         update();
+    }
+
+    /**
+     * Advance the attached {@link PoseDriver} by {@code dt} seconds, writing the resulting pose into this
+     * instance's skeleton / morph / material. The host calls this on its tick thread, then calls
+     * {@link #update()} (on the tick or render thread) to flush the pose to the GPU. No-op when no driver
+     * is attached. This deliberately stays out of {@link #update()} so the render-thread {@code update()}
+     * path never drives animation.
+     */
+    public void animate(float dt) {
+        if (poseDriver != null) {
+            poseDriver.tick(dt);
+        }
+    }
+
+    /**
+     * Render-thread per-frame entry: forward to the attached {@link PoseDriver#sample(float)} so it can
+     * interpolate + flush the pose at frame rate. The backend calls this each frame (with {@code partialTick})
+     * before uploading to the GPU; {@link #update()} then flushes. No-op when no driver is attached.
+     */
+    public void sample(float partialTick) {
+        if (poseDriver != null) {
+            poseDriver.sample(partialTick);
+        }
     }
 
     public void update() {

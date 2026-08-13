@@ -1,6 +1,6 @@
 package lib.kasuga.rendering.models.mc.proxies;
 
-import lib.kasuga.rendering.models.uml.dynamic.state_machine.DataProvider;
+import lib.kasuga.rendering.models.uml.dynamic.data.DataProvider;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;

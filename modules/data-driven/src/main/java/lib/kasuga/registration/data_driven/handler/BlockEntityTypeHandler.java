@@ -30,6 +30,12 @@ public class BlockEntityTypeHandler implements TypeHandler<BlockEntityDef> {
         if (!blockJson.has("block_entity")) return null;
         JsonObject be = blockJson.getAsJsonObject("block_entity").deepCopy();
         be.addProperty("_parent_block", blockJson.get("id").getAsString());
+        // Top-level state_machine is forwarded to the block entity factory via params (like model/model_name); non-string values are ignored.
+        if (blockJson.has("state_machine") && blockJson.get("state_machine").isJsonPrimitive()) {
+            JsonObject params = be.has("params") ? be.getAsJsonObject("params") : new JsonObject();
+            params.addProperty("state_machine", blockJson.get("state_machine").getAsString());
+            be.add("params", params);
+        }
         return List.of(be);
     }
 

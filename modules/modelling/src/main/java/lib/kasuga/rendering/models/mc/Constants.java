@@ -51,6 +51,7 @@ import net.minecraft.server.packs.resources.ResourceProvider;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.ModLoader;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
@@ -390,7 +391,11 @@ public class Constants {
     }
 
     private static void testModel() {
-//        testMMD();
+        // Render smoke switch: -Dkasuga.renderTestModels=false disables the default test models (hardcoded tests on by default).
+        if (!Boolean.parseBoolean(System.getProperty("kasuga.renderTestModels", "true"))) {
+            return;
+        }
+        testMMD();
 //        testUI();
 //        testObj();
 //        testBe();
