@@ -6,6 +6,7 @@ import lib.kasuga.registration.factory.FactoryRegistry;
 import lib.kasuga.registration.minecraft.block.BlockReg;
 import lib.kasuga.registration.minecraft.block_entity.BlockEntityReg;
 import lib.kasuga.registration.minecraft.item.ItemReg;
+import lib.kasuga.rendering.models.mc.dynamic.fsm.FsmBlockEntityFactories;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockBehaviour;
@@ -32,6 +33,9 @@ public class DataDrivenTestFactories {
         FactoryRegistry.register("simple_block", (id, params) -> blockWithItem(id, SimpleTestBlock::new));
         FactoryRegistry.register("be_block", (id, params) -> blockWithItem(id, BEBlock::new));
         FactoryRegistry.register("occluding_block", (id, params) -> blockWithItem(id, OccludingTestBlock::new));
+
+        // FSM factories (fsm_block / fsm_be) — built-in in modelling; re-registration is idempotent
+        FsmBlockEntityFactories.registerBuiltin();
 
         // Factory that exercises params: reads "occluding" boolean
         FactoryRegistry.register("params_block", (id, params) -> {

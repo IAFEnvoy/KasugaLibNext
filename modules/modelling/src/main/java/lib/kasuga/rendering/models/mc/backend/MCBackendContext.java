@@ -44,4 +44,12 @@ public class MCBackendContext {
         this.partialTick = partialTick;
         this.level = level;
     }
+
+    /**
+     * The render partial-tick fraction in {@code [0,1)} — how far between the last and next game tick this frame
+     * is. Animation drivers sample at frame rate using this fraction so motion stays smooth between game ticks.
+     */
+    public float getPartialTickFraction() {
+        return partialTick.getGameTimeDeltaPartialTick(true);
+    }
 }

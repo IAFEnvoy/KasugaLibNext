@@ -9,9 +9,6 @@ plugins {
 version = mod_version
 group = mod_group_id
 
-base {
-    archivesName = 'kasuga-data-driven'
-}
 
 useModProject(project(":modules:core"))
 
@@ -19,6 +16,31 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 test {
     useJUnitPlatform()
+}
+
+// Pure-JVM gate mirroring modelling's `modelUnitTest`: filter the NeoForge FML JUnit launch wrapper so the
+// pure-JVM tests do not boot the mod context. (The default `test` task still launches FML, which currently
+// fails on the eager AnimationCapabilityRegistrar bean needing the mod event bus — a regression from the
+// data-driven FSM pipeline commit, tracked for the FSM cleanup pass.) Tests that need real MC registries
+// (e.g. JsonPropertyParserTest, which touches SoundEvents/SoundType) stay on the FML gate.
+tasks.register('dataDrivenUnitTest', Test) {
+    description = 'Runs pure Java data-driven tests without the NeoForge FML test launcher.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = (sourceSets.test.runtimeClasspath + sourceSets.contentTesting.output).filter {
+        !it.name.startsWith('junit-fml-')
+    }
+    useJUnitPlatform()
+    filter {
+        // These need the FML runtime (real MC registries / Micronaut-instantiated @Context fixtures) and
+        // stay on the default `test` FML gate. They can't run pure-JVM:
+        //  - JsonPropertyParserTest touches SoundEvents/SoundType (registry bootstrap).
+        //  - BlockEntityFactoryParamsTest / FactoryRegistryTest rely on DataDrivenTestFactories' static
+        //    registration, which only fires when Micronaut instantiates that @Context bean under FML.
+        excludeTest('lib.kasuga.test.registration.data_driven.JsonPropertyParserTest', null)
+        excludeTest('lib.kasuga.test.registration.data_driven.BlockEntityFactoryParamsTest', null)
+        excludeTest('lib.kasuga.test.registration.data_driven.FactoryRegistryTest', null)
+    }
 }
 
 sourceSets {
@@ -118,6 +140,11 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.7.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testImplementation "net.neoforged:testframework:${project.neo_version}"
+
+    // FSM 冒烟测试（fsm_block/fsm_be 工厂与 AnimationBlockEntity）需要 modelling；
+    // 仅测试源集依赖，无循环（data-driven main 不依赖 modelling）。
+    contentTestingImplementation project(":modules:modelling")
+    testImplementation project(":modules:modelling")
 }
 
 tasks.withType(JavaCompile).configureEach {

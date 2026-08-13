@@ -52,12 +52,18 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         PoseStack poseStack = context.getPoseStack();
         poseStack.pushPose();
 
+        // Drive any attached pose driver (e.g. FSM) at frame rate before the GPU upload in drawBuffer. No-op for
+        // static models (no driver) — the shared render path is unaffected.
+        renderable.getModelInstance().sample(context.getPartialTickFraction());
+
         BackendTransform transform = renderable.beforeRender(context);
         LightData lightData;
         int overlay;
         float emissive;
         if (transform != null) {
-            transform.applyTransform(poseStack);
+            if (transform.isAppliesTransform()) {
+                transform.applyTransform(poseStack);
+            }
             lightData = transform.getLightAndBrightness(context.getLevel());
             overlay = transform.getOverlay();
             emissive = transform.emissiveStrength;
@@ -121,12 +127,25 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         private final boolean isHurt, isGlowing, enableWorldLightAndBrightness, enableAutoOverlay;
         private final float emissiveStrength, brightness;
         private final int directlyGivenPackedLight, directlyGivenPackedOverlay;
+        /** When false the TRS still feeds lighting/culling but is NOT pushed into the pose stack. */
+        private final boolean appliesTransform;
 
         public BackendTransform(Vector3f position, Vector3f rotation, Vector3f scale,
                                 boolean isHurt, boolean isGlowing, boolean enableWorldLightAndBrightness,
                                 boolean enableAutoOverlay,
                                 float emissiveStrength, float brightness,
                                 int directlyGivenPackedLight, int directlyGivenPackedOverlay) {
+            this(position, rotation, scale, isHurt, isGlowing, enableWorldLightAndBrightness,
+                    enableAutoOverlay, emissiveStrength, brightness,
+                    directlyGivenPackedLight, directlyGivenPackedOverlay, true);
+        }
+
+        public BackendTransform(Vector3f position, Vector3f rotation, Vector3f scale,
+                                boolean isHurt, boolean isGlowing, boolean enableWorldLightAndBrightness,
+                                boolean enableAutoOverlay,
+                                float emissiveStrength, float brightness,
+                                int directlyGivenPackedLight, int directlyGivenPackedOverlay,
+                                boolean appliesTransform) {
             this.position = position;
             this.rotation = rotation;
             this.scale = scale;
@@ -138,6 +157,7 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
             this.enableAutoOverlay = enableAutoOverlay;
             this.directlyGivenPackedOverlay = directlyGivenPackedOverlay;
             this.brightness = brightness;
+            this.appliesTransform = appliesTransform;
         }
 
         public void applyTransform(PoseStack poseStack) {

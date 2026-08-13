@@ -1,6 +1,6 @@
 package lib.kasuga.rendering.models.mc.proxies;
 
-import lib.kasuga.rendering.models.uml.dynamic.state_machine.DataProvider;
+import lib.kasuga.rendering.models.uml.dynamic.data.DataProvider;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.jetbrains.annotations.Nullable;
