@@ -36,10 +36,14 @@ target_link_libraries(kasuga_box3d PRIVATE box3d::box3d ${JNI_LIBRARIES})
 # pin the output location on the target itself (takes precedence) and guarantee
 # the directory exists before the linker runs.
 file(MAKE_DIRECTORY "${KASUGA_NATIVE_OUTPUT}")
+# The $<1:...> generator expression stops multi-config generators (Visual
+# Studio, Xcode, Ninja Multi-Config) from appending a per-config subdirectory,
+# so the library always lands directly under native/<classifier>/ where the
+# Gradle test wiring (-Dkasuga.box3d.library) and jar packaging expect it.
 set_target_properties(kasuga_box3d PROPERTIES
     OUTPUT_NAME "kasuga_box3d"
-    LIBRARY_OUTPUT_DIRECTORY "${KASUGA_NATIVE_OUTPUT}"
-    RUNTIME_OUTPUT_DIRECTORY "${KASUGA_NATIVE_OUTPUT}"
+    LIBRARY_OUTPUT_DIRECTORY "$<1:${KASUGA_NATIVE_OUTPUT}>"
+    RUNTIME_OUTPUT_DIRECTORY "$<1:${KASUGA_NATIVE_OUTPUT}>"
     C_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
 )
