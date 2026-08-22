@@ -1,6 +1,7 @@
 package lib.kasuga.rendering.models.uml.typo.miku_miku_dance;
 
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
+import lib.kasuga.rendering.models.uml.dynamic.IkEffector;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.material.MaterialSet;
@@ -74,12 +75,61 @@ class MmdSkeletonCompatibilityTest {
         assertEquals(new Vector3f(1, 0, 0), target);
     }
 
+    @Test
+    void ccdIkConvertsWorldCorrectionIntoRotatedModelSpace() {
+        Bone root = bone("root", new Transform(), data("root", -1, plainFlags(), null, null, null));
+        Bone link = bone("link", new Transform(), data("link", 0, plainFlags(), null, null, null));
+        Bone effector = bone("effector", new Transform().translate(1, 0, 0),
+                data("effector", 1, plainFlags(), null, null, null));
+        PmxIKBone ik = new PmxIKBone(2, 16, (float) Math.PI,
+                new PmxIKChain[]{new PmxIKChain(1, false, null)});
+        Bone controller = bone("controller", new Transform().translate(0, 1, 0),
+                data("controller", 0, flags(true, new boolean[6]), null, null, ik));
+        connect(root, link, controller);
+        connect(link, effector);
+        Transform modelTransform = new Transform().mul(new Quaternionf().rotateXYZ(0.6f, 0.8f, -0.4f));
+        ModelInstance instance = instance(modelTransform, root, link, effector, controller);
+
+        instance.updateImmediate();
+
+        Vector3f target = instance.getSkeletonInstance().getAbsoluteTransforms().get(effector).getPosition();
+        Vector3f goal = instance.getSkeletonInstance().getAbsoluteTransforms().get(controller).getPosition();
+        assertTrue(target.distance(goal) < 1e-4f, "IK should converge under a rotated model transform");
+    }
+
+    @Test
+    void externalIkEffectorOverridesTheAuthoredControllerTargetForOneEvaluation() {
+        Bone root = bone("root", new Transform(), data("root", -1, plainFlags(), null, null, null));
+        Bone link = bone("link", new Transform(), data("link", 0, plainFlags(), null, null, null));
+        Bone effector = bone("effector", new Transform().translate(1, 0, 0),
+                data("effector", 1, plainFlags(), null, null, null));
+        PmxIKBone ik = new PmxIKBone(2, 16, (float) Math.PI,
+                new PmxIKChain[]{new PmxIKChain(1, false, null)});
+        Bone controller = bone("controller", new Transform().translate(0, 1, 0),
+                data("controller", 0, flags(true, new boolean[6]), null, null, ik));
+        connect(root, link, controller);
+        connect(link, effector);
+        ModelInstance instance = instance(root, link, effector, controller);
+        Vector3f externalTarget = new Vector3f(-1f, 0f, 0f);
+        instance.getPoseEffectors().add("hand-target", new IkEffector("controller", externalTarget));
+
+        instance.updateImmediate();
+
+        Vector3f solved = instance.getSkeletonInstance().getAbsoluteTransforms().get(effector).getPosition();
+        assertTrue(solved.distance(externalTarget) < 1e-4f,
+                "BEFORE_IK effectors must feed the same-frame PMX IK solve");
+    }
+
     private static ModelInstance instance(Bone... bones) {
+        return instance(null, bones);
+    }
+
+    private static ModelInstance instance(Transform transform, Bone... bones) {
         Skeleton skeleton = new Skeleton(bones, bones[0], new Anchor[0], null, new Transform());
         Model model = new Model(new lib.kasuga.rendering.models.uml.structure.basic.Vertex[0],
                 new lib.kasuga.rendering.models.uml.structure.basic.Mesh[0], bones, skeleton,
                 new MaterialSet(List.of(), List.of()), MeshMode.TRIANGLES, null, null);
-        return new ModelInstance(model, null, null, null, null, null);
+        return new ModelInstance(model, transform, null, null, null, null);
     }
 
     private static Bone bone(String name, Transform transform, PmxBone data) {

@@ -17,9 +17,13 @@ import lib.kasuga.rendering.models.mc.source.model.str.StrModelSourceManager;
 import lib.kasuga.rendering.models.mc.source.model.zip.FileZipModelSource;
 import lib.kasuga.rendering.models.mc.source.model.zip.JarZipModelSource;
 import lib.kasuga.rendering.models.mc.source.model.zip.ZipModelSourceManager;
+import lib.kasuga.rendering.models.mc.source.model.binary.BinaryModelSourceManager;
+import lib.kasuga.rendering.models.mc.source.model.binary.FileBinaryModelSource;
+import lib.kasuga.rendering.models.mc.source.model.binary.JarBinaryModelSource;
 import lib.kasuga.rendering.models.mc.source.texture.CombinedTextureManager;
 import lib.kasuga.rendering.models.mc.typo.KsgObjLoader;
 import lib.kasuga.rendering.models.mc.typo.KsgPmxLoader;
+import lib.kasuga.rendering.models.mc.typo.KsgGltfLoader;
 import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipHelper;
 import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipResource;
 import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
@@ -37,6 +41,7 @@ public final class PipelineRegistry {
     public static final String JE = "je";
     public static final String OBJ = "obj";
     public static final String PMX = "pmx";
+    public static final String GLTF = "gltf";
 
     private static final Map<String, ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?>> PIPELINES =
             new ConcurrentHashMap<>();
@@ -46,6 +51,8 @@ public final class PipelineRegistry {
         BUILTIN_ROUTES.put(".geo.json", BE);
         BUILTIN_ROUTES.put(".obj", OBJ);
         BUILTIN_ROUTES.put(".mmd.zip", PMX);
+        BUILTIN_ROUTES.put(".glb", GLTF);
+        BUILTIN_ROUTES.put(".gltf", GLTF);
         BUILTIN_ROUTES.put(".json", JE);
     }
 
@@ -53,11 +60,13 @@ public final class PipelineRegistry {
 
     private static MCBackend backend;
     private static KsgPmxLoader pmxLoader;
+    private static KsgGltfLoader gltfLoader;
 
     private static ModelPipeLine<JsonObject, BackendInstance, ResourceLocation, ResourceLocation, String> bePipeline;
     private static ModelPipeLine<JsonObject, BackendInstance, ResourceLocation, ResourceLocation, String> jePipeline;
     private static ModelPipeLine<String, BackendInstance, ResourceLocation, ResourceLocation, String> objPipeline;
     private static ModelPipeLine<ZipHelper, BackendInstance, ResourceLocation, ResourceLocation, ZipResource> pmxPipeline;
+    private static ModelPipeLine<byte[], BackendInstance, ResourceLocation, ResourceLocation, Object> gltfPipeline;
 
     private PipelineRegistry() {
     }
@@ -66,6 +75,7 @@ public final class PipelineRegistry {
         JsonModelSourceManager jsonSource = new JsonModelSourceManager("json");
         StrModelSourceManager strSource = new StrModelSourceManager("str");
         ZipModelSourceManager zipSource = new ZipModelSourceManager("zip");
+        BinaryModelSourceManager binarySource = new BinaryModelSourceManager("binary");
 
         jsonSource.registerSource(new FileJsonModelSource("file_json"));
         jsonSource.registerSource(new JarJsonModelSource("jar_json"));
@@ -73,6 +83,8 @@ public final class PipelineRegistry {
         strSource.registerSource(new JarStrModelSource("jar_str"));
         zipSource.registerSource(new FileZipModelSource("file_zip"));
         zipSource.registerSource(new JarZipModelSource("jar_zip"));
+        binarySource.registerSource(new FileBinaryModelSource("file_binary"));
+        binarySource.registerSource(new JarBinaryModelSource("jar_binary"));
 
         MCBridge bridge = new MCBridge();
         backend = new MCBackend();
@@ -117,6 +129,17 @@ public final class PipelineRegistry {
                 .withBackend("mc_backend", backend)
                 .build();
         register(PMX, pmxPipeline);
+
+        gltfLoader = new KsgGltfLoader("gltf_model");
+        gltfPipeline = new ModelPipeLine.Builder<byte[], BackendInstance, ResourceLocation,
+                ResourceLocation, Object>()
+                .withModelSource(binarySource)
+                .withSidedSource(textures.getType(), "mc_layer_0", textures)
+                .withLoader(gltfLoader)
+                .withBridge("mc_bridge", bridge)
+                .withBackend("mc_backend", backend)
+                .build();
+        register(GLTF, gltfPipeline);
     }
 
     public static ModelPipeLine<JsonObject, BackendInstance, ResourceLocation, ResourceLocation, String> be() {
@@ -135,12 +158,20 @@ public final class PipelineRegistry {
         return pmxPipeline;
     }
 
+    public static ModelPipeLine<byte[], BackendInstance, ResourceLocation, ResourceLocation, Object> gltf() {
+        return gltfPipeline;
+    }
+
     public static MCBackend backend() {
         return backend;
     }
 
     public static KsgPmxLoader pmxLoader() {
         return pmxLoader;
+    }
+
+    public static KsgGltfLoader gltfLoader() {
+        return gltfLoader;
     }
 
     public static void register(String id, ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> pipeline) {

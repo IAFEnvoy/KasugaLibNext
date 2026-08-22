@@ -5,6 +5,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3f;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -37,7 +38,13 @@ public class ZipHelper implements AutoCloseable {
     @Getter
     private final Object path;
 
+    private final Vector3f modelScale;
+
     public ZipHelper(ZipFile file) {
+        this(file, new Vector3f(ZipMeta.DEFAULT_MODEL_SCALE));
+    }
+
+    public ZipHelper(ZipFile file, Vector3f modelScale) {
         List<ZipEntry> entriesList = (List<ZipEntry>) file.stream().toList();
         entryNameMap = new HashMap<>();
         this.entries = new HashMap<>();
@@ -58,13 +65,19 @@ public class ZipHelper implements AutoCloseable {
             }
         }
         path = file.getName();
+        this.modelScale = checkedScale(modelScale);
     }
 
     public ZipHelper(ResourceLocation rl, ZipInputStream stream) {
+        this(rl, stream, new Vector3f(ZipMeta.DEFAULT_MODEL_SCALE));
+    }
+
+    public ZipHelper(ResourceLocation rl, ZipInputStream stream, Vector3f modelScale) {
         this.entries = new HashMap<>();
         entryNameMap = new HashMap<>();
         entryTree = new HashMap<>();
         path = rl;
+        this.modelScale = checkedScale(modelScale);
         ZipEntry entry;
         try {
             while ((entry = stream.getNextEntry()) != null) {
@@ -82,6 +95,18 @@ public class ZipHelper implements AutoCloseable {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public Vector3f getModelScale() {
+        return new Vector3f(modelScale);
+    }
+
+    private static Vector3f checkedScale(Vector3f scale) {
+        Vector3f result = new Vector3f(Objects.requireNonNull(scale, "modelScale"));
+        if (!result.isFinite() || result.x <= 0f || result.y <= 0f || result.z <= 0f) {
+            throw new IllegalArgumentException("modelScale components must be finite and positive");
+        }
+        return result;
     }
 
     public boolean hasEntry(String entryName) {
@@ -219,8 +244,13 @@ public class ZipHelper implements AutoCloseable {
     }
 
     public static @Nullable ZipHelper fromResource(ResourceLocation rl, Resource resource, @Nullable Charset charset) {
+        return fromResource(rl, resource, charset, new Vector3f(ZipMeta.DEFAULT_MODEL_SCALE));
+    }
+
+    public static @Nullable ZipHelper fromResource(ResourceLocation rl, Resource resource, @Nullable Charset charset,
+                                                    Vector3f modelScale) {
         try (ZipInputStream zin = new ZipInputStream(resource.open(), charset == null ? StandardCharsets.UTF_8 : charset)) {
-            return new ZipHelper(rl, zin);
+            return new ZipHelper(rl, zin, modelScale);
         } catch (Exception e) {
             return null;
         }

@@ -29,12 +29,16 @@ public class SkeletonInstance {
 
     private final ModelInstance modelInstance;
     private final Skeleton skeleton;
+    private final Bone[] pmxBones;
 
     private final HashMap<Bone, Transform> transforms;
     private final HashMap<Bone, Transform> absoluteTransforms;
     private final HashMap<Bone, Transform> evaluatedTransforms;
     private final HashMap<Bone, Transform> ikTransforms;
+    private final HashMap<Bone, Transform> physicsTransforms;
     private final HashMap<String, Boolean> ikEnabled;
+    private final HashMap<Bone, IkTarget> ikTargets;
+    private final HashMap<Bone, IkTarget> frameIkTargets;
     private final Set<Bone> dirtyBones;
     private Set<Bone> lastDirtyBones;
 
@@ -53,13 +57,19 @@ public class SkeletonInstance {
     public SkeletonInstance(ModelInstance instance, Skeleton skeleton, @Nullable Transform transform, @Nullable SkeletonInstanceData data) {
         this.modelInstance = instance;
         this.skeleton = skeleton;
+        this.pmxBones = Arrays.stream(skeleton.getBones())
+                .filter(bone -> bone.getBoneData() instanceof PmxBone)
+                .toArray(Bone[]::new);
         this.transform = transform != null ? transform : new Transform();
         shouldUpdate = false;
         this.transforms = new HashMap<>();
         this.absoluteTransforms = new HashMap<>();
         this.evaluatedTransforms = new HashMap<>();
         this.ikTransforms = new HashMap<>();
+        this.physicsTransforms = new HashMap<>();
         this.ikEnabled = new HashMap<>();
+        this.ikTargets = new HashMap<>();
+        this.frameIkTargets = new HashMap<>();
         this.dirtyBones = new HashSet<>();
         this.lastDirtyBones = Collections.emptySet();
         this.data = data;
@@ -76,10 +86,24 @@ public class SkeletonInstance {
     }
 
     public void updateTransform() {
+        updateTransform(true);
+    }
+
+    /**
+     * Rebuilds the final hierarchy after physics has replaced some local bone
+     * transforms. The IK corrections were already solved while evaluating the
+     * animation target, so solving them again here is both redundant and can
+     * fight the physical pose.
+     */
+    public void updateTransformAfterPhysics() {
+        updateTransform(false);
+    }
+
+    private void updateTransform(boolean solveIk) {
         Set<Bone> updatedBones = collectUpdatedBones();
-        ikTransforms.clear();
+        if (solveIk) ikTransforms.clear();
         evaluateHierarchy();
-        solvePmxIk();
+        if (solveIk) solvePmxIk();
         lastFullUpdate = fullUpdateRequested || updatedBones.isEmpty();
         lastDirtyBones = lastFullUpdate ? Collections.emptySet() : updatedBones;
         dirtyBones.clear();
@@ -272,6 +296,55 @@ public class SkeletonInstance {
         return ikEnabled.getOrDefault(boneName, true);
     }
 
+    /** Sets a persistent world-space target for a PMX IK controller. */
+    public boolean setIkTarget(String controllerBone, Vector3f worldTarget, float weight) {
+        Bone bone = ikController(controllerBone);
+        if (bone == null) return false;
+        ikTargets.put(bone, ikTarget(worldTarget, weight));
+        requestFullUpdate();
+        return true;
+    }
+
+    public boolean clearIkTarget(String controllerBone) {
+        Bone bone = skeleton.getBoneMap().get(controllerBone);
+        if (bone == null || ikTargets.remove(bone) == null) return false;
+        requestFullUpdate();
+        return true;
+    }
+
+    public void clearIkTargets() {
+        if (ikTargets.isEmpty()) return;
+        ikTargets.clear();
+        requestFullUpdate();
+    }
+
+    /** Sets an IK target valid only for the current pose-pipeline evaluation. */
+    public boolean setFrameIkTarget(String controllerBone, Vector3f worldTarget, float weight) {
+        Bone bone = ikController(controllerBone);
+        if (bone == null) return false;
+        frameIkTargets.put(bone, ikTarget(worldTarget, weight));
+        return true;
+    }
+
+    /** Called by the model pose pipeline before its BEFORE_IK effectors. */
+    public void clearFrameIkTargets() {
+        frameIkTargets.clear();
+    }
+
+    private Bone ikController(String name) {
+        Bone bone = skeleton.getBoneMap().get(name);
+        return bone != null && bone.getBoneData() instanceof PmxBone pmx && pmx.ik != null
+                ? bone : null;
+    }
+
+    private static IkTarget ikTarget(Vector3f target, float weight) {
+        Vector3f position = new Vector3f(Objects.requireNonNull(target, "target"));
+        if (!position.isFinite() || !Float.isFinite(weight) || weight < 0f || weight > 1f) {
+            throw new IllegalArgumentException("IK target must be finite and weight within [0, 1]");
+        }
+        return new IkTarget(position, weight);
+    }
+
     private void evaluateHierarchy() {
         updateQueue.clear();
         evaluatedTransforms.clear();
@@ -316,8 +389,31 @@ public class SkeletonInstance {
         }
         Transform ik = ikTransforms.get(bone);
         if (ik != null) result.mul(ik);
+        Transform physics = physicsTransforms.get(bone);
+        if (physics != null) result.set(physics);
         evaluatedTransforms.put(bone, result.copy());
         return result;
+    }
+
+    /**
+     * Removes the last simulated pose so animation and IK can be evaluated as
+     * the kinematic target for the next physics step.
+     */
+    public void clearPhysicsTransforms() {
+        if (physicsTransforms.isEmpty()) return;
+        physicsTransforms.clear();
+        requestFullUpdate();
+    }
+
+    /** Applies a complete set of physics-produced local bone transforms. */
+    public void applyPhysicsTransforms(Map<Bone, Transform> pose) {
+        physicsTransforms.clear();
+        pose.forEach((bone, value) -> {
+            if (skeleton.getBoneTransforms().containsKey(bone)) {
+                physicsTransforms.put(bone, value.copy());
+            }
+        });
+        requestFullUpdate();
     }
 
     private void applyGrant(Transform result, PmxBone pmx) {
@@ -359,7 +455,12 @@ public class SkeletonInstance {
     private void solveIk(Bone controller, PmxIKBone ik) {
         Bone effector = pmxBone(ik.boneIndex.intValue());
         if (effector == null || absoluteTransforms.get(controller) == null) return;
+        Vector3f authoredTarget = absoluteTransforms.get(controller).getPosition();
+        IkTarget override = frameIkTargets.getOrDefault(controller, ikTargets.get(controller));
+        Vector3f targetPosition = override == null ? authoredTarget
+                : authoredTarget.lerp(override.position, override.weight, new Vector3f());
         int iterations = Math.min(Math.max(ik.CCD_Count, 0), 256);
+        boolean corrected = false;
         for (int iteration = 0; iteration < iterations; iteration++) {
             boolean converged = false;
             for (PmxIKChain chain : ik.chains) {
@@ -368,7 +469,7 @@ public class SkeletonInstance {
                 Vector3f linkPosition = absoluteTransforms.get(link).getPosition();
                 Vector3f effectorDirection = absoluteTransforms.get(effector).getPosition()
                         .sub(linkPosition, new Vector3f());
-                Vector3f targetDirection = absoluteTransforms.get(controller).getPosition()
+                Vector3f targetDirection = new Vector3f(targetPosition)
                         .sub(linkPosition, new Vector3f());
                 if (effectorDirection.lengthSquared() < 1e-10f || targetDirection.lengthSquared() < 1e-10f) continue;
                 effectorDirection.normalize();
@@ -377,20 +478,66 @@ public class SkeletonInstance {
                 angle = Math.min(angle, Math.abs(ik.boneRotationLimit));
                 if (angle < 1e-6f) continue;
                 Vector3f axis = effectorDirection.cross(targetDirection, new Vector3f());
-                if (axis.lengthSquared() < 1e-10f) continue;
-                Quaternionf delta = new Quaternionf(new AxisAngle4f(angle, axis.normalize()));
+                if (axis.lengthSquared() < 1e-10f) {
+                    if (effectorDirection.dot(targetDirection) > 0f) continue;
+                    axis = Math.abs(effectorDirection.x) < 0.9f
+                            ? effectorDirection.cross(new Vector3f(1, 0, 0), axis)
+                            : effectorDirection.cross(new Vector3f(0, 1, 0), axis);
+                }
+                Quaternionf worldDelta = new Quaternionf(new AxisAngle4f(angle, axis.normalize()));
+                Quaternionf worldRotation = absoluteTransforms.get(link).getRotation();
+                Quaternionf delta = new Quaternionf(worldRotation).invert()
+                        .mul(worldDelta)
+                        .mul(worldRotation)
+                        .normalize();
                 Transform correction = ikTransforms.computeIfAbsent(link, ignored -> new Transform());
                 correction.mul(delta);
                 if (chain.useRotationLimit && chain.limit != null) clampIk(correction, chain.limit);
-                evaluateHierarchy();
+                corrected = true;
+                evaluateHierarchyFrom(link, effector);
                 if (absoluteTransforms.get(effector).getPosition()
-                        .distanceSquared(absoluteTransforms.get(controller).getPosition()) < 1e-8f) {
+                        .distanceSquared(targetPosition) < 1e-8f) {
                     converged = true;
                     break;
                 }
             }
             if (converged) break;
         }
+        // Refresh grant dependencies and other branches once per controller.
+        // Previously this full traversal happened after every chain correction.
+        if (corrected) evaluateHierarchy();
+    }
+
+    private void evaluateHierarchyFrom(Bone root, Bone requiredDescendant) {
+        if (!isAncestorOf(root, requiredDescendant)) {
+            evaluateHierarchy();
+            return;
+        }
+        Bone parent = root.getParent();
+        if (parent == null) {
+            evaluateHierarchy();
+            return;
+        }
+        Transform parentAbsolute = absoluteTransforms.get(parent);
+        if (parentAbsolute == null) {
+            evaluateHierarchy();
+            return;
+        }
+
+        updateQueue.clear();
+        Transform rootAbsolute = parentAbsolute.copy().mul(root.getTransform());
+        getMorphTransform(root, rootAbsolute);
+        rootAbsolute.mul(evaluatedLocalTransform(root));
+        absoluteTransforms.put(root, rootAbsolute);
+        updateQueue.add(Pair.of(root, rootAbsolute));
+        recursiveUpdate();
+    }
+
+    private static boolean isAncestorOf(Bone ancestor, Bone bone) {
+        for (Bone current = bone; current != null; current = current.getParent()) {
+            if (current == ancestor) return true;
+        }
+        return false;
     }
 
     private void clampIk(Transform correction, IKLimitation limit) {
@@ -403,13 +550,13 @@ public class SkeletonInstance {
     }
 
     private Bone pmxBone(int pmxIndex) {
-        if (pmxIndex < 0) return null;
-        int current = 0;
-        for (Bone bone : skeleton.getBones()) {
-            if (!(bone.getBoneData() instanceof PmxBone)) continue;
-            if (current++ == pmxIndex) return bone;
+        return pmxIndex >= 0 && pmxIndex < pmxBones.length ? pmxBones[pmxIndex] : null;
+    }
+
+    private record IkTarget(Vector3f position, float weight) {
+        private IkTarget {
+            position = new Vector3f(position);
         }
-        return null;
     }
 
     private void markDirty(Bone bone) {

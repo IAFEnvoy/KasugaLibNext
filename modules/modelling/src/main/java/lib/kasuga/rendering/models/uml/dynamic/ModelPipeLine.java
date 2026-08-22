@@ -106,6 +106,7 @@ public class ModelPipeLine<SourceOutputType, BackendInputType, StorageIdentifier
                 for (Backend<Bridge, BackendInputType, ?, ?> backend : backends.values()) {
                     backend.remove(instance);
                 }
+                instance.close();
             }
             staleInstances.clear();
         }
@@ -161,6 +162,26 @@ public class ModelPipeLine<SourceOutputType, BackendInputType, StorageIdentifier
             return false;
         }
         return instances.containsKey(instanceIdentifier);
+    }
+
+    /**
+     * Removes an instance from every backend and from this pipeline's instance
+     * registry, then closes its runtime state (animation and physics).
+     */
+    public boolean removeInstance(StorageIdentifierType modelName,
+                                  InstanceIdentifierType instanceIdentifier) {
+        Model model = models.get(modelName);
+        if (model == null) return false;
+        HashMap<InstanceIdentifierType, ModelInstance> instances = modelInstances.get(model);
+        if (instances == null) return false;
+        ModelInstance instance = instances.remove(instanceIdentifier);
+        if (instance == null) return false;
+        for (Backend<Bridge, BackendInputType, ?, ?> backend : backends.values()) {
+            backend.remove(instance);
+        }
+        instance.close();
+        if (instances.isEmpty()) modelInstances.remove(model);
+        return true;
     }
 
     public void addToRenderer(

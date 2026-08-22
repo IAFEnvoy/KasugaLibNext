@@ -199,7 +199,12 @@ public class Transform {
     }
 
     public Quaternionf getRotation() {
-        return transform.getNormalizedRotation(new Quaternionf());
+        // Matrix4f#getNormalizedRotation assumes that the 3x3 basis already
+        // has unit length. Model manifests and glTF roots commonly carry a
+        // scale, so using it here leaks that scale into the quaternion and a
+        // later translationRotate call applies an additional, pose-dependent
+        // scale. getUnnormalizedRotation removes basis scale first.
+        return transform.getUnnormalizedRotation(new Quaternionf()).normalize();
     }
 
     public DualQuaternion toDualQuaternion() {

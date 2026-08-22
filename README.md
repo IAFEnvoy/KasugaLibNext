@@ -30,7 +30,7 @@ The custom rendering surface includes owner-scoped world pipelines, managed effe
 post-processing graphs, reload-safe resource/generated shaders, the imperative Java Shader DSL,
 background shader preparation and schema-driven runtime parameters.
 
-See [EFFECT_RENDERING.md](EFFECT_RENDERING.md) for the API behavior, examples and the GLSL-to-Java
+See [doc/EFFECT_RENDERING.md](doc/EFFECT_RENDERING.md) for the API behavior, examples and the GLSL-to-Java
 Shader DSL guide.
 
 Run the focused release gate with:

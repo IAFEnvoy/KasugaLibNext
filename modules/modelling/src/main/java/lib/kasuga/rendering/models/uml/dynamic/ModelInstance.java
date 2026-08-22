@@ -2,6 +2,7 @@ package lib.kasuga.rendering.models.uml.dynamic;
 
 import lib.kasuga.rendering.models.uml.dynamic.morph.MorphInstance;
 import lib.kasuga.rendering.models.uml.dynamic.morph.MorphResult;
+import lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.basic.Mesh;
@@ -53,7 +54,18 @@ public class ModelInstance implements AutoCloseable {
     @Nullable
     private PoseDriver poseDriver;
 
+    @Nullable
+    private MmdRagdoll ragdoll;
+
+    /** Procedural animation/IK/physics hooks evaluated in insertion order. */
+    private final PoseEffectorPipeline poseEffectors = new PoseEffectorPipeline();
+
+    /** True when the physics runtime already sampled the pose for this render frame. */
+    private boolean frameSamplePrepared;
+
     private boolean shouldUpdate;
+    /** Last skeleton result consumed by {@link #update()}. */
+    private long flushedSkeletonVersion;
 
     public ModelInstance(Model model, @Nullable Transform initTransform,
                          @Nullable ModelInstanceData data,
@@ -67,6 +79,8 @@ public class ModelInstance implements AutoCloseable {
         this.skeletonInstance = new SkeletonInstance(this, model.getSkeleton(), initTransform, skeletonInstanceData);
         this.materialInstance = materialInstance;
         this.shouldUpdate = false;
+        this.flushedSkeletonVersion = skeletonInstance.getVersion();
+        this.frameSamplePrepared = false;
     }
 
     public SpriteSet getMaterialFrame(Material mat) {
@@ -84,8 +98,11 @@ public class ModelInstance implements AutoCloseable {
     }
 
     public boolean checkForUpdate() {
-        shouldUpdate = skeletonInstance.checkShouldUpdate() || morph.shouldUpdate() ||
-                (materialInstance != null && materialInstance.isDirty());
+        shouldUpdate = skeletonInstance.checkShouldUpdate()
+                || skeletonInstance.getVersion() != flushedSkeletonVersion
+                || morph.shouldUpdate() ||
+                (materialInstance != null && materialInstance.isDirty())
+                || !poseEffectors.isEmpty();
         return shouldUpdate;
     }
 
@@ -107,12 +124,63 @@ public class ModelInstance implements AutoCloseable {
         }
     }
 
+    /** Creates and enables the PMX/PMD ragdoll attached to this instance. */
+    public MmdRagdoll enablePhysics() {
+        if (ragdoll == null) ragdoll = new MmdRagdoll(this);
+        ragdoll.setEnabled(true);
+        return ragdoll;
+    }
+
+    /** Creates a primary-bone PMX/PMD or glTF ragdoll from an explicit asset registration. */
+    public MmdRagdoll enablePhysics(MmdRagdoll.Profile profile) {
+        if (ragdoll == null) ragdoll = new MmdRagdoll(this, profile);
+        else if (!java.util.Objects.equals(ragdoll.profile(), profile)) {
+            throw new IllegalStateException("physics is already enabled with a different profile");
+        }
+        ragdoll.setEnabled(true);
+        return ragdoll;
+    }
+
+    /** Disables physics and restores the current animation/IK pose. */
+    public void disablePhysics() {
+        if (ragdoll != null) ragdoll.setEnabled(false);
+    }
+
+    /** Advances physics without requiring an attached pose driver. */
+    public void simulatePhysics(float dt) {
+        if (ragdoll == null || !ragdoll.enabled()) return;
+        morph.update();
+        ragdoll.step(dt);
+    }
+
+    /**
+     * Unified render-frame entry for animated physical models. Animation is
+     * sampled before IK and Box3D consume it, then physics writes the final
+     * pose back to the skeleton. A later backend {@link #sample(float)} call
+     * consumes the prepared marker instead of sampling over that result.
+     */
+    public void evaluatePhysicsFrame(float partialTick, float deltaSeconds) {
+        if (ragdoll == null || !ragdoll.enabled()) return;
+        if (!Float.isFinite(partialTick)) {
+            throw new IllegalArgumentException("partialTick must be finite");
+        }
+        if (poseDriver != null) {
+            poseDriver.sample(partialTick);
+            frameSamplePrepared = true;
+        }
+        simulatePhysics(deltaSeconds);
+    }
+
     /**
      * Render-thread per-frame entry: forward to the attached {@link PoseDriver#sample(float)} so it can
      * interpolate + flush the pose at frame rate. The backend calls this each frame (with {@code partialTick})
      * before uploading to the GPU; {@link #update()} then flushes. No-op when no driver is attached.
      */
     public void sample(float partialTick) {
+        if (frameSamplePrepared) {
+            frameSamplePrepared = false;
+            return;
+        }
         if (poseDriver != null) {
             poseDriver.sample(partialTick);
         }
@@ -120,7 +188,19 @@ public class ModelInstance implements AutoCloseable {
 
     public void update() {
         morph.update();
-        skeletonInstance.updateTransform();
+        // A physics step evaluates the hierarchy itself and advances the
+        // skeleton version. Re-evaluating it here would solve PMX IK a second
+        // time and, more importantly, is not required before uploading that
+        // already-complete result.
+        boolean physicsOwnsPose = ragdoll != null && ragdoll.enabled();
+        if (!physicsOwnsPose && (skeletonInstance.checkShouldUpdate() || !poseEffectors.isEmpty())) {
+            skeletonInstance.clearFrameIkTargets();
+            poseEffectors.evaluate(this, null, PoseEffector.Stage.BEFORE_IK, 0f);
+            skeletonInstance.updateTransform();
+            poseEffectors.evaluate(this, null, PoseEffector.Stage.AFTER_IK, 0f);
+            poseEffectors.evaluate(this, null, PoseEffector.Stage.AFTER_PHYSICS, 0f);
+        }
+        flushedSkeletonVersion = skeletonInstance.getVersion();
         updateAllMaterials();
     }
 
@@ -190,5 +270,12 @@ public class ModelInstance implements AutoCloseable {
     }
 
     @Override
-    public void close() throws Exception {}
+    public void close() {
+        poseDriver = null;
+        poseEffectors.clear();
+        if (ragdoll != null) {
+            ragdoll.close();
+            ragdoll = null;
+        }
+    }
 }

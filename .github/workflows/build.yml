@@ -4,7 +4,11 @@ on: [push, pull_request]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,7 +28,59 @@ jobs:
       # This is needed to be able to run ./gradlew below
       # You can run `git update-index --chmod +x gradlew` then remove this step.
       - name: Make Gradle wrapper executable
+        if: runner.os != 'Windows'
         run: chmod +x ./gradlew
 
-      - name: Build with Gradle
+      - name: Build with Gradle (Unix)
+        if: runner.os != 'Windows'
         run: ./gradlew build renderingReleaseCheck
+
+      - name: Build with Gradle (Windows)
+        if: runner.os == 'Windows'
+        run: .\gradlew.bat build renderingReleaseCheck
+
+      - name: Upload Box3D native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: box3d-native-${{ runner.os }}-${{ runner.arch }}
+          path: modules/modelling/build/native/box3d/resources/native
+          if-no-files-found: error
+
+  package-universal:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Download all Box3D native libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: box3d-native-*
+          path: modules/modelling/build/box3d-universal/native
+          merge-multiple: true
+
+      - name: Build universal modelling jar
+        run: ./gradlew :modules:modelling:jar -PkasugaBox3DNativeResources=build/box3d-universal
+
+      - name: Upload universal modelling jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: kasuga-modelling-universal
+          path: modules/modelling/build/libs/kasuga-modelling-*.jar
+          if-no-files-found: error

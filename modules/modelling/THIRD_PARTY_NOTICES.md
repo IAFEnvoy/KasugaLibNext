@@ -1,0 +1,38 @@
+# Third-party notices
+
+## kmod reference implementation
+
+The primary-body profile, physical-ancestor topology lookup, and rigid
+helper-bone following are adapted from the project owner's kmod reference:
+
+- `src/main/kotlin/engine/physics/SimpleRagdoll.kt`
+- `src/test/kotlin/engine/physics/SimpleRagdollTest.kt`
+
+## Box3D
+
+The modelling module vendors and links the Box3D rigid-body engine at commit
+`30c67b5e6d0a3a66f0f506c69ce9e9e0587e3b7c`:
+
+- Upstream: https://github.com/erincatto/box3d
+- Vendored sources: `src/main/native/box3d`
+- Local JNI bridge: `src/main/native/kasuga_box3d_jni.c`
+
+Copyright (c) 2026 Erin Catto
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

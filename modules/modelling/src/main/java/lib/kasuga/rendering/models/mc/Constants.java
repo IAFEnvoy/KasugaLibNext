@@ -27,6 +27,7 @@ import lib.kasuga.rendering.models.mc.backend.data_type.KasugaShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaGlobalBatchShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.ui.UIBackend;
 import lib.kasuga.rendering.models.mc.compat.iris.IrisCompat;
+import lib.kasuga.rendering.models.mc.dynamic.physics.MinecraftRagdollConfig;
 import lib.kasuga.rendering.models.mc.registry.PipelineRegistry;
 import lib.kasuga.rendering.models.mc.source.model.*;
 import lib.kasuga.rendering.models.mc.source.texture.BufferedImageTextureSource;
@@ -51,12 +52,13 @@ import net.minecraft.server.packs.resources.ResourceProvider;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.ModLoader;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.RenderTypeGroup;
 import net.neoforged.neoforge.client.event.*;
+import org.slf4j.Logger;
+import com.mojang.logging.LogUtils;
 
 import java.io.IOException;
 import java.util.List;
@@ -73,6 +75,10 @@ public class Constants {
     public static UIBackend UI_BACKEND;
 
     public static ModelInstance currentInstance;
+    private static final Logger LOGGER = LogUtils.getLogger();
+    private static boolean missingTestMmdLogged;
+    private static final ResourceLocation TEST_MMD_PHYSICS = ResourceLocation.fromNamespaceAndPath(
+            KasugaLib.MODID, "ragdolls/tda_bunny_miku.json");
     private static final RenderPipelineScope CLIENT_RENDER_PIPELINES = RenderPipelineScope.create(
             ResourceLocation.fromNamespaceAndPath(KasugaLib.MODID, "client_render_lifetime")
     );
@@ -288,6 +294,10 @@ public class Constants {
                                     return workers;
                                 })))
                 .then(ShaderParameterCommands.command()));
+        event.getDispatcher().register(
+                lib.kasuga.rendering.models.mc.dynamic.physics.PhysicsCommands.physicsCommand());
+        event.getDispatcher().register(
+                lib.kasuga.rendering.models.mc.dynamic.physics.PhysicsCommands.ragdollCommand());
         event.getDispatcher().register(Commands.literal("kasuga_pbr")
                 .then(Commands.literal("status").executes(context -> {
                     Map<String, PbrBakeState> states = PbrBakeCoordinator.getInstance().states();
@@ -411,7 +421,7 @@ public class Constants {
         String name3 = "OL制服弱音散发.pmx";
         String name4 = "tda bunny miku 2.0.pmx";
         String name5 = "unfading_flowers_miku_black.pmx";
-        testMMD(fileName2, name5, "test_mmd");
+        testMMD(fileName3, name4, "test_mmd");
     }
 
     public static void testUI() {
@@ -433,15 +443,43 @@ public class Constants {
                 ResourceLocation.tryBuild("kasuga_lib", "models/pmx/" + fileName),
                 modelName
         );
-        if (rl == null) return;
+        if (rl == null) {
+            if (!missingTestMmdLogged) {
+                missingTestMmdLogged = true;
+                LOGGER.warn("Test MMD model '{}' was not registered from '{}'; check models/model_proxy.json",
+                        modelName, fileName);
+            }
+            return;
+        }
+        missingTestMmdLogged = false;
         ResourceLocation instanceLoc = ResourceLocation.tryBuild("kasuga_lib", instanceName);
         ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> mmd = PipelineRegistry.pmx();
         if (mmd.hasInstance(rl, instanceLoc)) {
+            attachTestMmdPhysics(mmd.getInstance(rl, instanceLoc));
             return;
         }
         Transform worldTransform = new Transform().translate(0, 0, 0);
-        currentInstance = mmd.createInstance(rl, instanceLoc, worldTransform, null, null);
+        ModelInstance instance = mmd.createInstance(rl, instanceLoc, worldTransform, null, null);
+        if (instance == null) return;
+        attachTestMmdPhysics(instance);
         mmd.addToRenderer(rl, instanceLoc, "mc_bridge", "mc_backend");
+    }
+
+    private static void attachTestMmdPhysics(ModelInstance instance) {
+        if (instance == null) return;
+        boolean physicsEnabled = Boolean.parseBoolean(
+                System.getProperty("kasuga.testModelPhysics", "true"));
+        if (currentInstance == instance) return;
+        currentInstance = instance;
+        if (!physicsEnabled) return;
+        try {
+            MinecraftRagdollConfig config = MinecraftRagdollConfig.load(
+                    Minecraft.getInstance().getResourceManager(), TEST_MMD_PHYSICS);
+            config.attach(instance, () -> Minecraft.getInstance().level,
+                    Boolean.parseBoolean(System.getProperty("kasuga.testModelPhysicsDrop", "true")));
+        } catch (IOException | RuntimeException exception) {
+            LOGGER.error("Failed to attach test ragdoll config {}", TEST_MMD_PHYSICS, exception);
+        }
     }
 
     public static void testObj() {
