@@ -53,8 +53,7 @@ class GltfLoaderTest {
 
     @Test
     void parsesAndConvertsKmodMaribelAndRenkoModelsWhenCheckoutIsPresent() throws Exception {
-        Path modelDirectory = Path.of(System.getProperty("user.home"), "kmod", "src", "main",
-                "resources", "assets", "models");
+        Path modelDirectory = kmodModelDirectory();
         Path maribel = modelDirectory.resolve("maribel.glb");
         Path renko = modelDirectory.resolve("renko.glb");
         assumeTrue(Files.isRegularFile(maribel) && Files.isRegularFile(renko));
@@ -71,14 +70,16 @@ class GltfLoaderTest {
 
     @Test
     void bundledMaribelAndRenkoManifestsCreateProfiledRagdolls() throws Exception {
+        Path modelDirectory = kmodModelDirectory();
+        assumeTrue(Files.isRegularFile(modelDirectory.resolve("maribel.glb"))
+                        && Files.isRegularFile(modelDirectory.resolve("renko.glb")),
+                "kmod checkout with maribel.glb/renko.glb not present; skipping");
         for (String name : new String[]{"maribel", "renko"}) {
-            String modelPath = "/assets/kasuga_lib/models/gltf/" + name + ".glb";
+            Path modelFile = modelDirectory.resolve(name + ".glb");
             String configPath = "/assets/kasuga_lib/ragdolls/" + name + ".json";
-            try (var modelStream = GltfLoaderTest.class.getResourceAsStream(modelPath);
-                 var configStream = GltfLoaderTest.class.getResourceAsStream(configPath)) {
-                assertNotNull(modelStream, modelPath);
+            try (var configStream = GltfLoaderTest.class.getResourceAsStream(configPath)) {
                 assertNotNull(configStream, configPath);
-                GltfAsset asset = GltfLoader.loadAllAnimations(modelStream);
+                GltfAsset asset = GltfLoader.loadAllAnimations(modelFile);
                 float modelScale = name.equals("renko") ? 10f : 1.3f;
                 Model model = GltfModelConverter.convert(asset, new org.joml.Vector3f(modelScale),
                         (index, texture) -> new lib.kasuga.rendering.models.uml.structure.material.Texture(
@@ -247,6 +248,12 @@ class GltfLoaderTest {
         }
     }
 
+    /** Large glb binaries live in the local kmod checkout, never in this repository. */
+    private static Path kmodModelDirectory() {
+        return Path.of(System.getProperty("user.home"), "kmod", "src", "main",
+                "resources", "assets", "models");
+    }
+
     private static float lowestCapsulePoint(
             lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll.Body body) {
         var size = body.shapeSize();
@@ -257,10 +264,13 @@ class GltfLoaderTest {
 
     @Test
     void bundledSkinsAgreeWithTheirNodeBindTransforms() throws Exception {
+        Path modelDirectory = kmodModelDirectory();
+        assumeTrue(Files.isRegularFile(modelDirectory.resolve("maribel.glb"))
+                        && Files.isRegularFile(modelDirectory.resolve("renko.glb")),
+                "kmod checkout with maribel.glb/renko.glb not present; skipping");
         for (String name : new String[]{"maribel", "renko"}) {
-            String modelPath = "/assets/kasuga_lib/models/gltf/" + name + ".glb";
-            try (var modelStream = GltfLoaderTest.class.getResourceAsStream(modelPath)) {
-                assertNotNull(modelStream, modelPath);
+            Path modelFile = modelDirectory.resolve(name + ".glb");
+            try (var modelStream = Files.newInputStream(modelFile)) {
                 GltfAsset asset = GltfLoader.load(modelStream);
                 for (GltfAsset.Primitive primitive : asset.primitives()) {
                     if (!primitive.skinned()) continue;

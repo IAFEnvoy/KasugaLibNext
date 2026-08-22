@@ -16,6 +16,13 @@ set(BOX3D_PROFILE OFF CACHE BOOL "" FORCE)
 set(BOX3D_VALIDATE OFF CACHE BOOL "" FORCE)
 set(BOX3D_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 
+# CMake 4.4's FindJNI passes backslash-joined Windows paths through macros, which
+# mangles them into invalid escapes unless CMP0219 is set to NEW. Guarded so
+# older local CMake versions without this policy keep working.
+if(POLICY CMP0219)
+    cmake_policy(SET CMP0219 NEW)
+endif()
+
 find_package(JNI REQUIRED)
 add_subdirectory(box3d)
 
