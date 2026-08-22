@@ -79,7 +79,8 @@ class GltfLoaderTest {
                 assertNotNull(modelStream, modelPath);
                 assertNotNull(configStream, configPath);
                 GltfAsset asset = GltfLoader.loadAllAnimations(modelStream);
-                Model model = GltfModelConverter.convert(asset, new org.joml.Vector3f(1.3f),
+                float modelScale = name.equals("renko") ? 10f : 1.3f;
+                Model model = GltfModelConverter.convert(asset, new org.joml.Vector3f(modelScale),
                         (index, texture) -> new lib.kasuga.rendering.models.uml.structure.material.Texture(
                                 texture.name(), texture.image().getWidth(), texture.image().getHeight(),
                                 new GltfModelData.GltfTextureData(texture.name(), texture.image())));
@@ -97,9 +98,24 @@ class GltfLoaderTest {
                 });
                 var ragdoll = instance.enablePhysics(config.profile());
                 try {
+                    ragdoll.setSubstepCount(config.simulation().substeps());
                     assertEquals(config.profile().bodies().size(), ragdoll.bodies().size());
                     assertEquals(ragdoll.bodies().size() - 1, ragdoll.joints().size());
                     assertTrue(ragdoll.bodies().stream().allMatch(body -> body.bone() != null));
+                    assertTrue(ragdoll.bodies().stream().allMatch(body -> body.source().linearDamping() == 0f
+                                    && body.source().angularDamping() == 0f),
+                            name + " profile bodies must preserve gravity-driven free fall");
+                    Map<Integer, Integer> configuredParents = new java.util.HashMap<>();
+                    config.profile().bodies().forEach(body ->
+                            configuredParents.put(body.rigidBodyIndex(), body.parentRigidBodyIndex()));
+                    for (var joint : ragdoll.joints()) {
+                        int child = ((lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll.Body)
+                                joint.bodyB()).source().boneIndex();
+                        int parent = ((lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll.Body)
+                                joint.bodyA()).source().boneIndex();
+                        assertEquals(configuredParents.get(child), parent,
+                                name + " must use the configured humanoid parent for body " + child);
+                    }
                     ragdoll.setGravity(new org.joml.Vector3f());
                     ragdoll.step(1f / 120f);
                     assertTrue(ragdoll.bodies().stream().allMatch(body -> body.position().isFinite()));
@@ -151,7 +167,7 @@ class GltfLoaderTest {
                     // not introduce another copy of the manifest's root scale.
                     ragdoll.reset();
                     float ground = ragdoll.bodies().stream()
-                            .map(body -> body.position().y - body.shapeSize().x)
+                            .map(GltfLoaderTest::lowestCapsulePoint)
                             .min(Float::compare).orElse(0f);
                     ragdoll.addGroundPlane(ground, 0.8f, 0f);
                     ragdoll.setGravity(new org.joml.Vector3f(0f, -9.80665f, 0f));
@@ -169,11 +185,74 @@ class GltfLoaderTest {
                                 name + " must preserve one copy of root scale on " + body.bone().getName()
                                         + ": expected=" + expectedScale + " actual=" + actualScale);
                     }
+
+                    // Reproduce the client-visible impact case instead of
+                    // starting already in contact with the plane. A complete
+                    // humanoid is dropped from height, then every body is
+                    // sampled through a late resting window so constraint or
+                    // contact feedback cannot hide behind one final frame.
+                    ragdoll.reset();
+                    for (var body : ragdoll.bodies()) {
+                        body.teleport(body.position().add(0f, 8f, 0f), body.rotation());
+                    }
+                    float maximumRestingLinearSpeed = 0f;
+                    float maximumRestingAngularSpeed = 0f;
+                    String maximumRestingLinearBody = "";
+                    String maximumRestingAngularBody = "";
+                    lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll.Body maximumRestingBody = null;
+                    for (int step = 0; step < 1440; step++) {
+                        ragdoll.step(1f / 120f);
+                        if (step < 1200) continue;
+                        for (var body : ragdoll.bodies()) {
+                            float linearSpeed = body.linearVelocity().length();
+                            if (linearSpeed > maximumRestingLinearSpeed) {
+                                maximumRestingLinearSpeed = linearSpeed;
+                                maximumRestingLinearBody = body.bone().getName();
+                                maximumRestingBody = body;
+                            }
+                            float angularSpeed = body.angularVelocity().length();
+                            if (angularSpeed > maximumRestingAngularSpeed) {
+                                maximumRestingAngularSpeed = angularSpeed;
+                                maximumRestingAngularBody = body.bone().getName();
+                            }
+                        }
+                    }
+                    assertTrue(maximumRestingLinearSpeed < 0.05f,
+                            name + " high-drop resting linear jitter=" + maximumRestingLinearSpeed
+                                    + " body=" + maximumRestingLinearBody
+                                    + " angular=" + maximumRestingAngularSpeed
+                                    + " angularBody=" + maximumRestingAngularBody
+                                    + " shape=" + (maximumRestingBody == null ? "n/a" : maximumRestingBody.shapeSize())
+                                    + " mass=" + (maximumRestingBody == null ? "n/a" : maximumRestingBody.source().mass()));
+                    assertTrue(maximumRestingAngularSpeed < 0.1f,
+                            name + " high-drop resting angular jitter=" + maximumRestingAngularSpeed
+                                    + " body=" + maximumRestingAngularBody);
+                    var worstAngularJoint = ragdoll.joints().stream()
+                            .filter(joint -> joint.rotationLimiter() != null
+                                    && joint.rotationLimiter().stiffness() >= 0.8f)
+                            .max(java.util.Comparator.comparingDouble(
+                                    lib.kasuga.rendering.models.uml.dynamic.physics.core.BallJoint::angularLimitViolation))
+                            .orElseThrow();
+                    float maximumAngularViolation = worstAngularJoint.angularLimitViolation();
+                    assertTrue(maximumAngularViolation <= Math.toRadians(3.0),
+                            name + " angular joint limit drift=" + Math.toDegrees(maximumAngularViolation)
+                                    + " parent=" + ((lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll.Body)
+                                    worstAngularJoint.bodyA()).bone().getName()
+                                    + " child=" + ((lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll.Body)
+                                    worstAngularJoint.bodyB()).bone().getName());
                 } finally {
                     instance.close();
                 }
             }
         }
+    }
+
+    private static float lowestCapsulePoint(
+            lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll.Body body) {
+        var size = body.shapeSize();
+        var halfAxis = body.rotation().transform(
+                new org.joml.Vector3f(0f, 0.5f * size.y, 0f));
+        return body.position().y - Math.abs(halfAxis.y) - size.x;
     }
 
     @Test

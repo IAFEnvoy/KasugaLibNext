@@ -171,12 +171,13 @@ JNIEXPORT jlong JNICALL JNI_METHOD(createBody)(JNIEnv* env, jclass type, jint pa
 }
 
 static b3ShapeDef shape_def(jfloat density, jfloat friction, jfloat restitution,
-                            jlong categoryBits, jlong maskBits, jint groupIndex)
+                            jfloat rollingResistance, jlong categoryBits, jlong maskBits, jint groupIndex)
 {
     b3ShapeDef shapeDef = b3DefaultShapeDef();
     shapeDef.density = density;
     shapeDef.baseMaterial.friction = friction;
     shapeDef.baseMaterial.restitution = restitution;
+    shapeDef.baseMaterial.rollingResistance = rollingResistance;
     shapeDef.filter.categoryBits = (uint64_t)categoryBits;
     shapeDef.filter.maskBits = (uint64_t)maskBits;
     shapeDef.filter.groupIndex = groupIndex;
@@ -186,11 +187,13 @@ static b3ShapeDef shape_def(jfloat density, jfloat friction, jfloat restitution,
 JNIEXPORT jlong JNICALL JNI_METHOD(addSphereShape)(JNIEnv* env, jclass type, jlong packedBody,
                                                     jfloat cx, jfloat cy, jfloat cz, jfloat radius,
                                                     jfloat density, jfloat friction, jfloat restitution,
+                                                    jfloat rollingResistance,
                                                     jlong categoryBits, jlong maskBits, jint groupIndex)
 {
     (void)env;
     (void)type;
-    b3ShapeDef def = shape_def(density, friction, restitution, categoryBits, maskBits, groupIndex);
+    b3ShapeDef def = shape_def(density, friction, restitution, rollingResistance,
+                              categoryBits, maskBits, groupIndex);
     b3Sphere sphere = {.center = {cx, cy, cz}, .radius = radius};
     return (jlong)b3StoreShapeId(b3CreateSphereShape(body_id(packedBody), &def, &sphere));
 }
@@ -200,11 +203,13 @@ JNIEXPORT jlong JNICALL JNI_METHOD(addBoxShape)(JNIEnv* env, jclass type, jlong 
                                                  jfloat qx, jfloat qy, jfloat qz, jfloat qw,
                                                  jfloat hx, jfloat hy, jfloat hz,
                                                  jfloat density, jfloat friction, jfloat restitution,
+                                                 jfloat rollingResistance,
                                                  jlong categoryBits, jlong maskBits, jint groupIndex)
 {
     (void)env;
     (void)type;
-    b3ShapeDef def = shape_def(density, friction, restitution, categoryBits, maskBits, groupIndex);
+    b3ShapeDef def = shape_def(density, friction, restitution, rollingResistance,
+                              categoryBits, maskBits, groupIndex);
     b3Transform transform = {.p = vec3(cx, cy, cz), .q = quat(qx, qy, qz, qw)};
     b3BoxHull box = b3MakeTransformedBoxHull(hx, hy, hz, transform);
     return (jlong)b3StoreShapeId(b3CreateHullShape(body_id(packedBody), &def, &box.base));
@@ -214,13 +219,108 @@ JNIEXPORT jlong JNICALL JNI_METHOD(addCapsuleShape)(JNIEnv* env, jclass type, jl
                                                      jfloat ax, jfloat ay, jfloat az,
                                                      jfloat bx, jfloat by, jfloat bz, jfloat radius,
                                                      jfloat density, jfloat friction, jfloat restitution,
+                                                     jfloat rollingResistance,
                                                      jlong categoryBits, jlong maskBits, jint groupIndex)
 {
     (void)env;
     (void)type;
-    b3ShapeDef def = shape_def(density, friction, restitution, categoryBits, maskBits, groupIndex);
+    b3ShapeDef def = shape_def(density, friction, restitution, rollingResistance,
+                              categoryBits, maskBits, groupIndex);
     b3Capsule capsule = {.center1 = {ax, ay, az}, .center2 = {bx, by, bz}, .radius = radius};
     return (jlong)b3StoreShapeId(b3CreateCapsuleShape(body_id(packedBody), &def, &capsule));
+}
+
+JNIEXPORT jlongArray JNICALL JNI_METHOD(createStaticMesh)(JNIEnv* env, jclass type, jint packedWorld,
+                                                           jfloatArray packedVertices, jintArray packedIndices,
+                                                           jfloat friction, jfloat restitution)
+{
+    (void)type;
+    jsize floatCount = (*env)->GetArrayLength(env, packedVertices);
+    jsize indexCount = (*env)->GetArrayLength(env, packedIndices);
+    if (floatCount < 9 || floatCount % 3 != 0 || indexCount < 3 || indexCount % 3 != 0)
+    {
+        jclass exception = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
+        (*env)->ThrowNew(env, exception, "terrain mesh requires xyz vertices and triangle indices");
+        return NULL;
+    }
+
+    jfloat* sourceVertices = (*env)->GetFloatArrayElements(env, packedVertices, NULL);
+    jint* sourceIndices = (*env)->GetIntArrayElements(env, packedIndices, NULL);
+    if (sourceVertices == NULL || sourceIndices == NULL)
+    {
+        if (sourceVertices != NULL) (*env)->ReleaseFloatArrayElements(env, packedVertices, sourceVertices, JNI_ABORT);
+        if (sourceIndices != NULL) (*env)->ReleaseIntArrayElements(env, packedIndices, sourceIndices, JNI_ABORT);
+        return NULL;
+    }
+
+    int vertexCount = floatCount / 3;
+    int triangleCount = indexCount / 3;
+    b3Vec3* vertices = malloc((size_t)vertexCount * sizeof(b3Vec3));
+    int32_t* indices = malloc((size_t)indexCount * sizeof(int32_t));
+    if (vertices == NULL || indices == NULL)
+    {
+        free(vertices);
+        free(indices);
+        (*env)->ReleaseFloatArrayElements(env, packedVertices, sourceVertices, JNI_ABORT);
+        (*env)->ReleaseIntArrayElements(env, packedIndices, sourceIndices, JNI_ABORT);
+        jclass exception = (*env)->FindClass(env, "java/lang/OutOfMemoryError");
+        (*env)->ThrowNew(env, exception, "unable to allocate terrain mesh input");
+        return NULL;
+    }
+    for (int index = 0; index < vertexCount; ++index)
+    {
+        vertices[index] = vec3(sourceVertices[3 * index], sourceVertices[3 * index + 1], sourceVertices[3 * index + 2]);
+    }
+    for (int index = 0; index < indexCount; ++index) indices[index] = (int32_t)sourceIndices[index];
+    (*env)->ReleaseFloatArrayElements(env, packedVertices, sourceVertices, JNI_ABORT);
+    (*env)->ReleaseIntArrayElements(env, packedIndices, sourceIndices, JNI_ABORT);
+
+    b3MeshDef meshDef = {0};
+    meshDef.vertices = vertices;
+    meshDef.indices = indices;
+    meshDef.vertexCount = vertexCount;
+    meshDef.triangleCount = triangleCount;
+    meshDef.weldVertices = true;
+    meshDef.weldTolerance = 0.0001f;
+    meshDef.useMedianSplit = true;
+    meshDef.identifyEdges = true;
+    b3MeshData* mesh = b3CreateMesh(&meshDef, NULL, 0);
+    free(vertices);
+    free(indices);
+    if (mesh == NULL) return NULL;
+
+    b3BodyDef bodyDef = b3DefaultBodyDef();
+    bodyDef.type = b3_staticBody;
+    b3BodyId body = b3CreateBody(world_id(packedWorld), &bodyDef);
+    b3ShapeDef shapeDef = shape_def(0.0f, friction, restitution, 0.0f, INT64_MIN, -1, 0);
+    b3ShapeId shape = b3CreateMeshShape(body, &shapeDef, mesh, b3Vec3_one);
+    if (shape.index1 == 0)
+    {
+        b3DestroyBody(body);
+        b3DestroyMesh(mesh);
+        return NULL;
+    }
+
+    jlong values[2] = {(jlong)b3StoreBodyId(body), (jlong)(intptr_t)mesh};
+    jlongArray result = (*env)->NewLongArray(env, 2);
+    if (result == NULL)
+    {
+        b3DestroyBody(body);
+        b3DestroyMesh(mesh);
+        return NULL;
+    }
+    (*env)->SetLongArrayRegion(env, result, 0, 2, values);
+    return result;
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(destroyStaticMesh)(JNIEnv* env, jclass type,
+                                                       jlong packedBody, jlong meshPointer)
+{
+    (void)env;
+    (void)type;
+    b3BodyId body = body_id(packedBody);
+    if (b3Body_IsValid(body)) b3DestroyBody(body);
+    if (meshPointer != 0) b3DestroyMesh((b3MeshData*)(intptr_t)meshPointer);
 }
 
 JNIEXPORT void JNICALL JNI_METHOD(finalizeBodyMass)(JNIEnv* env, jclass type, jlong packedBody, jfloat mass)
@@ -608,6 +708,26 @@ JNIEXPORT void JNICALL JNI_METHOD(destroyJoint)(JNIEnv* env, jclass type, jlong 
     {
         b3DestroyJoint(id, true);
     }
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(configureSphericalJointDynamics)(JNIEnv* env, jclass type,
+                                                                    jlong packed, jfloat springHertz,
+                                                                    jfloat springDampingRatio,
+                                                                    jfloat maximumTorque)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id))
+    {
+        return;
+    }
+    b3SphericalJoint_SetSpringHertz(id, fmaxf(0.0f, springHertz));
+    b3SphericalJoint_SetSpringDampingRatio(id, fmaxf(0.0f, springDampingRatio));
+    b3SphericalJoint_EnableSpring(id, springHertz > 0.0f);
+    b3SphericalJoint_SetMotorVelocity(id, b3Vec3_zero);
+    b3SphericalJoint_SetMaxMotorTorque(id, fmaxf(0.0f, maximumTorque));
+    b3SphericalJoint_EnableMotor(id, maximumTorque > 0.0f);
 }
 
 JNIEXPORT jlong JNICALL JNI_METHOD(createFilterJoint)(JNIEnv* env, jclass type, jint packedWorld,

@@ -10,7 +10,7 @@ public final class AnimationInstance implements Animator {
     }
 
     @Override
-    public void animate(PendingTransform transform, float deltaTime) {
+    public void animate(PendingTransform[] transforms, float deltaTime) {
 
     }
 }

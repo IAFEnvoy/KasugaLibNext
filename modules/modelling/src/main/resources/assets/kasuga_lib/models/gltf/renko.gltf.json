@@ -1,4 +1,4 @@
 {
-  "model_scale": 1,
+  "model_scale": 10,
   "ragdoll": "kasuga_lib:ragdolls/renko.json"
 }

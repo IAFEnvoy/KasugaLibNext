@@ -59,7 +59,7 @@ class NativeBox3DTest {
         NativeBox3D.addBoxShape(body, 0f, 0f, 0f,
                 0f, 0f, 0f, 1f, sx, sy, sz,
                 type == NativeBox3D.DYNAMIC_BODY ? 1f : 0f,
-                0.5f, 0f, -1L, -1L, 0);
+                0.5f, 0f, 0f, -1L, -1L, 0);
         NativeBox3D.finalizeBodyMass(body, mass);
         return body;
     }

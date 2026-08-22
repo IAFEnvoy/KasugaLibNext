@@ -6,6 +6,7 @@ import lib.kasuga.rendering.models.uml.dynamic.tick_loop.PendingTransform;
 import lib.kasuga.rendering.models.uml.dynamic.tick_loop.TransformLimitation;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.Model;
+import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 
 public class SkeletonApplyModule implements ModelTickLoopModule {
 
@@ -16,10 +17,16 @@ public class SkeletonApplyModule implements ModelTickLoopModule {
     }
 
     @Override
-    public void tick(Model model, PendingTransform transform, ModelTickLoop loop, float deltaTime) {
-        Transform t = transform.process(new Transform(), limitation);
+    public void tick(Model model, PendingTransform[] transforms, ModelTickLoop loop, float deltaTime) {
         ModelInstance instance = loop.getInstance();
-        instance.getSkeletonInstance().mulTransformRoot(t);
+        instance.getSkeletonInstance().transformRoot(
+                transforms[0].process(new Transform(), limitation));
+
+        Bone[] bones = model.getSkeleton().getBones();
+        for (int i = 0; i < bones.length; i++) {
+            Transform transform = transforms[i + 1].process(new Transform(), limitation);
+            instance.getSkeletonInstance().transform(bones[i], transform);
+        }
         instance.getSkeletonInstance().tick();
     }
 

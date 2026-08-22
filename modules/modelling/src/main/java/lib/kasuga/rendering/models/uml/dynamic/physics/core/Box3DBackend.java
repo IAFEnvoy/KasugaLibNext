@@ -5,17 +5,20 @@ import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Native Box3D ownership and state synchronization for {@link RigidBodyWorld}. */
 final class Box3DBackend implements AutoCloseable {
     private static final AtomicInteger NEXT_COLLISION_GROUP = new AtomicInteger(-1);
     private static final float STATE_EPSILON = 1e-10f;
+    // Box3D's maintained ragdoll sample uses 2 Hz/0.7 on mesh terrain,
+    // 5 N*m joint friction and 0.2 rolling resistance on the body capsules.
+    private static final float RAGDOLL_ALIGNMENT_HERTZ = 2f;
+    private static final float RAGDOLL_ALIGNMENT_DAMPING_RATIO = 0.7f;
+    private static final float RAGDOLL_JOINT_FRICTION_TORQUE = 5f;
     private static final float PLANE_HALF_THICKNESS = 500f;
     private static final float PLANE_HALF_EXTENT = 4096f;
 
@@ -41,6 +44,8 @@ final class Box3DBackend implements AutoCloseable {
         }
     }
 
+    private record EnvironmentMeshHandle(long revision, long bodyId, long meshPointer) {}
+
     private final int worldId;
     private final int disabledSelfCollisionGroup = NEXT_COLLISION_GROUP.getAndDecrement();
     private final Map<SimBody, BodyHandle> bodies = new IdentityHashMap<>();
@@ -49,7 +54,8 @@ final class Box3DBackend implements AutoCloseable {
     private final Map<PlaneCollider, Long> planes = new IdentityHashMap<>();
     private final Map<StaticBoxCollider, Long> staticBoxes = new IdentityHashMap<>();
     private final List<StaticEnvironmentMesh> environmentMeshes = new ArrayList<>();
-    private final Map<StaticBoxCollider, Long> environmentBoxes = new IdentityHashMap<>();
+    private final Map<StaticEnvironmentMesh, EnvironmentMeshHandle> environmentMeshHandles
+            = new IdentityHashMap<>();
     private final float[] state = new float[13];
     private final float[] rayHit = new float[7];
     private long dragAnchor;
@@ -96,7 +102,7 @@ final class Box3DBackend implements AutoCloseable {
         long activeMask = collisionsEnabled ? maskBits : 0L;
         int groupIndex = selfCollisionsEnabled ? 0 : disabledSelfCollisionGroup;
         for (BodyShape shape : shapes) {
-            addShape(id, shape, density, body.friction(), body.restitution(),
+            addShape(id, shape, density, body.friction(), body.restitution(), body.rollingResistance(),
                     categoryBits, activeMask, groupIndex);
         }
         NativeBox3D.finalizeBodyMass(id, mass);
@@ -106,13 +112,13 @@ final class Box3DBackend implements AutoCloseable {
     }
 
     private static void addShape(long bodyId, BodyShape shape, float density,
-                                 float friction, float restitution,
+                                 float friction, float restitution, float rollingResistance,
                                  long categoryBits, long maskBits, int groupIndex) {
         long shapeId;
         if (shape instanceof BodyShape.Sphere sphere) {
             Vector3f center = sphere.center();
             shapeId = NativeBox3D.addSphereShape(bodyId, center.x, center.y, center.z,
-                    sphere.radius(), density, friction, restitution,
+                    sphere.radius(), density, friction, restitution, rollingResistance,
                     categoryBits, maskBits, groupIndex);
         } else if (shape instanceof BodyShape.Box box) {
             Vector3f center = box.center();
@@ -121,14 +127,15 @@ final class Box3DBackend implements AutoCloseable {
             shapeId = NativeBox3D.addBoxShape(bodyId,
                     center.x, center.y, center.z,
                     rotation.x, rotation.y, rotation.z, rotation.w,
-                    half.x, half.y, half.z, density, friction, restitution,
+                    half.x, half.y, half.z, density, friction, restitution, rollingResistance,
                     categoryBits, maskBits, groupIndex);
         } else if (shape instanceof BodyShape.Capsule capsule) {
             Vector3f a = capsule.centerA();
             Vector3f b = capsule.centerB();
             shapeId = NativeBox3D.addCapsuleShape(bodyId,
                     a.x, a.y, a.z, b.x, b.y, b.z, capsule.radius(),
-                    density, friction, restitution, categoryBits, maskBits, groupIndex);
+                    density, friction, restitution, rollingResistance,
+                    categoryBits, maskBits, groupIndex);
         } else {
             throw new IllegalArgumentException("unsupported Box3D shape: " + shape.getClass().getName());
         }
@@ -179,6 +186,15 @@ final class Box3DBackend implements AutoCloseable {
                 constraintHertz, constraintDampingRatio,
                 coneAngle, lowerTwist, upperTwist, false);
         if (id == 0L) throw new IllegalStateException("Box3D failed to create a spherical joint");
+        if (limiter != null && limiter.stiffness() > 0f
+                && joint.bodyA().profiledRagdollBody()
+                && joint.bodyB().profiledRagdollBody()) {
+            NativeBox3D.configureSphericalJointDynamics(id,
+                    joint.bodyB().ragdollAlignmentSpring()
+                            ? RAGDOLL_ALIGNMENT_HERTZ : 0f,
+                    RAGDOLL_ALIGNMENT_DAMPING_RATIO,
+                    RAGDOLL_JOINT_FRICTION_TORQUE * limiter.stiffness());
+        }
         joints.put(joint, id);
     }
 
@@ -509,17 +525,35 @@ final class Box3DBackend implements AutoCloseable {
     }
 
     private void syncEnvironmentMeshes() {
-        Set<StaticBoxCollider> desired = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (StaticEnvironmentMesh mesh : environmentMeshes) {
-            for (StaticEnvironmentMesh.ColliderCell cell : mesh.colliderCells()) desired.addAll(cell.solids);
-        }
-        environmentBoxes.entrySet().removeIf(entry -> {
-            if (desired.contains(entry.getKey())) return false;
-            NativeBox3D.destroyBody(entry.getValue());
+        environmentMeshHandles.entrySet().removeIf(entry -> {
+            if (environmentMeshes.contains(entry.getKey())) return false;
+            destroyEnvironmentMesh(entry.getValue());
             return true;
         });
-        for (StaticBoxCollider box : desired) {
-            environmentBoxes.computeIfAbsent(box, this::createStaticBox);
+        for (StaticEnvironmentMesh mesh : environmentMeshes) {
+            EnvironmentMeshHandle current = environmentMeshHandles.get(mesh);
+            if (current != null && current.revision == mesh.revision()) continue;
+            if (current != null) destroyEnvironmentMesh(current);
+            StaticEnvironmentMesh.TerrainGeometry geometry = mesh.geometry();
+            if (geometry.indices().length == 0) {
+                environmentMeshHandles.put(mesh,
+                        new EnvironmentMeshHandle(mesh.revision(), 0L, 0L));
+                continue;
+            }
+            long[] nativeMesh = NativeBox3D.createStaticMesh(worldId,
+                    geometry.vertices(), geometry.indices(), mesh.friction(), mesh.restitution());
+            if (nativeMesh == null || nativeMesh.length != 2
+                    || nativeMesh[0] == 0L || nativeMesh[1] == 0L) {
+                throw new IllegalStateException("Box3D failed to create the terrain mesh");
+            }
+            environmentMeshHandles.put(mesh,
+                    new EnvironmentMeshHandle(mesh.revision(), nativeMesh[0], nativeMesh[1]));
+        }
+    }
+
+    private static void destroyEnvironmentMesh(EnvironmentMeshHandle handle) {
+        if (handle.bodyId != 0L || handle.meshPointer != 0L) {
+            NativeBox3D.destroyStaticMesh(handle.bodyId, handle.meshPointer);
         }
     }
 
@@ -537,7 +571,7 @@ final class Box3DBackend implements AutoCloseable {
                 center.x, center.y, center.z, rotation.x, rotation.y, rotation.z, rotation.w,
                 0f, 0f, 0f, 0f, 0f, 0f,
                 0f, 0f, false);
-        addShape(id, new BodyShape.Box(halfExtents), 0f, friction, restitution,
+        addShape(id, new BodyShape.Box(halfExtents), 0f, friction, restitution, 0f,
                 Long.MIN_VALUE, -1L, 0);
         return id;
     }
@@ -572,6 +606,10 @@ final class Box3DBackend implements AutoCloseable {
         if (closed) return;
         closed = true;
         endDrag();
+        for (EnvironmentMeshHandle handle : environmentMeshHandles.values()) {
+            destroyEnvironmentMesh(handle);
+        }
+        environmentMeshHandles.clear();
         NativeBox3D.destroyWorld(worldId);
         bodies.clear();
         bodiesByNativeId.clear();
@@ -579,6 +617,5 @@ final class Box3DBackend implements AutoCloseable {
         planes.clear();
         staticBoxes.clear();
         environmentMeshes.clear();
-        environmentBoxes.clear();
     }
 }

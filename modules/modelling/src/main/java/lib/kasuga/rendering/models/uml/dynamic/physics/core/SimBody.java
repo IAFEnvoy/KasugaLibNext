@@ -43,6 +43,15 @@ public interface SimBody {
 
     float restitution();
 
+    /** Rolling resistance for sphere/capsule contacts. Boxes ignore this value. */
+    default float rollingResistance() { return 0f; }
+
+    /** Enables the maintained Box3D humanoid-ragdoll contact/joint tuning. */
+    default boolean profiledRagdollBody() { return false; }
+
+    /** Generated humanoid profiles additionally align their inferred joint frames. */
+    default boolean ragdollAlignmentSpring() { return false; }
+
     /** Collision group index (0-15) used with the non-collision mask. */
     int collisionGroup();
 

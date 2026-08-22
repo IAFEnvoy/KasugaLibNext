@@ -100,7 +100,7 @@ public final class MmdRagdoll implements AutoCloseable {
             bodyDefinitions = data.tail().rigidBodies();
             jointDefinitions = data.tail().joints();
         } else if (instance.getModel().getModelData() instanceof GltfModelData data && profile != null) {
-            this.modelScale = new Vector3f(1f);
+            this.modelScale = data.modelScale();
             this.pmxBoneOffset = 0;
             this.indexedBones = data.boneByNode();
             Set<Bone> skinBones = new HashSet<>();
@@ -772,7 +772,7 @@ public final class MmdRagdoll implements AutoCloseable {
                 : Frames.relative(Frames.poseOf(skeleton.getAbsoluteTransforms().get(bone)), pose);
         return new Body(source, bone, pose, boneToBody,
                 source.mode() == 2 ? BoneWriteback.ROTATION_ONLY : BoneWriteback.FULL_POSE,
-                new Vector3f(source.size()).mul(modelScale));
+                new Vector3f(source.size()).mul(modelScale), false);
     }
 
     private record RegisteredPhysics(List<Body> bodies, List<Joint> joints,
@@ -843,8 +843,12 @@ public final class MmdRagdoll implements AutoCloseable {
             }
             Vector3f center = new Vector3f(start).add(end).mul(0.5f);
             Quaternionf rotation = new Quaternionf().rotationTo(new Vector3f(0f, 1f, 0f), axis);
-            float radius = Math.min(profileRadius(registration.role),
-                    Math.max(0.026f, length * 0.32f));
+            // PMX bone positions have already been converted into world units
+            // before the skeleton is built. glTF keeps its import scale as
+            // model metadata, so only that path still needs the radius scaled.
+            float profileScale = indexedBones == null ? 1f : uniformScale(modelScale);
+            float radius = Math.min(profileRadius(registration.role) * profileScale,
+                    Math.max(0.026f * profileScale, length * 0.32f));
             float mass = profileMass(registration.role, length, radius);
 
             // Primary humanoid bodies are generated from the actual skeleton
@@ -854,11 +858,12 @@ public final class MmdRagdoll implements AutoCloseable {
                     authored.localName(), authored.universalName(), authored.boneIndex(),
                     authored.collisionGroup(), authored.nonCollisionMask(), 2,
                     authored.size(), authored.position(), authored.rotation(),
-                    mass, 0f, 0f, authored.restitution(), authored.friction(), 1);
+                    mass, 0f, 0f,
+                    authored.restitution(), authored.friction(), 1);
             Frames.Pose bodyPose = new Frames.Pose(center, rotation);
             Body body = new Body(dynamic, bone, bodyPose,
                     Frames.relative(bonePose, bodyPose), BoneWriteback.FULL_POSE,
-                    new Vector3f(radius, length, 0f));
+                    new Vector3f(radius, length, 0f), true, true);
             registeredBodies.add(body);
             bodyByDefinition.put(registration.rigidBodyIndex, body);
             registrationByBody.put(body, registration);
@@ -980,6 +985,10 @@ public final class MmdRagdoll implements AutoCloseable {
             case HAND -> 0.048f;
             case NECK -> 0.052f;
         };
+    }
+
+    private static float uniformScale(Vector3f scale) {
+        return (float)Math.cbrt(Math.abs((double)scale.x * scale.y * scale.z));
     }
 
     private static float profileMass(BodyRole role, float length, float radius) {
@@ -1182,13 +1191,21 @@ public final class MmdRagdoll implements AutoCloseable {
         private final Frames.Pose boneToBody;
         private final BoneWriteback writeback;
         private final Vector3f shapeSize;
+        private final boolean profiledRagdollBody;
+        private final boolean ragdollAlignmentSpring;
         private Runnable wake = () -> {};
         private final float inverseLinearMass;
         private final Vector3f linearVelocity = new Vector3f();
         private final Vector3f angularVelocity = new Vector3f();
 
         private Body(PmxRigidBody source, Bone bone, Frames.Pose pose, Frames.Pose boneToBody,
-                     BoneWriteback writeback, Vector3f shapeSize) {
+                     BoneWriteback writeback, Vector3f shapeSize, boolean profiledRagdollBody) {
+            this(source, bone, pose, boneToBody, writeback, shapeSize, profiledRagdollBody, false);
+        }
+
+        private Body(PmxRigidBody source, Bone bone, Frames.Pose pose, Frames.Pose boneToBody,
+                     BoneWriteback writeback, Vector3f shapeSize, boolean profiledRagdollBody,
+                     boolean ragdollAlignmentSpring) {
             this.source = source;
             this.bone = bone;
             this.pose = pose;
@@ -1197,6 +1214,8 @@ public final class MmdRagdoll implements AutoCloseable {
             this.boneToBody = boneToBody;
             this.writeback = writeback;
             this.shapeSize = shapeSize;
+            this.profiledRagdollBody = profiledRagdollBody;
+            this.ragdollAlignmentSpring = ragdollAlignmentSpring;
             float mass = source.mass();
             float inverseMass = mass > 1e-7f ? 1f / mass : 0f;
             this.inverseLinearMass = source.mode() == 0 ? 0f : inverseMass;
@@ -1243,6 +1262,9 @@ public final class MmdRagdoll implements AutoCloseable {
         @Override public Vector3f shapeSizeRef() { return shapeSize; }
         @Override public float friction() { return source.friction(); }
         @Override public float restitution() { return source.restitution(); }
+        @Override public float rollingResistance() { return profiledRagdollBody ? 0.2f : 0f; }
+        @Override public boolean profiledRagdollBody() { return profiledRagdollBody; }
+        @Override public boolean ragdollAlignmentSpring() { return ragdollAlignmentSpring; }
         @Override public int collisionGroup() { return source.collisionGroup(); }
         @Override public int nonCollisionMask() { return source.nonCollisionMask(); }
         @Override public boolean kinematic() { return source.mode() == 0; }

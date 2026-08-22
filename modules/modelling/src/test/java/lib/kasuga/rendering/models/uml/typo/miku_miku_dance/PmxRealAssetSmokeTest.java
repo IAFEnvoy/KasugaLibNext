@@ -102,6 +102,9 @@ class PmxRealAssetSmokeTest {
                 "the primary ragdoll must start in a no-self-collision group");
         assertTrue(ragdoll.bodies().stream().allMatch(body -> body.source().shape() == 2),
                 "profile bodies must use generated bone capsules, not PMX skirt/hair shapes");
+        assertTrue(ragdoll.bodies().stream().allMatch(body -> body.source().linearDamping() == 0f
+                        && body.source().angularDamping() == 0f),
+                "primary profile bodies must not slow free fall with global damping");
         ragdoll.setGravity(new Vector3f());
         ragdoll.setCollisionsEnabled(false);
         ragdoll.setSolverIterations(16);
@@ -205,12 +208,28 @@ class PmxRealAssetSmokeTest {
                 }
             }
         }
-        float maximumAnchorError = ragdoll.joints().stream()
-                .map(MmdRagdoll.Joint::relativePosition)
-                .map(Vector3f::length)
-                .max(Float::compareTo).orElse(0f);
-        assertTrue(maximumAnchorError < 0.002f,
-                "ground collision joint anchor error=" + maximumAnchorError);
+        MmdRagdoll.Joint worstAnchorJoint = ragdoll.joints().stream()
+                .max(Comparator.comparingDouble(joint -> joint.relativePosition().length()))
+                .orElse(null);
+        float maximumAnchorError = worstAnchorJoint == null
+                ? 0f : worstAnchorJoint.relativePosition().length();
+        // Box3D's maintained ragdoll tuning deliberately uses compliant
+        // constraints. Keep the native anchors within 5 mm while the stricter
+        // bone-length assertion below still guards visible mesh stretching.
+        assertTrue(maximumAnchorError < 0.005f,
+                "ground collision joint anchor error=" + maximumAnchorError
+                        + (worstAnchorJoint == null ? "" : " joint="
+                        + ((MmdRagdoll.Body) worstAnchorJoint.bodyA()).source().localName()
+                        + "->" + ((MmdRagdoll.Body) worstAnchorJoint.bodyB()).source().localName()));
+        MmdRagdoll.Joint worstAngularJoint = ragdoll.joints().stream()
+                .filter(joint -> joint.rotationLimiter() != null)
+                .max(Comparator.comparingDouble(MmdRagdoll.Joint::angularLimitViolation))
+                .orElseThrow();
+        float maximumAngularViolation = worstAngularJoint.angularLimitViolation();
+        assertTrue(maximumAngularViolation <= Math.toRadians(3.0),
+                "ground collision angular joint limit drift=" + Math.toDegrees(maximumAngularViolation)
+                        + " parent=" + ((MmdRagdoll.Body) worstAngularJoint.bodyA()).source().localName()
+                        + " child=" + ((MmdRagdoll.Body) worstAngularJoint.bodyB()).source().localName());
         assertTrue(maximumRestingLinearSpeed < 0.05f,
                 "resting tiled-ground linear jitter=" + maximumRestingLinearSpeed
                         + " body=" + maximumRestingLinearBody
@@ -237,7 +256,9 @@ class PmxRealAssetSmokeTest {
 
     private static void assertBoneLengths(ModelInstance instance, Map<Bone, Float> bindLengths,
                                           String scenario) {
+        float maximumExcess = Float.NEGATIVE_INFINITY;
         float maximumError = 0f;
+        float worstTolerance = 0f;
         String worstBone = "";
         String worstParent = "";
         float worstBindLength = 0f;
@@ -247,18 +268,25 @@ class PmxRealAssetSmokeTest {
             float length = instance.getSkeletonInstance().getAbsoluteTransforms().get(bone).getPosition()
                     .distance(instance.getSkeletonInstance().getAbsoluteTransforms().get(bone.getParent()).getPosition());
             float error = Math.abs(length - entry.getValue());
-            if (error > maximumError) {
+            // Colocated PMX helper bones have no meaningful segment length;
+            // allow the same compliant-anchor tolerance used above. Actual
+            // non-zero skeleton segments retain the stricter 2 mm budget.
+            float tolerance = entry.getValue() <= 1e-5f ? 0.005f : 0.002f;
+            float excess = error - tolerance;
+            if (excess > maximumExcess) {
+                maximumExcess = excess;
                 maximumError = error;
+                worstTolerance = tolerance;
                 worstBone = bone.getName();
                 worstParent = bone.getParent().getName();
                 worstBindLength = entry.getValue();
                 worstCurrentLength = length;
             }
         }
-        assertTrue(maximumError < 0.002f,
+        assertTrue(maximumExcess < 0f,
                 scenario + " PMX bone length error=" + maximumError + " at " + worstBone
                         + " parent=" + worstParent + " bind=" + worstBindLength
-                        + " current=" + worstCurrentLength);
+                        + " current=" + worstCurrentLength + " tolerance=" + worstTolerance);
     }
 
     private static Bounds skinnedBounds(ProbeLoader loader, ModelInstance instance, Vector3f modelScale) {

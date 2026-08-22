@@ -115,19 +115,27 @@ public final class NativeBox3D {
                                          boolean bullet);
     public static native long addSphereShape(long bodyId,
                                              float centerX, float centerY, float centerZ, float radius,
-                                             float density, float friction, float restitution,
+                                             float density, float friction, float restitution, float rollingResistance,
                                              long categoryBits, long maskBits, int groupIndex);
     public static native long addBoxShape(long bodyId,
                                           float centerX, float centerY, float centerZ,
                                           float rotationX, float rotationY, float rotationZ, float rotationW,
                                           float halfX, float halfY, float halfZ,
-                                          float density, float friction, float restitution,
+                                          float density, float friction, float restitution, float rollingResistance,
                                           long categoryBits, long maskBits, int groupIndex);
     public static native long addCapsuleShape(long bodyId,
                                               float centerAx, float centerAy, float centerAz,
                                               float centerBx, float centerBy, float centerBz, float radius,
-                                              float density, float friction, float restitution,
+                                              float density, float friction, float restitution, float rollingResistance,
                                               long categoryBits, long maskBits, int groupIndex);
+    /**
+     * Creates one static body backed by a retained Box3D triangle mesh.
+     * Returns {@code [bodyId, meshPointer]}; both values must be passed to
+     * {@link #destroyStaticMesh(long, long)} in that order.
+     */
+    public static native long[] createStaticMesh(int worldId, float[] vertices, int[] indices,
+                                                  float friction, float restitution);
+    public static native void destroyStaticMesh(long bodyId, long meshPointer);
     /** Recomputes inertia from every shape and scales it to the requested total mass. */
     public static native void finalizeBodyMass(long bodyId, float mass);
     public static native void destroyBody(long bodyId);
@@ -175,6 +183,10 @@ public final class NativeBox3D {
                                                    float constraintHertz, float dampingRatio,
                                                    float coneAngle, float lowerTwistAngle, float upperTwistAngle,
                                                    boolean collideConnected);
+    public static native void configureSphericalJointDynamics(long jointId,
+                                                               float springHertz,
+                                                               float springDampingRatio,
+                                                               float maximumMotorTorque);
     public static native void destroyJoint(long jointId);
     public static native long createFilterJoint(int worldId, long bodyA, long bodyB);
 

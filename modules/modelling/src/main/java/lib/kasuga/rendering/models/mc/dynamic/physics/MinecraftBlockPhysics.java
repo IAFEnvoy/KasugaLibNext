@@ -45,6 +45,7 @@ import java.util.Optional;
 public final class MinecraftBlockPhysics {
     /** Upper bound on simultaneously simulated physics blocks. */
     public static final int MAX_PROPS = 256;
+    private static final float PLAYER_PROXY_MASS = 4f;
 
     private static final ArrayDeque<MinecraftBlockRigidBody> PROPS = new ArrayDeque<>();
     private static RigidBodyWorld world;
@@ -52,6 +53,7 @@ public final class MinecraftBlockPhysics {
     private static ClientLevel boundLevel;
     private static GenericRigidBody playerCollider;
     private static final Vector3f playerHalfExtents = new Vector3f();
+    private static final Vector3f playerInputCenter = new Vector3f();
 
     private static final RigidBodyWorld.KinematicDriver ENTITY_DRIVER = new RigidBodyWorld.KinematicDriver() {
         @Override public void beginStep(RigidBodyWorld simulatedWorld) {}
@@ -168,9 +170,12 @@ public final class MinecraftBlockPhysics {
     }
 
     /**
-     * Mirrors the local player's current AABB into Box3D as a kinematic body.
-     * Dynamic blocks therefore collide with a moving player using the same
-     * native contact solver used for terrain and other blocks.
+     * Mirrors the local player's current AABB into Box3D as a light, zero-
+     * gravity dynamic proxy. A kinematic proxy has infinite inertia and simply
+     * punches a prop downward every time vanilla gravity moves the player's
+     * feet into it. The finite proxy lets the contact solver move the player
+     * back onto the supporting face while transferring only a small response
+     * to the block.
      */
     private static synchronized void syncPlayerCollider(LocalPlayer player) {
         if (world == null || player == null || PROPS.isEmpty()) {
@@ -180,18 +185,24 @@ public final class MinecraftBlockPhysics {
         AABB bounds = player.getBoundingBox();
         Vector3f half = new Vector3f((float)(bounds.getXsize() * 0.5),
                 (float)(bounds.getYsize() * 0.5), (float)(bounds.getZsize() * 0.5));
+        Frames.Pose pose = playerPose(player);
         if (playerCollider == null || !half.equals(playerHalfExtents, 1e-4f)) {
             removePlayerCollider();
             playerHalfExtents.set(half);
-            Frames.Pose pose = playerPose(player);
-            playerCollider = GenericRigidBody.kinematic(
-                            lib.kasuga.rendering.models.uml.dynamic.physics.core.SimBody.SHAPE_BOX, half)
+            playerCollider = GenericRigidBody.box(half, PLAYER_PROXY_MASS)
                     .at(pose.position)
                     .friction(0.65f)
+                    .damping(8f, 8f)
                     .filter(15, 0);
             playerCollider.wireWake(world::wake);
             world.add(playerCollider);
+            world.setGravityScale(playerCollider, 0f);
+        } else {
+            // Reset the proxy to vanilla's authoritative AABB before this
+            // frame. Its solved displacement is contact response only.
+            playerCollider.teleport(pose.position, pose.rotation);
         }
+        playerInputCenter.set(pose.position);
     }
 
     private static Frames.Pose playerPose(LocalPlayer player) {
@@ -206,6 +217,7 @@ public final class MinecraftBlockPhysics {
         if (playerCollider != null && world != null) world.remove(playerCollider);
         playerCollider = null;
         playerHalfExtents.zero();
+        playerInputCenter.zero();
     }
 
     /** Applies native penetration and impact information back to the local Minecraft player. */
@@ -215,7 +227,12 @@ public final class MinecraftBlockPhysics {
                 .filter(contact -> contact.other().isPresent() && PROPS.stream()
                         .anyMatch(prop -> prop.body() == contact.other().get()))
                 .toList();
-        Vector3f correction = penetrationCorrection(contacts);
+        if (contacts.isEmpty()) return;
+        Vector3f correction = new Vector3f(playerCollider.positionRef()).sub(playerInputCenter);
+        Vector3f residual = penetrationCorrection(contacts);
+        if (residual.lengthSquared() > correction.lengthSquared()) correction.set(residual);
+        float correctionLength = correction.length();
+        if (correctionLength > 0.15f) correction.mul(0.15f / correctionLength);
         if (correction.lengthSquared() > 0f) {
             player.setPos(player.getX() + correction.x,
                     player.getY() + correction.y, player.getZ() + correction.z);

@@ -143,7 +143,7 @@ public final class GltfModelConverter {
         MaterialSet materialSet = new MaterialSet(textures, materialCache.values());
         return new Model(allVertices.toArray(Vertex[]::new), allMeshes.toArray(Mesh[]::new),
                 bones, skeleton, materialSet, MeshMode.TRIANGLES,
-                new GltfModelData(asset, boneByNode), null);
+                new GltfModelData(asset, boneByNode, modelScale), null);
     }
 
     private static Material createMaterial(GltfAsset.Material definition, List<Texture> textures) {

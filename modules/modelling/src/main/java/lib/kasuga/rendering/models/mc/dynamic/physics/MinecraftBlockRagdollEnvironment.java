@@ -32,9 +32,10 @@ import java.util.function.Supplier;
  * Incremental Minecraft terrain adapter for {@link MmdRagdoll}.
  *
  * <p>Every block position is a cached mesh cell. Moving the ragdoll only adds
- * cells entering the broad phase and removes cells leaving it. Retained cells
- * keep their collider objects; a bounded background diff checks block/fluid
- * and fluid states and replaces only cells whose state changed. Explicit invalidation is
+ * cells entering the broad phase and removes cells leaving it. The retained
+ * voxel shapes are compiled into one native triangle mesh whenever the cache
+ * revision changes; a bounded background diff checks block/fluid state and
+ * replaces only cells whose state changed. Explicit invalidation is
  * available for block-update hooks and also refreshes neighbors whose voxel
  * shape may depend on the changed block.</p>
  */

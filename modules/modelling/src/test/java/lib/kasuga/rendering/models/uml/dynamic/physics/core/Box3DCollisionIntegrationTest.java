@@ -62,6 +62,26 @@ class Box3DCollisionIntegrationTest {
     }
 
     @Test
+    void adjacentTerrainCellsCompileToOneSeamlessMesh() {
+        GenericRigidBody sphere = GenericRigidBody.sphere(0.35f, 1f).at(1f, 3f, 0.5f);
+        try (RigidBodyWorld world = new RigidBodyWorld(List.of(sphere), List.of(), 4)) {
+            StaticEnvironmentMesh mesh = world.addEnvironmentMesh(0.8f, 0f);
+            mesh.putCell(1L, new EnvironmentCell(List.of(
+                    new EnvironmentBox(new Vector3f(0f, 0f, 0f), new Vector3f(1f, 1f, 1f)))));
+            mesh.putCell(2L, new EnvironmentCell(List.of(
+                    new EnvironmentBox(new Vector3f(1f, 0f, 0f), new Vector3f(2f, 1f, 1f)))));
+
+            assertEquals(60, mesh.geometry().indices().length,
+                    "the two opposing internal faces must be removed");
+            step(world, 300);
+
+            assertEquals(1.35f, sphere.position().y, 0.04f);
+            assertEquals(1f, sphere.position().x, 0.04f,
+                    "a body resting on the cell boundary must not receive a lateral seam impulse");
+        }
+    }
+
+    @Test
     void compoundBodyUsesEveryOffsetChildShape() {
         GenericRigidBody compound = GenericRigidBody.compound(List.of(
                 new BodyShape.Box(new Vector3f(-0.75f, 0f, 0f), new Vector3f(0.25f)),
