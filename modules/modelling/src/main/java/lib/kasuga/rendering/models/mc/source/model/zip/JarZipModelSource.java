@@ -8,6 +8,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
+import org.joml.Vector3f;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -35,6 +36,7 @@ public class JarZipModelSource extends ZipModelSource<ResourceLocation> {
         );
         Optional<Resource> metaResource = manager.getResource(metaLocation);
         Charset charset = StandardCharsets.UTF_8;
+        Vector3f modelScale = new Vector3f(ZipMeta.DEFAULT_MODEL_SCALE);
         if (metaResource.isPresent()) {
             Resource meta = metaResource.get();
             try {
@@ -42,11 +44,12 @@ public class JarZipModelSource extends ZipModelSource<ResourceLocation> {
                 if (json.isJsonObject()) {
                     ZipMeta metaData = new ZipMeta(json.getAsJsonObject());
                     charset = metaData.getCharset();
+                    modelScale = metaData.getModelScale();
                 }
             } catch (Exception ignored) {}
         }
         try {
-            return Optional.ofNullable(ZipHelper.fromResource(location, resource, charset));
+            return Optional.ofNullable(ZipHelper.fromResource(location, resource, charset, modelScale));
         } catch (Exception e) {
             return Optional.empty();
         }

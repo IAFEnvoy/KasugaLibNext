@@ -14,8 +14,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Client-side rendering façade over the four global model pipelines ({@code .mmd.zip} → MMD,
- * {@code .obj} → OBJ, {@code .geo.json} → Bedrock, {@code .json} → Java Edition). Instances are
+ * Client-side rendering façade over the global model pipelines ({@code .mmd.zip} → MMD,
+ * {@code .glb/.gltf} → glTF, {@code .obj} → OBJ, {@code .geo.json} → Bedrock,
+ * {@code .json} → Java Edition). Instances are
  * attached to the global {@code mc_backend} and cleaned up on resource reload ({@code publishModels}).
  *
  * <p>Server-safe: methods are no-ops when the client pipelines are not initialized; {@code unbind}

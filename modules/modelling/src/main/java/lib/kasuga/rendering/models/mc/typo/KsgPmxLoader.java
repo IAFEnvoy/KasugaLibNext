@@ -14,6 +14,7 @@ import lib.kasuga.rendering.models.mc.source.texture.bake.PbrBakeProfile;
 import lib.kasuga.rendering.models.mc.typo.pmx_entry.KsgPmxContext;
 import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipHelper;
 import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipResource;
+import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipMeta;
 import lib.kasuga.rendering.models.uml.loaders.MaterialSetBuilder;
 import lib.kasuga.rendering.models.uml.loaders.SpriteSetBuilder;
 import lib.kasuga.rendering.models.uml.loaders.serial.ContextData;
@@ -72,8 +73,6 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
 
     private final HashMap<ZipResource, Texture> loadedTextureMap;
     private final Map<PbrTextureVariantKey, Texture> loadedPbrTextureVariants;
-
-    public final Vector3f modelScale = new Vector3f(1.0f / 12.0f);
 
     public final MCTexture MISSING, MISSING_TRANSPARENCY;
 
@@ -295,11 +294,11 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
             throw new IllegalArgumentException("Vertex collection cannot be empty");
         }
         if (first.binding.type == PmxBoneBinding.BindingType.SDEF && first.binding.data != null) {
-            first.binding.data.c().mul(modelScale);
-            first.binding.data.r0().mul(modelScale);
-            first.binding.data.r1().mul(modelScale);
+            first.binding.data.c().mul(activeModelScale());
+            first.binding.data.r0().mul(activeModelScale());
+            first.binding.data.r1().mul(activeModelScale());
         }
-        Vector3f position = new Vector3f(first.position).mul(modelScale);
+        Vector3f position = new Vector3f(first.position).mul(activeModelScale());
         return new Vertex(position, first);
     }
 
@@ -315,15 +314,15 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
 
     @Override
     public void scaleBone(PmxBone bone) {
-        bone.position.mul(modelScale);
+        bone.position.mul(activeModelScale());
         if (bone.tailObject instanceof Vector3f v) {
-            v.mul(modelScale);
+            v.mul(activeModelScale());
         }
     }
 
     @Override
     protected Vector3f scaleMmdTranslation(Vector3f value) {
-        return value.mul(modelScale);
+        return value.mul(activeModelScale());
     }
 
     @Override
@@ -333,7 +332,13 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
 
     @Override
     public @Nullable ModelData getModelData(PmxHeader header, PmxTail tail) {
-        return new MmdModelData(header, tail);
+        return new MmdModelData(header, tail, activeModelScale(), getBones().size());
+    }
+
+    private Vector3f activeModelScale() {
+        return loadingFile == null
+                ? new Vector3f(ZipMeta.DEFAULT_MODEL_SCALE)
+                : loadingFile.getModelScale();
     }
 
     @Override
@@ -440,7 +445,8 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
                 result.putAll(loadedModels);
                 LOGGER.info("Loaded MMD model '{}' from {} as {} ({} model entries, {} textures)",
                         model.name(), s, rl, loadedModels.size(), loadedTextures.size());
-                this.loadedModelMap.computeIfAbsent(s, k -> new HashMap<>()).put(model.name(), rl);
+                this.loadedModelMap.computeIfAbsent(s, k -> new HashMap<>())
+                        .put(model.name().toLowerCase(Locale.ROOT), rl);
                 loadedTextures.clear();
             }
             return result;

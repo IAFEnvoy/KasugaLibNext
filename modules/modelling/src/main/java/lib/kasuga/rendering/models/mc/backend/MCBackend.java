@@ -31,6 +31,9 @@ import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.Objects;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 import java.util.Vector;
 import java.util.concurrent.ExecutorService;
 
@@ -43,6 +46,7 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
     private float t = 0;
     private final GlobalModelBatcher globalBatcher = new GlobalModelBatcher();
+    private final Set<ModelInstance> sampledThisFrame = Collections.newSetFromMap(new IdentityHashMap<>());
 
     public MCBackend() {
         executor = newFixedThreadPool(Runtime.getRuntime().availableProcessors());
@@ -53,9 +57,13 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         PoseStack poseStack = context.getPoseStack();
         poseStack.pushPose();
 
-        // Drive any attached pose driver (e.g. FSM) at frame rate before the GPU upload in drawBuffer. No-op for
-        // static models (no driver) — the shared render path is unaffected.
-        renderable.getModelInstance().sample(context.getPartialTickFraction());
+        // Animation is sampled once per rendered frame. Configured ragdoll
+        // physics is advanced by MinecraftRagdollRuntime independently of
+        // render visibility; tying it to this method froze culled instances.
+        ModelInstance model = renderable.getModelInstance();
+        if (sampledThisFrame.add(model)) {
+            model.sample(context.getPartialTickFraction());
+        }
 
         BackendTransform transform = renderable.beforeRender(context);
         LightData lightData;
@@ -88,15 +96,20 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
     @Override
     public void renderAllObjects(MCBackendContext context) {
-        if (BackendInstance.isIrisEnabled() || RenderState.GLOBAL_BATCH_RENDER_TYPE == null) {
-            super.renderAllObjects(context);
-            return;
-        }
-        globalBatcher.begin(context.getModelViewMatrix(), context.getProjectionMatrix());
+        sampledThisFrame.clear();
         try {
-            super.renderAllObjects(context);
+            if (BackendInstance.isIrisEnabled() || RenderState.GLOBAL_BATCH_RENDER_TYPE == null) {
+                super.renderAllObjects(context);
+                return;
+            }
+            globalBatcher.begin(context.getModelViewMatrix(), context.getProjectionMatrix());
+            try {
+                super.renderAllObjects(context);
+            } finally {
+                globalBatcher.flush();
+            }
         } finally {
-            globalBatcher.flush();
+            sampledThisFrame.clear();
         }
     }
 
