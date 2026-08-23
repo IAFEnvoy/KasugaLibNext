@@ -30,7 +30,7 @@ public final class FsmDefinitions {
 
     /** Where a definition came from — drives reload / overwrite semantics. */
     public enum DefinitionSource {
-        /** Loaded from resource packs by {@link StateMachineDefinitionLoader}. */
+        /** Loaded from resource packs by {@link lib.kasuga.rendering.models.mc.dynamic.fsm.StateMachineDefinitionLoader StateMachineDefinitionLoader}. */
         RESOURCE,
         /** Registered at runtime (scripting APIs). */
         SCRIPT

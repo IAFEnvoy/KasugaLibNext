@@ -202,7 +202,8 @@ class ShaderDslTest {
     private static String resource(String path) throws IOException {
         try (var stream = ShaderDslTest.class.getClassLoader().getResourceAsStream(path)) {
             if (stream == null) throw new IOException("Missing test resource: " + path);
-            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            // Golden files are stored with LF endings; normalise CRLF checkouts (Windows CI) before comparing.
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8).replace("\r\n", "\n");
         }
     }
 
