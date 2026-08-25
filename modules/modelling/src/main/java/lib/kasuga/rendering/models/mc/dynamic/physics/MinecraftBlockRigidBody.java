@@ -26,6 +26,13 @@ public final class MinecraftBlockRigidBody {
     /** Half extent of the oriented box representing one full block. */
     public static final float HALF_EXTENT = 0.5f;
 
+    /**
+     * Dedicated collision group so hosts can separate "props" from default
+     * group-0 geometry (static terrain). The player proxy opts out of group 0
+     * while keeping prop contacts.
+     */
+    public static final int COLLISION_GROUP = 1;
+
     private static final Vector3f BLOCK_BOX = new Vector3f(HALF_EXTENT, HALF_EXTENT, HALF_EXTENT);
 
     private final BlockState state;
@@ -37,7 +44,8 @@ public final class MinecraftBlockRigidBody {
         this.body = GenericRigidBody.compound(collisionShapes, mass)
                 .at((float) center.x, (float) center.y, (float) center.z)
                 .friction(blockFriction(state))
-                .restitution(0.05f);
+                .restitution(0.05f)
+                .filter(COLLISION_GROUP, 0);
     }
 
     /** Creates a falling/tumbling physics block at the supplied world-space center. */

@@ -1,11 +1,11 @@
 package lib.kasuga.rendering.models.mc.backend;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.data_type.MCRenderableContext;
+import lib.kasuga.rendering.models.mc.backend.schedule.ModelRenderScheduler;
 import lib.kasuga.rendering.models.mc.compat.iris.IrisCompat;
 import lib.kasuga.rendering.models.mc.util.RotHelper;
 import lib.kasuga.rendering.models.uml.backend.Backend;
@@ -14,12 +14,14 @@ import lib.kasuga.rendering.models.uml.bridge.Bridge;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.SkeletonInstance;
 import lib.kasuga.rendering.models.uml.math.QuaternionHelper;
+import lib.kasuga.rendering.models.uml.structure.basic.Vertex;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import lombok.Getter;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.ShaderInstance;
 import net.minecraft.client.renderer.block.model.BakedQuad;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
@@ -27,9 +29,11 @@ import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -47,6 +51,11 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
     private float t = 0;
     private final GlobalModelBatcher globalBatcher = new GlobalModelBatcher();
     private final Set<ModelInstance> sampledThisFrame = Collections.newSetFromMap(new IdentityHashMap<>());
+    /** Static bounding radius per instance, computed on first frustum test. */
+    private final Map<ModelInstance, Float> boundsCache = new IdentityHashMap<>();
+    // Reused scratch for the per-frame visibility box (render thread only).
+    private final Vector3f visibleBoundsScratchMin = new Vector3f();
+    private final Vector3f visibleBoundsScratchMax = new Vector3f();
 
     public MCBackend() {
         executor = newFixedThreadPool(Runtime.getRuntime().availableProcessors());
@@ -54,18 +63,23 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
     @Override
     public void render(BackendContext<MCBridge, BackendInstance, MCBackendContext, BackendTransform> renderable, MCBackendContext context) {
+        // Scheduling gate, mirroring vanilla's "renderer not called" semantics:
+        // schedule mode → view distance → frustum. Culled instances neither
+        // sample animation nor touch GPU buffers this frame.
+        ModelInstance model = renderable.getModelInstance();
+        BackendTransform transform = renderable.beforeRender(context);
+        if (!passesSchedule(model, transform, context)) return;
+
         PoseStack poseStack = context.getPoseStack();
         poseStack.pushPose();
 
         // Animation is sampled once per rendered frame. Configured ragdoll
         // physics is advanced by MinecraftRagdollRuntime independently of
         // render visibility; tying it to this method froze culled instances.
-        ModelInstance model = renderable.getModelInstance();
         if (sampledThisFrame.add(model)) {
             model.sample(context.getPartialTickFraction());
         }
 
-        BackendTransform transform = renderable.beforeRender(context);
         LightData lightData;
         int overlay;
         float emissive;
@@ -94,9 +108,97 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         poseStack.popPose();
     }
 
+    /**
+     * Per-frame visibility decision for one instance: scheduler mode first
+     * (ALWAYS / MANUAL / VANILLA_RENDERER marks), then view distance, then
+     * frustum. The bounds are taken from the LIVE evaluated skeleton — bone
+     * absolutes include root, IK and physics writeback — because a ragdoll's
+     * rendered geometry wanders far from its root transform; testing against
+     * static bind-pose bounds culled on-screen ragdolls (they flickered
+     * invisible whenever physics dragged the pose outside the authored box).
+     */
+    private boolean passesSchedule(ModelInstance model,
+                                   @Nullable BackendTransform transform,
+                                   MCBackendContext context) {
+        if (!ModelRenderScheduler.shouldRender(model)) return false;
+
+        Vector3f position = transform == null ? null : transform.getPosition();
+        if (position == null && !hasEvaluatedBones(model)) return true;
+
+        visibleBoundsScratchMin.set(Float.MAX_VALUE);
+        visibleBoundsScratchMax.set(-Float.MAX_VALUE);
+        boolean live = scanEvaluatedBounds(model,
+                visibleBoundsScratchMin, visibleBoundsScratchMax);
+        if (!live) {
+            // Skeleton never evaluated yet: conservative static box at the root.
+            if (position == null) return true;
+            float radius = boundsRadius(model);
+            visibleBoundsScratchMin.set(position.x - radius, position.y - radius, position.z - radius);
+            visibleBoundsScratchMax.set(position.x + radius, position.y + radius, position.z + radius);
+        }
+
+        double centerX = (visibleBoundsScratchMin.x + visibleBoundsScratchMax.x) * 0.5;
+        double centerY = (visibleBoundsScratchMin.y + visibleBoundsScratchMax.y) * 0.5;
+        double centerZ = (visibleBoundsScratchMin.z + visibleBoundsScratchMax.z) * 0.5;
+
+        Vec3 camera = context.getCamera() != null ? context.getCamera().getPosition() : null;
+        if (camera != null && !ModelRenderScheduler.withinRenderDistance(model,
+                (float) camera.distanceToSqr(centerX, centerY, centerZ))) {
+            return false;
+        }
+
+        Frustum frustum = context.getFrustum();
+        if (frustum == null) return true;
+        float margin = boundsRadius(model);
+        return frustum.isVisible(new AABB(
+                visibleBoundsScratchMin.x - margin, visibleBoundsScratchMin.y - margin,
+                visibleBoundsScratchMin.z - margin,
+                visibleBoundsScratchMax.x + margin, visibleBoundsScratchMax.y + margin,
+                visibleBoundsScratchMax.z + margin));
+    }
+
+    private static boolean hasEvaluatedBones(ModelInstance model) {
+        return !model.getSkeletonInstance().getAbsoluteTransforms().isEmpty();
+    }
+
+    /**
+     * Scans every evaluated bone's world position into {@code min}/{@code max}.
+     * Returns false when nothing has been evaluated yet. Package-private so
+     * the extent math stays unit-testable without Minecraft types.
+     */
+    static boolean scanEvaluatedBounds(ModelInstance model, Vector3f min, Vector3f max) {
+        var absolute = model.getSkeletonInstance().getAbsoluteTransforms();
+        if (absolute.isEmpty()) return false;
+        for (lib.kasuga.rendering.models.uml.math.Transform transform : absolute.values()) {
+            Matrix4f m = transform.transform();
+            float x = m.m30(), y = m.m31(), z = m.m32();
+            min.set(Math.min(min.x, x), Math.min(min.y, y), Math.min(min.z, z));
+            max.set(Math.max(max.x, x), Math.max(max.y, y), Math.max(max.z, z));
+        }
+        return true;
+    }
+
+    /** Static bounding radius of the authored vertex cloud — used as growth margin. */
+    private float boundsRadius(ModelInstance model) {
+        return boundsCache.computeIfAbsent(model, ignored -> {
+            Vector3f minimum = new Vector3f(Float.MAX_VALUE);
+            Vector3f maximum = new Vector3f(-Float.MAX_VALUE);
+            for (Vertex vertex : model.getModel().getVertices()) {
+                Vector3f p = vertex.getPosition();
+                minimum.min(p);
+                maximum.max(p);
+            }
+            Vector3f half = maximum.sub(minimum, new Vector3f()).mul(0.5f).absolute();
+            return half.length();
+        });
+    }
+
     @Override
     public void renderAllObjects(MCBackendContext context) {
         sampledThisFrame.clear();
+        // Vanilla entities/block entities rendered earlier in this frame have
+        // deposited their decisions; flip them in before evaluating schedules.
+        ModelRenderScheduler.flipFrame();
         try {
             if (BackendInstance.isIrisEnabled() || RenderState.GLOBAL_BATCH_RENDER_TYPE == null) {
                 super.renderAllObjects(context);
@@ -113,21 +215,20 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         }
     }
 
-    private boolean isVisible(MCBackendContext context, @Nullable BackendTransform transform, KsgVertexBuffer buffer) {
-        if (context.getFrustum() == null || !buffer.hasBounds()) {
-            return true;
+    @Override
+    public boolean remove(Object key) {
+        boolean removed = super.remove(key);
+        if (removed && key instanceof ModelInstance model) {
+            boundsCache.remove(model);
+            ModelRenderScheduler.detach(model);
         }
-        if (transform != null && (transform.getRotation() != null || transform.getScale() != null)) {
-            return true;
-        }
-        Vector3f position = transform == null ? null : transform.getPosition();
-        AABB bounds = buffer.getBounds(position);
-        return context.getFrustum().isVisible(bounds);
+        return removed;
     }
 
     @Override
     public void close() throws Exception {
         globalBatcher.close();
+        boundsCache.clear();
         executor.shutdown();
     }
 

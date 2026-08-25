@@ -190,6 +190,72 @@ public final class NativeBox3D {
     public static native void destroyJoint(long jointId);
     public static native long createFilterJoint(int worldId, long bodyA, long bodyB);
 
+    // ------------------------------------------------------------------
+    // Rigid/limited/motored joint types: weld, distance, revolute, prismatic
+    // ------------------------------------------------------------------
+
+    /** Weld: rigidly locks two bodies with configurable softness (0 hertz = rigid). */
+    public static native long createWeldJoint(int worldId, long bodyA, long bodyB,
+                                              float localAx, float localAy, float localAz,
+                                              float localAqx, float localAqy, float localAqz, float localAqw,
+                                              float localBx, float localBy, float localBz,
+                                              float localBqx, float localBqy, float localBqz, float localBqw,
+                                              float linearHertz, float angularHertz,
+                                              float linearDampingRatio, float angularDampingRatio,
+                                              float constraintHertz, float constraintDampingRatio,
+                                              boolean collideConnected);
+
+    /** Rope/spring between two anchor points with optional spring, length limits and motor. */
+    public static native long createDistanceJoint(int worldId, long bodyA, long bodyB,
+                                                  float localAx, float localAy, float localAz,
+                                                  float localAqx, float localAqy, float localAqz, float localAqw,
+                                                  float localBx, float localBy, float localBz,
+                                                  float localBqx, float localBqy, float localBqz, float localBqw,
+                                                  float length,
+                                                  boolean enableSpring, float hertz, float dampingRatio,
+                                                  boolean enableLimit, float minLength, float maxLength,
+                                                  boolean enableMotor, float motorSpeed, float maxMotorForce,
+                                                  float constraintHertz, float constraintDampingRatio,
+                                                  boolean collideConnected);
+    public static native void setDistanceJointLength(long jointId, float length);
+    public static native void setDistanceJointSpring(long jointId, boolean enable, float hertz, float dampingRatio);
+    public static native void setDistanceJointLimits(long jointId, boolean enable, float minLength, float maxLength);
+    public static native void setDistanceJointMotor(long jointId, boolean enable, float speed, float maxForce);
+
+    /** Hinge around the shared frame X axis with optional spring, angle limits and motor. */
+    public static native long createRevoluteJoint(int worldId, long bodyA, long bodyB,
+                                                  float localAx, float localAy, float localAz,
+                                                  float localAqx, float localAqy, float localAqz, float localAqw,
+                                                  float localBx, float localBy, float localBz,
+                                                  float localBqx, float localBqy, float localBqz, float localBqw,
+                                                  float targetAngle,
+                                                  boolean enableSpring, float springHertz, float springDampingRatio,
+                                                  boolean enableLimit, float lowerAngle, float upperAngle,
+                                                  boolean enableMotor, float maxMotorTorque, float motorSpeed,
+                                                  float constraintHertz, float constraintDampingRatio,
+                                                  boolean collideConnected);
+    public static native void setRevoluteJointLimits(long jointId, boolean enable, float lowerAngle, float upperAngle);
+    public static native void setRevoluteJointMotor(long jointId, boolean enable, float speed, float maxTorque);
+    public static native void setRevoluteJointSpring(long jointId, boolean enable, float hertz,
+                                                     float dampingRatio, float targetAngle);
+
+    /** Slider along the shared frame X axis with optional spring, translation limits and motor. */
+    public static native long createPrismaticJoint(int worldId, long bodyA, long bodyB,
+                                                   float localAx, float localAy, float localAz,
+                                                   float localAqx, float localAqy, float localAqz, float localAqw,
+                                                   float localBx, float localBy, float localBz,
+                                                   float localBqx, float localBqy, float localBqz, float localBqw,
+                                                   boolean enableSpring, float springHertz, float springDampingRatio,
+                                                   float targetTranslation,
+                                                   boolean enableLimit, float lowerTranslation, float upperTranslation,
+                                                   boolean enableMotor, float maxMotorForce, float motorSpeed,
+                                                   float constraintHertz, float constraintDampingRatio,
+                                                   boolean collideConnected);
+    public static native void setPrismaticJointLimits(long jointId, boolean enable, float lowerTranslation, float upperTranslation);
+    public static native void setPrismaticJointMotor(long jointId, boolean enable, float speed, float maxForce);
+    public static native void setPrismaticJointSpring(long jointId, boolean enable, float hertz,
+                                                      float dampingRatio, float targetTranslation);
+
     /** Returns [kinematic anchor body id, spherical joint id]. */
     public static native long[] createDrag(int worldId, long bodyId,
                                            float pointX, float pointY, float pointZ,

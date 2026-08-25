@@ -3,6 +3,8 @@ package lib.kasuga.rendering.models.uml.dynamic;
 import lib.kasuga.rendering.models.uml.dynamic.morph.MorphInstance;
 import lib.kasuga.rendering.models.uml.dynamic.morph.MorphResult;
 import lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.ModelTickLoop;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.AnchorModule;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.basic.Mesh;
@@ -57,8 +59,13 @@ public class ModelInstance implements AutoCloseable {
     @Nullable
     private MmdRagdoll ragdoll;
 
-    /** Procedural animation/IK/physics hooks evaluated in insertion order. */
-    private final PoseEffectorPipeline poseEffectors = new PoseEffectorPipeline();
+    /**
+     * The single ordered pipeline driving this instance's procedural stages
+     * (apply / IK / physics / anchors, plus any user modules mounted between
+     * them). Advanced via {@link #tick(float)} or the physics entry points.
+     */
+    @Getter
+    private final ModelTickLoop tickLoop;
 
     /** True when the physics runtime already sampled the pose for this render frame. */
     private boolean frameSamplePrepared;
@@ -81,6 +88,7 @@ public class ModelInstance implements AutoCloseable {
         this.shouldUpdate = false;
         this.flushedSkeletonVersion = skeletonInstance.getVersion();
         this.frameSamplePrepared = false;
+        this.tickLoop = new ModelTickLoop(this);
     }
 
     public SpriteSet getMaterialFrame(Material mat) {
@@ -102,7 +110,7 @@ public class ModelInstance implements AutoCloseable {
                 || skeletonInstance.getVersion() != flushedSkeletonVersion
                 || morph.shouldUpdate() ||
                 (materialInstance != null && materialInstance.isDirty())
-                || !poseEffectors.isEmpty();
+                || tickLoop.hasProceduralModules();
         return shouldUpdate;
     }
 
@@ -146,11 +154,20 @@ public class ModelInstance implements AutoCloseable {
         if (ragdoll != null) ragdoll.setEnabled(false);
     }
 
-    /** Advances physics without requiring an attached pose driver. */
+    /**
+     * Advances the full procedural pipeline (apply / IK / physics / user
+     * modules / anchors) by {@code dt} seconds. This is the single entry the
+     * tick loop framework exposes; physics stepping and IK solving happen in
+     * their mounted modules.
+     */
+    public void tick(float deltaTime) {
+        tickLoop.tick(deltaTime);
+    }
+
+    /** Advances physics through the tick loop without requiring an attached pose driver. */
     public void simulatePhysics(float dt) {
         if (ragdoll == null || !ragdoll.enabled()) return;
-        morph.update();
-        ragdoll.step(dt);
+        tickLoop.tick(dt);
     }
 
     /**
@@ -168,7 +185,7 @@ public class ModelInstance implements AutoCloseable {
             poseDriver.sample(partialTick);
             frameSamplePrepared = true;
         }
-        simulatePhysics(deltaSeconds);
+        tickLoop.tick(deltaSeconds);
     }
 
     /**
@@ -193,12 +210,8 @@ public class ModelInstance implements AutoCloseable {
         // time and, more importantly, is not required before uploading that
         // already-complete result.
         boolean physicsOwnsPose = ragdoll != null && ragdoll.enabled();
-        if (!physicsOwnsPose && (skeletonInstance.checkShouldUpdate() || !poseEffectors.isEmpty())) {
-            skeletonInstance.clearFrameIkTargets();
-            poseEffectors.evaluate(this, null, PoseEffector.Stage.BEFORE_IK, 0f);
-            skeletonInstance.updateTransform();
-            poseEffectors.evaluate(this, null, PoseEffector.Stage.AFTER_IK, 0f);
-            poseEffectors.evaluate(this, null, PoseEffector.Stage.AFTER_PHYSICS, 0f);
+        if (!physicsOwnsPose && (skeletonInstance.checkShouldUpdate() || tickLoop.hasProceduralModules())) {
+            tickLoop.tick(0f);
         }
         flushedSkeletonVersion = skeletonInstance.getVersion();
         updateAllMaterials();
@@ -269,10 +282,35 @@ public class ModelInstance implements AutoCloseable {
         morph.setResultMappingType((byte) (type & 0x0f));
     }
 
+    /**
+     * Binds a display sub-object to a skeleton anchor (e.g. a held item
+     * following a hand anchor). The anchor module invokes the callback with the
+     * anchor's current world transform after every tick; {@code null} once the
+     * anchor no longer resolves.
+     */
+    public boolean attachToAnchor(String anchorName, AnchorModule.Attachment attachment) {
+        AnchorModule anchors = tickLoop.module(ModelTickLoop.SLOT_ANCHOR, AnchorModule.class);
+        if (anchors == null) return false;
+        anchors.attach(anchorName, attachment);
+        forceUpdate();
+        return true;
+    }
+
+    public boolean detachFromAnchor(String anchorName, AnchorModule.Attachment attachment) {
+        AnchorModule anchors = tickLoop.module(ModelTickLoop.SLOT_ANCHOR, AnchorModule.class);
+        return anchors != null && anchors.detach(anchorName, attachment);
+    }
+
+    /** Computes a skeleton anchor's current world transform without waiting for the next tick. */
+    @Nullable
+    public Transform anchorTransform(String anchorName) {
+        return skeletonInstance.anchorTransform(anchorName);
+    }
+
     @Override
     public void close() {
         poseDriver = null;
-        poseEffectors.clear();
+        tickLoop.destroy();
         if (ragdoll != null) {
             ragdoll.close();
             ragdoll = null;
