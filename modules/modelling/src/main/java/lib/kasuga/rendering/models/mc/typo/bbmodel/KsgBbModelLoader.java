@@ -240,12 +240,23 @@ public final class KsgBbModelLoader implements ModelLoader<String, ResourceLocat
         Mesh mesh = new Mesh(new Vertex[transformed.length], normal, new Transform(), new Material[]{material}, null);
         for (int index = 0; index < transformed.length; index++) {
             Vertex vertex = new Vertex(transformed[index], null);
-            vertex.addUV(mesh, material, uvs[index]);
+            vertex.addUV(mesh, material, normalizePixelUv(uvs[index], material));
             vertex.setBinding(new BoneBinding(new Pair[]{Pair.of(root, 1.0f)}, BoneBindingFunc.BDEF, null));
             mesh.getVertices()[index] = vertex;
             vertices.add(vertex);
         }
         meshes.add(mesh);
+    }
+
+    /** Converts Blockbench's pixel UV coordinates to the normalized range used by the renderer. */
+    static Vector2f normalizePixelUv(Vector2f uv, Material material) {
+        Texture[] textures = material.getTextures();
+        if (textures.length == 0 || textures[0] == null) return new Vector2f(uv);
+        float width = textures[0].getWidth();
+        float height = textures[0].getHeight();
+        return width > 0.0f && height > 0.0f
+                ? new Vector2f(uv.x / width, uv.y / height)
+                : new Vector2f(uv);
     }
 
     private record BlockBenchTransform(Quaternionf rotation, Vector3f absoluteOrigin, Vector3f parentPivot) {

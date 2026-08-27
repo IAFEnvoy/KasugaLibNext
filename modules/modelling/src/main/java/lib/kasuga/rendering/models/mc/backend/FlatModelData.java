@@ -314,7 +314,6 @@ public class FlatModelData implements AutoCloseable {
                     setVertexColor(vertexPos, vColor);
 
                     model.getVertexUv(vertex, mesh, mat, vertexUv);
-                    normalizeTextureUv(mat, vertexUv);
                     setVertexUv(vertexPos, vertexUv);
                     vertexMaterials[vertexPos] = materialIndices.get(mat);
                     vertexMeshes[vertexPos] = i;
@@ -571,7 +570,6 @@ public class FlatModelData implements AutoCloseable {
         Material mat = materials[vertexMaterials[vertexIndex]];
 
         cache.set(vertex.getUV(mesh, mat));
-        normalizeTextureUv(mat, cache);
         setVertexUv(vertexIndex, cache);
         dirtyUv0s.set(vertexIndex);
         allMorphedUv0.clear(vertexIndex);
@@ -1106,21 +1104,6 @@ public class FlatModelData implements AutoCloseable {
     public void setVertexUv(int index, Vector2f org) {
         uv0s[index * 2] = org.x();
         uv0s[index * 2 + 1] = org.y();
-    }
-
-    /** Converts formats such as Blockbench that express UVs in texture pixels. */
-    private void normalizeTextureUv(Material material, Vector2f uv) {
-        Sprite sprite = model.getMaterialSprite(material);
-        if (sprite == null || sprite.getTexture() == null ||
-                !(sprite.getTexture().getData() instanceof SpriteHolder textureData) ||
-                !textureData.shouldDividedByTextureSize()) {
-            return;
-        }
-        float width = sprite.getTexture().getWidth();
-        float height = sprite.getTexture().getHeight();
-        if (width > 0.0f && height > 0.0f) {
-            uv.div(width, height);
-        }
     }
 
     public void fillVertexUv(int index, Vector2f dest) {

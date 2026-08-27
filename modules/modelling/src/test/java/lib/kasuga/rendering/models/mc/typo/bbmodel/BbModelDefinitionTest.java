@@ -1,6 +1,8 @@
 package lib.kasuga.rendering.models.mc.typo.bbmodel;
 
 import lib.kasuga.rendering.models.mc.util.Direction;
+import lib.kasuga.rendering.models.uml.structure.material.Material;
+import lib.kasuga.rendering.models.uml.structure.material.Texture;
 import net.minecraft.resources.ResourceLocation;
 import org.joml.Vector2f;
 import org.junit.jupiter.api.Test;
@@ -45,6 +47,14 @@ class BbModelDefinitionTest {
         assertEquals(new Vector2f(48, 64), uvs[1]);
         assertEquals(new Vector2f(16, 64), uvs[2]);
         assertEquals(new Vector2f(16, 32), uvs[3]);
+    }
+
+    @Test
+    void normalizesBlockbenchPixelUvsAtLoaderBoundary() {
+        Material material = new Material(new Texture[]{new Texture("test", 128, 64, null)}, null);
+
+        assertEquals(new Vector2f(0.5f, 0.5f),
+                KsgBbModelLoader.normalizePixelUv(new Vector2f(64, 32), material));
     }
 
     @Test
