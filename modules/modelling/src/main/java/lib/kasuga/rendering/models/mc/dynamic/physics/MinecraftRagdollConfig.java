@@ -12,6 +12,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.level.Level;
+import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3f;
 
 import java.io.IOException;
@@ -191,14 +192,20 @@ public record MinecraftRagdollConfig(
         return result;
     }
 
-    /** Creates and completely configures the ragdoll and optional Minecraft terrain adapter. */
+    /**
+     * Creates and completely configures the ragdoll and optional Minecraft
+     * terrain adapter, or returns {@code null} when Box3D is unavailable.
+     */
+    @Nullable
     public MmdRagdoll attach(ModelInstance instance, Supplier<? extends Level> levelSupplier) {
         return attach(instance, levelSupplier, true);
     }
 
+    @Nullable
     public MmdRagdoll attach(ModelInstance instance, Supplier<? extends Level> levelSupplier,
                              boolean applyInitialState) {
         MmdRagdoll ragdoll = instance.enablePhysics(profile);
+        if (ragdoll == null) return null;
         ragdoll.setSimulationHertz(simulation.hertz);
         ragdoll.setSubstepCount(simulation.substeps);
         ragdoll.setSolverIterations(simulation.solverIterations);

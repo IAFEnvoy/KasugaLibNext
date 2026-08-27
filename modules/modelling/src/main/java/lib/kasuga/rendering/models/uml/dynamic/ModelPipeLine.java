@@ -234,6 +234,22 @@ public class ModelPipeLine<SourceOutputType, BackendInputType, StorageIdentifier
         return false;
     }
 
+    /**
+     * MANUAL visibility switch: keeps GPU buffers and animation state mounted
+     * while skipping per-frame sampling/drawing. Pairs with
+     * {@code RenderScheduleMode.MANUAL}; instances in the default ALWAYS mode
+     * are unaffected by this call.
+     */
+    public void setRendering(
+            StorageIdentifierType modelName,
+            InstanceIdentifierType instanceIdentifier,
+            boolean visible) {
+        ModelInstance instance = getInstance(modelName, instanceIdentifier);
+        if (instance != null) {
+            lib.kasuga.rendering.models.mc.backend.schedule.ModelRenderScheduler.setVisible(instance, visible);
+        }
+    }
+
     public boolean stopRendering(
             StorageIdentifierType modelName,
             InstanceIdentifierType instanceIdentifier,

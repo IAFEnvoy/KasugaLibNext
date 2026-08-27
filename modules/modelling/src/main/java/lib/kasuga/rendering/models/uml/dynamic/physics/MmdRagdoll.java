@@ -1,7 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.physics;
 
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
-import lib.kasuga.rendering.models.uml.dynamic.PoseEffector;
 import lib.kasuga.rendering.models.uml.dynamic.SkeletonInstance;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.BallJoint;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.DragSettings;
@@ -63,15 +62,20 @@ public final class MmdRagdoll implements AutoCloseable {
     private final RigidBodyWorld world;
     private final Profile profile;
     private boolean enabled = true;
-    private float evaluationDeltaSeconds;
+    /** Mutation epoch of the skeleton at the last kinematic evaluation. */
+    private long kinematicEvaluationEpoch = -1;
+    /** False once physics writeback (or a step boundary) invalidated the evaluation. */
+    private boolean kinematicEvaluationFresh;
+    private final Set<Body> bodySet = Collections.newSetFromMap(new IdentityHashMap<>());
 
+    // The animation/IK pose is evaluated once per step() and cached per body;
+    // nothing mutates skeleton inputs during world.step, so re-evaluating per
+    // fixed step (the previous behavior) recomputed identical hierarchies.
     private final RigidBodyWorld.KinematicDriver driver = new RigidBodyWorld.KinematicDriver() {
-        @Override public void beginStep(RigidBodyWorld simulatedWorld) {
-            evaluateAnimationTarget();
-        }
+        @Override public void beginStep(RigidBodyWorld simulatedWorld) {}
 
         @Override public Frames.Pose kinematicTarget(SimBody body) {
-            return bodyTarget((Body) body);
+            return ((Body) body).animationTargetCache;
         }
     };
 
@@ -159,6 +163,7 @@ public final class MmdRagdoll implements AutoCloseable {
                 bodyByRigidBodyIndex.put(profile.bodies().get(index).rigidBodyIndex(), bodies.get(index));
             }
         }
+        bodySet.addAll(bodies);
     }
 
     public Profile profile() {
@@ -192,10 +197,8 @@ public final class MmdRagdoll implements AutoCloseable {
 
     /** Same-frame animated/IK target of a body before physical writeback. */
     public Frames.Pose animationTarget(Body body) {
-        Objects.requireNonNull(body, "body");
-        if (!bodies.contains(body)) throw new IllegalArgumentException("body does not belong to this ragdoll");
-        Frames.Pose target = bodyTarget(body);
-        return new Frames.Pose(target.position, target.rotation);
+        if (!bodySet.contains(body)) throw new IllegalArgumentException("body does not belong to this ragdoll");
+        return new Frames.Pose(body.animationTargetCache.position, body.animationTargetCache.rotation);
     }
 
     /** Applies a world-space impulse at the body's center of mass. */
@@ -379,7 +382,7 @@ public final class MmdRagdoll implements AutoCloseable {
 
     /**
      * Bounds catch-up work performed by one {@link #step(float)} call. Excess
-     * accumulated time is discarded, matching kmod's fixed-step runtime.
+     * accumulated time is discarded to prevent a persistent catch-up spiral.
      */
     public void setMaxFixedStepsPerUpdate(int maximum) {
         world.setMaxFixedStepsPerUpdate(maximum);
@@ -509,7 +512,7 @@ public final class MmdRagdoll implements AutoCloseable {
         world.resetState();
         evaluateAnimationTarget();
         for (Body body : bodies) {
-            Frames.Pose target = bodyTarget(body);
+            Frames.Pose target = body.animationTargetCache;
             body.pose.set(target);
             body.previousPose.set(target);
             body.interpolationPose.set(target);
@@ -517,15 +520,19 @@ public final class MmdRagdoll implements AutoCloseable {
             body.angularVelocityRef().zero();
         }
         applyToSkeleton(1f);
+        kinematicEvaluationFresh = false;
     }
 
     /** Advances the ragdoll and writes the resulting dynamic body pose to bones. */
     public void step(float deltaSeconds) {
         if (!enabled || !(deltaSeconds > 0f) || !Float.isFinite(deltaSeconds)) return;
         long profileStart = ModelProfiler.start();
-        evaluationDeltaSeconds = deltaSeconds;
+        evaluateAnimationTarget();
         world.step(deltaSeconds, driver);
         applyToSkeleton(world.interpolationAlpha());
+        // Physics writeback changed the skeleton state, so the next tick must
+        // rebuild the kinematic target even if no other input changed.
+        kinematicEvaluationFresh = false;
         if (profileStart != 0L) {
             ModelProfiler.record("physics.mmd.step", profileStart,
                     "bodies=" + bodies.size() + " joints=" + joints.size()
@@ -534,14 +541,23 @@ public final class MmdRagdoll implements AutoCloseable {
         }
     }
 
-    private void evaluateAnimationTarget() {
+    /**
+     * Re-evaluates the kinematic (animation + IK) pose this ragdoll tracks and
+     * refreshes every body's cached target. Skipped when no skeleton input has
+     * changed since the last evaluation — controllers mounted before the
+     * physics stage and {@link #step()} then share one hierarchy solve.
+     */
+    public void evaluateAnimationTarget() {
+        long epoch = skeleton.getMutationEpoch();
+        if (kinematicEvaluationFresh && epoch == kinematicEvaluationEpoch && !skeleton.isMorphUpdated()) return;
         skeleton.clearPhysicsTransforms();
-        skeleton.clearFrameIkTargets();
-        instance.getPoseEffectors().evaluate(instance, this,
-                PoseEffector.Stage.BEFORE_IK, evaluationDeltaSeconds);
         skeleton.updateTransform();
-        instance.getPoseEffectors().evaluate(instance, this,
-                PoseEffector.Stage.AFTER_IK, evaluationDeltaSeconds);
+        kinematicEvaluationEpoch = skeleton.getMutationEpoch();
+        kinematicEvaluationFresh = true;
+        for (Body body : bodies) {
+            Frames.Pose target = bodyTarget(body);
+            body.animationTargetCache.set(target);
+        }
     }
 
     private Frames.Pose bodyTarget(Body body) {
@@ -556,7 +572,7 @@ public final class MmdRagdoll implements AutoCloseable {
                 root.getRotation().mul(rotation, new Quaternionf()).normalize());
     }
 
-    /** Render interpolation mirrors kmod SimpleRagdoll.writePose(alpha). */
+    /** Interpolates the completed physics pose for rendering. */
     private void applyToSkeleton(float interpolationAlpha) {
         Map<Bone, Frames.Pose> desired = new IdentityHashMap<>();
         for (Map.Entry<Bone, Body> entry : bodyByBone.entrySet()) {
@@ -594,12 +610,10 @@ public final class MmdRagdoll implements AutoCloseable {
         }
         skeleton.applyPhysicsTransforms(physicsPose);
         skeleton.updateTransformAfterPhysics();
-        instance.getPoseEffectors().evaluate(instance, this,
-                PoseEffector.Stage.AFTER_PHYSICS, evaluationDeltaSeconds);
     }
 
     /**
-     * Mirrors kmod's SimpleRagdoll.writePose: every helper bone keeps its
+     * Every helper bone keeps its
      * animated world-space relation to the nearest physical ancestor. This
      * avoids re-evaluating PMX grant/IK helpers on top of an already physical
      * parent, which otherwise separates the rendered joint from its body
@@ -852,7 +866,7 @@ public final class MmdRagdoll implements AutoCloseable {
             float mass = profileMass(registration.role, length, radius);
 
             // Primary humanoid bodies are generated from the actual skeleton
-            // segment, as in kmod SimpleRagdoll. PMX rigid bodies are authored
+            // segment. PMX rigid bodies are authored
             // mostly for secondary motion and are often poor human colliders.
             PmxRigidBody dynamic = new PmxRigidBody(
                     authored.localName(), authored.universalName(), authored.boneIndex(),
@@ -1197,6 +1211,8 @@ public final class MmdRagdoll implements AutoCloseable {
         private final float inverseLinearMass;
         private final Vector3f linearVelocity = new Vector3f();
         private final Vector3f angularVelocity = new Vector3f();
+        /** Kinematic/force target captured by the last {@code evaluateAnimationTarget()}; reused storage. */
+        private final Frames.Pose animationTargetCache = new Frames.Pose();
 
         private Body(PmxRigidBody source, Bone bone, Frames.Pose pose, Frames.Pose boneToBody,
                      BoneWriteback writeback, Vector3f shapeSize, boolean profiledRagdollBody) {

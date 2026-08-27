@@ -4,8 +4,10 @@ import lib.kasuga.rendering.models.uml.dynamic.physics.core.RayHit;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.RigidBodyWorld;
 
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
-import lib.kasuga.rendering.models.uml.dynamic.ActiveRagdollEffector;
-import lib.kasuga.rendering.models.uml.dynamic.PoseEffector;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.ModelTickLoop;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.PendingTransform;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.ActiveRagdollModule;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.ModelTickLoopModule;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.material.MaterialSet;
@@ -24,6 +26,7 @@ import lib.kasuga.rendering.models.uml.util.MeshMode;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -34,19 +37,28 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("box3d")
 class MmdRagdollTest {
     @Test
-    void evaluatesEffectorsAroundIkAndBox3dInDeterministicOrder() {
+    void ordersTickLoopModulesAroundTheIkAndPhysicsSlotsDeterministically() {
         ModelInstance instance = freeBodyInstance(0f);
         MmdRagdoll ragdoll = instance.enablePhysics();
         ragdoll.setGravity(new Vector3f());
-        List<PoseEffector.Stage> stages = new ArrayList<>();
-        instance.getPoseEffectors().add("trace", context -> stages.add(context.stage()));
+        List<String> executed = new ArrayList<>();
+        ModelTickLoop loop = instance.getTickLoop();
+        loop.addPreIk("trace-pre", trace(executed, "pre"));
+        loop.addPostIk("trace-post-ik", trace(executed, "post-ik"));
+        loop.addPostPhysics("trace-post-physics", trace(executed, "post-physics"));
 
-        ragdoll.step(1f / 120f);
+        assertEquals(List.of(ModelTickLoop.SLOT_APPLY, "trace-pre",
+                ModelTickLoop.SLOT_IK, "trace-post-ik",
+                ModelTickLoop.SLOT_PHYSICS, "trace-post-physics",
+                ModelTickLoop.SLOT_ANCHOR), loop.getPipeline().ids());
 
-        assertEquals(List.of(PoseEffector.Stage.BEFORE_IK,
-                PoseEffector.Stage.AFTER_IK, PoseEffector.Stage.AFTER_PHYSICS), stages);
+        instance.simulatePhysics(1f / 120f);
+
+        assertEquals(List.of("pre", "post-ik", "post-physics"), executed,
+                "user modules must run in their mounted stage around IK and physics");
     }
 
     @Test
@@ -164,19 +176,19 @@ class MmdRagdollTest {
     }
 
     @Test
-    void activeRagdollEffectorDrivesBox3dTowardThePostIkAnimationPose() {
+    void activeRagdollModuleDrivesBox3dTowardThePostIkAnimationPose() {
         ModelInstance instance = freeBodyInstance(0f);
         MmdRagdoll ragdoll = instance.enablePhysics();
         ragdoll.setGravity(new Vector3f());
         MmdRagdoll.Body body = ragdoll.bodies().getFirst();
-        instance.getPoseEffectors().add("active",
-                new ActiveRagdollEffector(4f, 1f, 1000f, 1000f));
+        instance.getTickLoop().addPostIk("active",
+                new ActiveRagdollModule(4f, 1f, 1000f, 1000f));
         instance.getSkeletonInstance().offset("root", new Vector3f(1f, 0f, 0f));
 
-        ragdoll.step(1f / 120f);
+        instance.simulatePhysics(1f / 120f);
 
         assertTrue(body.linearVelocity().x > 0f,
-                "AFTER_IK must enqueue a native Box3D force toward the animated body target");
+                "the post-IK module must enqueue a native Box3D force toward the animated body target");
     }
 
     @Test
@@ -551,6 +563,16 @@ class MmdRagdollTest {
         assertTrue(actual.x >= min.x - epsilon && actual.x <= max.x + epsilon, actual.toString());
         assertTrue(actual.y >= min.y - epsilon && actual.y <= max.y + epsilon, actual.toString());
         assertTrue(actual.z >= min.z - epsilon && actual.z <= max.z + epsilon, actual.toString());
+    }
+
+    private static ModelTickLoopModule trace(List<String> executed, String label) {
+        return new ModelTickLoopModule() {
+            @Override public void tick(Model model, PendingTransform[] transforms,
+                                       ModelTickLoop loop, float deltaTime) {
+                executed.add(label);
+            }
+            @Override public void destroy(Model model) {}
+        };
     }
 
     private static ModelInstance instance(Vector3f scale) {

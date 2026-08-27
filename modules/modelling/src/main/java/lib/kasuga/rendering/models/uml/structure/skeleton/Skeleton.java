@@ -26,6 +26,7 @@ public class Skeleton {
     private final Anchor[] anchors;
 
     private final HashMap<String, Bone> boneMap;
+    private final HashMap<String, Anchor> anchorMap;
     private final HashMap<Bone, Pair<Transform, Transform>> boneTransforms;
 
     @NonNull
@@ -41,6 +42,7 @@ public class Skeleton {
         this.transform = transform;
         this.anchors = anchors;
         this.boneMap = new HashMap<>();
+        this.anchorMap = new HashMap<>();
         this.boneTransforms = new HashMap<>();
         int i = 0;
         for (Bone bone : bones) {
@@ -49,7 +51,14 @@ public class Skeleton {
             if (bone.getName().isEmpty()) continue;
             boneMap.put(bone.getName(), bone);
         }
+        for (Anchor anchor : anchors) {
+            anchorMap.put(anchor.getName(), anchor);
+        }
         getInverse();
+    }
+
+    public Anchor getAnchor(String name) {
+        return anchorMap.get(name);
     }
 
     public void getInverse() {

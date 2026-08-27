@@ -12,6 +12,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.phys.Vec3;
+import lib.kasuga.rendering.models.uml.dynamic.physics.box3d.NativeBox3D;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -77,6 +78,10 @@ public final class PhysicsCommands {
 
     private static int spawnBlocks(CommandContext<CommandSourceStack> context, Block block, int count) {
         CommandSourceStack source = context.getSource();
+        if (!NativeBox3D.availableOrWarn()) {
+            source.sendFailure(Component.literal("Box3D native library is unavailable; physics is disabled"));
+            return 0;
+        }
         Entity player = source.getEntity();
         if (!(player != null && player.level() instanceof net.minecraft.client.multiplayer.ClientLevel level)) {
             source.sendFailure(Component.literal("physics blocks require a client level"));
@@ -111,6 +116,11 @@ public final class PhysicsCommands {
     private static int deploy(CommandContext<CommandSourceStack> context,
                               ResourceLocation modelResource, String modelName,
                               ResourceLocation configResource) {
+        if (!NativeBox3D.availableOrWarn()) {
+            context.getSource().sendFailure(Component.literal(
+                    "Box3D native library is unavailable; ragdoll physics is disabled"));
+            return 0;
+        }
         Entity player = context.getSource().getEntity();
         if (!(player != null && player.level() instanceof net.minecraft.client.multiplayer.ClientLevel)) {
             context.getSource().sendFailure(Component.literal("ragdolls require a client level"));

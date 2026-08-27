@@ -29,6 +29,7 @@ import lib.kasuga.rendering.models.uml.util.MeshMode;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -38,6 +39,7 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("box3d")
 class PmxRealAssetSmokeTest {
     @Test
     void parsesEveryPmxInLocalMmdCompatibilityFixtures() throws Exception {
