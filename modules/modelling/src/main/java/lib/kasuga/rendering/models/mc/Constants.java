@@ -77,6 +77,7 @@ public class Constants {
     public static ModelInstance currentInstance;
     private static final Logger LOGGER = LogUtils.getLogger();
     private static boolean missingTestMmdLogged;
+    private static boolean missingTestBbmodelLogged;
     private static final ResourceLocation TEST_MMD_PHYSICS = ResourceLocation.fromNamespaceAndPath(
             KasugaLib.MODID, "ragdolls/tda_bunny_miku.json");
     private static final RenderPipelineScope CLIENT_RENDER_PIPELINES = RenderPipelineScope.create(
@@ -405,11 +406,68 @@ public class Constants {
         if (!Boolean.parseBoolean(System.getProperty("kasuga.renderTestModels", "true"))) {
             return;
         }
-        testMMD();
+        // Match the original model-loader smoke test: bbmodels are the default scene.
+        switch (System.getProperty("kasuga.testModel", "bbmodel").toLowerCase(Locale.ROOT)) {
+            case "bbmodel" -> testBbModels();
+            case "obj" -> testObj();
+            case "be" -> testBe();
+            case "je" -> testJe();
+            default -> testMMD();
+        }
 //        testUI();
-//        testObj();
-//        testBe();
-//        testJe();
+    }
+
+    /** Renders the native Blockbench smoke models in front of the current player. */
+    public static void testBbModels() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null) return;
+
+        Vec3 playerPosition = minecraft.player.position();
+        Vec3 lookDirection = minecraft.player.getLookAngle();
+        String selected = System.getProperty("kasuga.testBbmodel");
+        if (selected != null && !selected.isBlank()) {
+            Vec3 position = playerPosition.add(lookDirection.scale(3.0)).add(0.0, 1.0, 0.0);
+            testBbmodel(normalizeTestBbmodelPath(selected), "test_bbmodel", position);
+            return;
+        }
+
+        Vec3 headPosition = playerPosition.add(lookDirection.scale(3.0)).add(0.0, 1.0, 0.0);
+        Vec3 bogeyPosition = playerPosition.add(lookDirection.scale(8.0)).add(0.0, 1.0, 0.0);
+        testBbmodel("models/block/test/blockbench/df11g_head.bbmodel", "test_bbmodel_head", headPosition);
+        testBbmodel("models/block/test/blockbench/qj_bogey_main.bbmodel", "test_bbmodel_bogey", bogeyPosition);
+    }
+
+    private static String normalizeTestBbmodelPath(String path) {
+        String trimmed = path.trim().replace('\\', '/');
+        if (trimmed.contains(":")) return trimmed;
+        if (!trimmed.startsWith("models/")) {
+            return "models/block/test/blockbench/" + trimmed;
+        }
+        return trimmed;
+    }
+
+    private static void testBbmodel(String modelPath, String instanceName, Vec3 position) {
+        ResourceLocation modelLoc = ResourceLocation.tryBuild(KasugaLib.MODID, modelPath);
+        ResourceLocation instanceLoc = ResourceLocation.tryBuild(KasugaLib.MODID, instanceName);
+        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> bbmodel = PipelineRegistry.bbmodel();
+        if (!bbmodel.hasModel(modelLoc)) {
+            // Models register their embedded textures while the resource reload builds the atlas.
+            // Loading here would create a model after that atlas has already been published.
+            if (!missingTestBbmodelLogged) {
+                missingTestBbmodelLogged = true;
+                LOGGER.warn("Test bbmodel '{}' is unavailable after resource reload; check assets/{}/models/model_proxy.json and restart the client",
+                        modelLoc, KasugaLib.MODID);
+            }
+            return;
+        }
+        missingTestBbmodelLogged = false;
+        if (bbmodel.hasInstance(modelLoc, instanceLoc)) return;
+        Transform transform = new Transform().translate(
+                (float) position.x, (float) position.y, (float) position.z);
+        ModelInstance instance = bbmodel.createInstance(modelLoc, instanceLoc, transform, null, null);
+        if (instance != null) {
+            bbmodel.addToRenderer(modelLoc, instanceLoc, "mc_bridge", "mc_backend");
+        }
     }
 
     public static void testMMD() {
