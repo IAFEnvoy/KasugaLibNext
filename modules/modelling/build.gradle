@@ -10,6 +10,9 @@ plugins {
 version = mod_version
 group = mod_group_id
 
+def kasugaTestModel = providers.gradleProperty('kasugaTestModel')
+def kasugaTestBbmodel = providers.gradleProperty('kasugaTestBbmodel')
+
 repositories {
     // Add here additional repositories if required by some of the dependencies below.
     maven { url = "https://maven.createmod.net" } // Create, Ponder, Flywheel
@@ -160,6 +163,13 @@ neoForge {
         configureEach {
             systemProperty 'forge.logging.markers', 'REGISTRIES'
 
+            if (kasugaTestModel.isPresent()) {
+                systemProperty 'kasuga.testModel', kasugaTestModel.get()
+            }
+            if (kasugaTestBbmodel.isPresent()) {
+                systemProperty 'kasuga.testBbmodel', kasugaTestBbmodel.get()
+            }
+
             logLevel = org.slf4j.event.Level.DEBUG
         }
     }
@@ -308,7 +318,7 @@ def box3dResourceDirectory = box3dBuildDirectory.map { it.dir('resources') }
 def box3dResourceOverlay = providers.gradleProperty('kasugaBox3DNativeResources')
 def box3dJavaHome = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(21)
-}.map { it.metadata.installationPath.asFile.absolutePath }
+}.map { it.metadata.installationPath.asFile.absolutePath.replace('\\', '/') }
 
 tasks.register('configureBox3D', Exec) {
     description = 'Configures the vendored Box3D JNI library for the current platform.'

@@ -24,6 +24,7 @@ import lib.kasuga.rendering.models.mc.source.texture.CombinedTextureManager;
 import lib.kasuga.rendering.models.mc.typo.KsgObjLoader;
 import lib.kasuga.rendering.models.mc.typo.KsgPmxLoader;
 import lib.kasuga.rendering.models.mc.typo.KsgGltfLoader;
+import lib.kasuga.rendering.models.mc.typo.bbmodel.KsgBbModelLoader;
 import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipHelper;
 import lib.kasuga.rendering.models.mc.typo.pmx_entry.ZipResource;
 import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
@@ -42,6 +43,7 @@ public final class PipelineRegistry {
     public static final String OBJ = "obj";
     public static final String PMX = "pmx";
     public static final String GLTF = "gltf";
+    public static final String BBMODEL = "bbmodel";
 
     private static final Map<String, ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?>> PIPELINES =
             new ConcurrentHashMap<>();
@@ -54,6 +56,7 @@ public final class PipelineRegistry {
         BUILTIN_ROUTES.put(".glb", GLTF);
         BUILTIN_ROUTES.put(".gltf", GLTF);
         BUILTIN_ROUTES.put(".json", JE);
+        BUILTIN_ROUTES.put(".bbmodel", BBMODEL);
     }
 
     private static KasugaPipeLineRouter router;
@@ -67,6 +70,7 @@ public final class PipelineRegistry {
     private static ModelPipeLine<String, BackendInstance, ResourceLocation, ResourceLocation, String> objPipeline;
     private static ModelPipeLine<ZipHelper, BackendInstance, ResourceLocation, ResourceLocation, ZipResource> pmxPipeline;
     private static ModelPipeLine<byte[], BackendInstance, ResourceLocation, ResourceLocation, Object> gltfPipeline;
+    private static ModelPipeLine<String, BackendInstance, ResourceLocation, ResourceLocation, Integer> bbmodelPipeline;
 
     private PipelineRegistry() {
     }
@@ -140,6 +144,16 @@ public final class PipelineRegistry {
                 .withBackend("mc_backend", backend)
                 .build();
         register(GLTF, gltfPipeline);
+
+        bbmodelPipeline = new ModelPipeLine.Builder<String, BackendInstance, ResourceLocation,
+                ResourceLocation, Integer>()
+                .withModelSource(strSource)
+                .withSidedSource(textures.getType(), "mc_layer_0", textures)
+                .withLoader(new KsgBbModelLoader("bbmodel"))
+                .withBridge("mc_bridge", bridge)
+                .withBackend("mc_backend", backend)
+                .build();
+        register(BBMODEL, bbmodelPipeline);
     }
 
     public static ModelPipeLine<JsonObject, BackendInstance, ResourceLocation, ResourceLocation, String> be() {
@@ -160,6 +174,10 @@ public final class PipelineRegistry {
 
     public static ModelPipeLine<byte[], BackendInstance, ResourceLocation, ResourceLocation, Object> gltf() {
         return gltfPipeline;
+    }
+
+    public static ModelPipeLine<String, BackendInstance, ResourceLocation, ResourceLocation, Integer> bbmodel() {
+        return bbmodelPipeline;
     }
 
     public static MCBackend backend() {
