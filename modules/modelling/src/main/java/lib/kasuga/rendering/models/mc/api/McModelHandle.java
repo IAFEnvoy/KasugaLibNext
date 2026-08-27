@@ -437,11 +437,17 @@ public final class McModelHandle {
                 transform -> receiver.accept(anchorName, transform));
     }
 
-    /** Enables PMX/glTF ragdoll physics with automatic render-frame stepping. */
+    /**
+     * Enables PMX/glTF ragdoll physics with automatic render-frame stepping,
+     * or returns {@code null} when Box3D is unavailable.
+     */
+    @Nullable
     public MmdRagdoll enablePhysics(MinecraftRagdollConfig.UpdateMode updateMode) {
         requireMounted();
+        MmdRagdoll ragdoll = instance.enablePhysics();
+        if (ragdoll == null) return null;
         MinecraftRagdollRuntime.register(instance, updateMode);
-        return instance.enablePhysics();
+        return ragdoll;
     }
 
     public void disablePhysics() {

@@ -5,6 +5,7 @@ import lib.kasuga.rendering.models.mc.dynamic.physics.MinecraftRagdollConfig;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.ByteBuffer;
@@ -70,6 +71,7 @@ class GltfLoaderTest {
     }
 
     @Test
+    @Tag("box3d")
     void bundledMaribelAndRenkoManifestsCreateProfiledRagdolls() throws Exception {
         for (String name : new String[]{"maribel", "renko"}) {
             String modelPath = "/assets/kasuga_lib/models/gltf/" + name + ".glb";

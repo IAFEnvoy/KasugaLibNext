@@ -3,6 +3,7 @@ package lib.kasuga.rendering.models.uml.dynamic;
 import lib.kasuga.rendering.models.uml.dynamic.morph.MorphInstance;
 import lib.kasuga.rendering.models.uml.dynamic.morph.MorphResult;
 import lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll;
+import lib.kasuga.rendering.models.uml.dynamic.physics.box3d.NativeBox3D;
 import lib.kasuga.rendering.models.uml.dynamic.tick_loop.ModelTickLoop;
 import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.AnchorModule;
 import lib.kasuga.rendering.models.uml.math.Transform;
@@ -132,15 +133,25 @@ public class ModelInstance implements AutoCloseable {
         }
     }
 
-    /** Creates and enables the PMX/PMD ragdoll attached to this instance. */
+    /**
+     * Creates and enables the PMX/PMD ragdoll attached to this instance.
+     * Returns {@code null} when this distribution has no Box3D native library.
+     */
+    @Nullable
     public MmdRagdoll enablePhysics() {
+        if (!NativeBox3D.availableOrWarn()) return null;
         if (ragdoll == null) ragdoll = new MmdRagdoll(this);
         ragdoll.setEnabled(true);
         return ragdoll;
     }
 
-    /** Creates a primary-bone PMX/PMD or glTF ragdoll from an explicit asset registration. */
+    /**
+     * Creates a primary-bone PMX/PMD or glTF ragdoll from an explicit asset
+     * registration. Returns {@code null} when Box3D is unavailable.
+     */
+    @Nullable
     public MmdRagdoll enablePhysics(MmdRagdoll.Profile profile) {
+        if (!NativeBox3D.availableOrWarn()) return null;
         if (ragdoll == null) ragdoll = new MmdRagdoll(this, profile);
         else if (!java.util.Objects.equals(ragdoll.profile(), profile)) {
             throw new IllegalStateException("physics is already enabled with a different profile");

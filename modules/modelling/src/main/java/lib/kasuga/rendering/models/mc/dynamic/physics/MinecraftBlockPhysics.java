@@ -7,6 +7,7 @@ import lib.kasuga.rendering.models.uml.dynamic.physics.core.Frames;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.GenericRigidBody;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.RigidBodyWorld;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.SimBody;
+import lib.kasuga.rendering.models.uml.dynamic.physics.box3d.NativeBox3D;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -91,6 +92,7 @@ public final class MinecraftBlockPhysics {
      */
     public static synchronized Optional<MinecraftBlockRigidBody> spawn(
             ClientLevel level, Vec3 center, BlockState state) {
+        if (!NativeBox3D.availableOrWarn()) return Optional.empty();
         Objects_requireLevel(level);
         if (PROPS.size() >= MAX_PROPS) {
             MinecraftBlockRigidBody oldest = PROPS.pollFirst();

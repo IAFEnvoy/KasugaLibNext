@@ -7,6 +7,11 @@ Kasuga modelling 的原生物理由官方 Box3D C17 引擎负责。Java 层只�
 `30c67b5e6d0a3a66f0f506c69ce9e9e0587e3b7c`。源码与许可证分别位于
 `modules/modelling/src/main/native/box3d` 和 `modules/modelling/THIRD_PARTY_NOTICES.md`。
 
+CMake 与 Box3D 原生库都是可选能力。构建机找不到 CMake 时，Gradle 会输出 warning、跳过
+Box3D JNI 编译并继续生成不含原生物理的 modelling 包。运行时可通过
+`NativeBox3D.available()` 查询能力；缺少原生库时，高层 `enablePhysics`/`attach` API 返回
+`null`，部署与方块生成 API 返回空结果，物理命令显示禁用原因，其余模型加载、渲染与动画功能不受影响。
+
 ## 1. 每帧求值顺序
 
 所有程序化阶段都挂在 `ModelTickLoop` 这一条有序管线上。框架通过标准槽位提供排序，

@@ -1,10 +1,14 @@
 package lib.kasuga.rendering.models.uml.dynamic.physics.box3d;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Low-level JNI access to the vendored Box3D C17 engine.
@@ -18,7 +22,9 @@ public final class NativeBox3D {
     public static final int KINEMATIC_BODY = 1;
     public static final int DYNAMIC_BODY = 2;
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(NativeBox3D.class);
     private static final String LIBRARY_BASE_NAME = "kasuga_box3d";
+    private static final AtomicBoolean UNAVAILABLE_WARNING_LOGGED = new AtomicBoolean();
     private static final Throwable LOAD_FAILURE;
 
     static {
@@ -35,6 +41,21 @@ public final class NativeBox3D {
 
     public static boolean available() {
         return LOAD_FAILURE == null;
+    }
+
+    /**
+     * Returns whether native physics can be used and logs its disabled state at
+     * most once. High-level optional physics entry points should prefer this to
+     * {@link #requireAvailable()} so the rest of the modelling runtime can keep
+     * working without a native library.
+     */
+    public static boolean availableOrWarn() {
+        if (LOAD_FAILURE == null) return true;
+        if (UNAVAILABLE_WARNING_LOGGED.compareAndSet(false, true)) {
+            LOGGER.warn("Box3D native library is unavailable; physics features are disabled: {}",
+                    LOAD_FAILURE.toString());
+        }
+        return false;
     }
 
     public static void requireAvailable() {

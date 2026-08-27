@@ -26,6 +26,7 @@ import lib.kasuga.rendering.models.uml.util.MeshMode;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -36,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("box3d")
 class MmdRagdollTest {
     @Test
     void ordersTickLoopModulesAroundTheIkAndPhysicsSlotsDeterministically() {
