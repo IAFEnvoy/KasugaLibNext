@@ -14,6 +14,9 @@ repositories {
     // Add here additional repositories if required by some of the dependencies below.
     maven { url = "https://maven.createmod.net" } // Create, Ponder, Flywheel
     maven { url = "https://maven.ithundxr.dev/snapshots" } // Registrate
+    flatDir {
+        dir 'libs'
+    }
 }
 
 useModProject(project(":modules:core"))
@@ -63,6 +66,14 @@ neoForge {
 
     runs {
         client {
+            systemProperty 'kasuga.profileModel', 'true'
+            systemProperty 'kasuga.profileModel.intervalMs', '1000'
+            systemProperty 'kasuga.profileModel.animateTestBone', 'true'
+            systemProperty 'kasuga.profileModel.animateStress', 'true'
+            systemProperty 'kasuga.profileModel.animateSelection', 'small'
+            systemProperty 'kasuga.profileModel.animateBoneCount', '32'
+            systemProperty 'kasuga.profileModel.animateTranslation', '0.2'
+            systemProperty 'kasuga.modelGpuSkinning', 'true'
             client()
 
             // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
@@ -98,11 +109,13 @@ neoForge {
             // Inlcude the core subproject as a dependency.
             sourceSet(sourceSets.main)
             sourceSet(sourceSets.contentTesting)
+            sourceSet(sourceSets.test)
         }
     }
 
     unitTest {
         enable()
+        testedMod = mods.named(mod_id)
     }
 }
 
@@ -123,11 +136,16 @@ dependencies {
         exclude group : 'org.slf4j', module: 'slf4j-api'
     }
 
+    additionalRuntimeClasspath 'com.google.zxing:core:3.5.3'
+
     implementation project(":modules:inject")
 
     implementation project(":modules:utils")
 
     implementation project(":modules:annotations")
+
+    // Source: https://mvnrepository.com/artifact/com.twelvemonkeys/twelvemonkeys
+    implementation("com.twelvemonkeys:twelvemonkeys:3.13.1")
 
     annotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
 
@@ -143,6 +161,13 @@ dependencies {
 
     testCompileOnly("org.projectlombok:lombok:1.18.42")
     testAnnotationProcessor("org.projectlombok:lombok:1.18.42")
+
+    compileOnly("libs:iris:neoforge-mc1.21.1-1.8.12")
+    compileOnly("libs:sodium:neoforge-mc1.21.1-0.6.13")
+    shadow("libs:iris:mc1.21-1.7.3")
+    runtimeOnly("libs:iris:neoforge-mc1.21.1-1.8.12")
+    runtimeOnly("libs:sodium:neoforge-mc1.21.1-0.6.13")
+    implementation("libs:sodium:neoforge-mc1.21.1-0.6.13")
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.
