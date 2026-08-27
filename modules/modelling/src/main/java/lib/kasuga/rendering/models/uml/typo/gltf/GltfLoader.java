@@ -19,7 +19,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.*;
 
-/** glTF 2.0 / GLB parser adapted from kmod's GlbLoader. */
+/** glTF 2.0 / GLB parser used by the modelling pipeline. */
 public final class GltfLoader {
     private static final int TRIANGLES = 4;
 

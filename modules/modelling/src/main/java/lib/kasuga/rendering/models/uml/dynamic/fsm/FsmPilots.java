@@ -5,7 +5,7 @@ import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 
 /**
  * Pilot factory: builds a small reference-style machine for an owner. Generic (uses trigger +
- * whenComplete, not owner fields) so it works for any {@link Owner}. A living example of the DSL.
+ * whenComplete, not owner fields) so it works for any {@code Owner}. A living example of the DSL.
  */
 public final class FsmPilots {
 

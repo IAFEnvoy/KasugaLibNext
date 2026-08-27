@@ -382,7 +382,7 @@ public final class MmdRagdoll implements AutoCloseable {
 
     /**
      * Bounds catch-up work performed by one {@link #step(float)} call. Excess
-     * accumulated time is discarded, matching kmod's fixed-step runtime.
+     * accumulated time is discarded to prevent a persistent catch-up spiral.
      */
     public void setMaxFixedStepsPerUpdate(int maximum) {
         world.setMaxFixedStepsPerUpdate(maximum);
@@ -572,7 +572,7 @@ public final class MmdRagdoll implements AutoCloseable {
                 root.getRotation().mul(rotation, new Quaternionf()).normalize());
     }
 
-    /** Render interpolation mirrors kmod SimpleRagdoll.writePose(alpha). */
+    /** Interpolates the completed physics pose for rendering. */
     private void applyToSkeleton(float interpolationAlpha) {
         Map<Bone, Frames.Pose> desired = new IdentityHashMap<>();
         for (Map.Entry<Bone, Body> entry : bodyByBone.entrySet()) {
@@ -613,7 +613,7 @@ public final class MmdRagdoll implements AutoCloseable {
     }
 
     /**
-     * Mirrors kmod's SimpleRagdoll.writePose: every helper bone keeps its
+     * Every helper bone keeps its
      * animated world-space relation to the nearest physical ancestor. This
      * avoids re-evaluating PMX grant/IK helpers on top of an already physical
      * parent, which otherwise separates the rendered joint from its body
@@ -866,7 +866,7 @@ public final class MmdRagdoll implements AutoCloseable {
             float mass = profileMass(registration.role, length, radius);
 
             // Primary humanoid bodies are generated from the actual skeleton
-            // segment, as in kmod SimpleRagdoll. PMX rigid bodies are authored
+            // segment. PMX rigid bodies are authored
             // mostly for secondary motion and are often poor human colliders.
             PmxRigidBody dynamic = new PmxRigidBody(
                     authored.localName(), authored.universalName(), authored.boneIndex(),

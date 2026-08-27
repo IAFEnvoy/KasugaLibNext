@@ -353,6 +353,13 @@ tasks.register('buildBox3D', Exec) {
     })
     outputs.dir(box3dResourceDirectory)
     doFirst {
+        // CMake writes the JNI library to a path relative to the build directory
+        // (resources/native/<classifier>/), and that directory is only created as a
+        // configure-time side effect of file(MAKE_DIRECTORY). When Gradle treats
+        // configureBox3D as up-to-date (cached CMakeCache.txt) that side effect never
+        // runs, so guarantee the output directory exists here before the linker runs.
+        def outputDir = box3dResourceDirectory.get().file("native/${box3dClassifier}").asFile
+        outputDir.mkdirs()
         commandLine box3dCmakeExecutable, '--build', box3dBuildDirectory.get().asFile.absolutePath,
                 '--config', 'Release', '--target', 'kasuga_box3d'
     }
