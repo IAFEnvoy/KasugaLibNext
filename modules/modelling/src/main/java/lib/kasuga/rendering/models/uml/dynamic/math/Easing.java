@@ -1,5 +1,7 @@
 package lib.kasuga.rendering.models.uml.dynamic.math;
 
+import java.util.Map;
+
 /**
  * Easing function: maps normalized time {@code t ∈ [0,1]} to an eased progress value.
  *
@@ -220,6 +222,42 @@ public interface Easing {
         float dip = 1f - (float) Math.pow(0.25, k);
         float twoU1 = 2f * u - 1f;
         return dip + (1f - dip) * twoU1 * twoU1;
+    }
+
+    //endregion
+
+    //region named registry (AnimationClip codec support)
+
+    /** Canonical snake_case names for the no-arg easings, used by {@code AnimationClip.EASING_CODEC}. */
+    Map<String, Easing> NAMED = Map.ofEntries(
+            Map.entry("linear", linear()),
+            Map.entry("ease_in_quad", easeInQuad()),
+            Map.entry("ease_out_quad", easeOutQuad()),
+            Map.entry("ease_in_out_quad", easeInOutQuad()),
+            Map.entry("ease_in_cubic", easeInCubic()),
+            Map.entry("ease_out_cubic", easeOutCubic()),
+            Map.entry("ease_in_out_cubic", easeInOutCubic()),
+            Map.entry("ease_in_sine", easeInSine()),
+            Map.entry("ease_out_sine", easeOutSine()),
+            Map.entry("ease_in_out_sine", easeInOutSine()),
+            Map.entry("back", back()),
+            Map.entry("elastic", elastic()),
+            Map.entry("bounce", bounce())
+    );
+
+    /** Looks up an easing by its canonical name; {@code null} for unknown names. */
+    static Easing byName(String name) {
+        return NAMED.get(name);
+    }
+
+    /** Canonical name of a registered easing; parameterized easings fall back to {@code "linear"}. */
+    static String nameOf(Easing easing) {
+        for (Map.Entry<String, Easing> entry : NAMED.entrySet()) {
+            if (entry.getValue() == easing) {
+                return entry.getKey();
+            }
+        }
+        return "linear";
     }
 
     //endregion
