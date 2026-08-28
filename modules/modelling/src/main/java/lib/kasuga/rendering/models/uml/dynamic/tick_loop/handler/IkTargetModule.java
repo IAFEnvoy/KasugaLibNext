@@ -1,19 +1,27 @@
-package lib.kasuga.rendering.models.uml.dynamic;
+package lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler;
 
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.ModelTickLoop;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.PendingTransform;
+import lib.kasuga.rendering.models.uml.structure.Model;
 import org.joml.Vector3f;
 
 import java.util.Objects;
 
-/** A world-space position target for one PMX IK controller. */
-public final class IkEffector implements PoseEffector {
+/**
+ * Writes a world-space position target for one PMX IK controller into the
+ * skeleton as a transient, single-tick target. Mounted pre-IK via
+ * {@code loop.addPreIk(...)}; the IK stage consumes (and the next tick's
+ * preamble clears) whatever this module publishes.
+ */
+public final class IkTargetModule implements ModelTickLoopModule {
     private final String controllerBone;
     private volatile Target target;
 
-    public IkEffector(String controllerBone, Vector3f worldTarget) {
+    public IkTargetModule(String controllerBone, Vector3f worldTarget) {
         this(controllerBone, worldTarget, 1f);
     }
 
-    public IkEffector(String controllerBone, Vector3f worldTarget, float weight) {
+    public IkTargetModule(String controllerBone, Vector3f worldTarget, float weight) {
         if (controllerBone == null || controllerBone.isBlank()) {
             throw new IllegalArgumentException("controller bone must not be blank");
         }
@@ -43,13 +51,16 @@ public final class IkEffector implements PoseEffector {
     }
 
     @Override
-    public void apply(PoseEvaluationContext context) {
-        if (context.stage() != Stage.BEFORE_IK) return;
+    public void tick(Model model, PendingTransform[] transforms, ModelTickLoop loop, float deltaTime) {
         Target value = target;
         if (value.enabled) {
-            context.skeleton().setFrameIkTarget(controllerBone, value.position, value.weight);
+            loop.getInstance().getSkeletonInstance()
+                    .setFrameIkTarget(controllerBone, value.position, value.weight);
         }
     }
+
+    @Override
+    public void destroy(Model model) {}
 
     private record Target(Vector3f position, float weight, boolean enabled) {
         private Target {

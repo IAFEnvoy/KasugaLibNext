@@ -21,6 +21,13 @@ public class PendingTransform {
         this.scaleZ = 1.0f;
     }
 
+    /** True when no offset, rotation or scale is pending — alloc-free hot-path check. */
+    public boolean isIdentity() {
+        return offsetX == 0f && offsetY == 0f && offsetZ == 0f
+                && rotationX == 0f && rotationY == 0f && rotationZ == 0f
+                && scaleX == 1f && scaleY == 1f && scaleZ == 1f;
+    }
+
     public PendingTransform copy() {
         PendingTransform copy = new PendingTransform();
         copy.offsetX = offsetX;

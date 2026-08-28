@@ -6,6 +6,7 @@ import lib.kasuga.rendering.models.uml.math.BoneContext;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.basic.Vertex;
+import lib.kasuga.rendering.models.uml.structure.skeleton.Anchor;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Skeleton;
 import lib.kasuga.rendering.models.uml.structure.skeleton.data.SkeletonInstanceData;
@@ -18,8 +19,8 @@ import lib.kasuga.structure.Pair;
 import lombok.Getter;
 import lombok.NonNull;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Matrix4f;
 import org.joml.Quaternionf;
-import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
 
 import java.util.*;
@@ -42,7 +43,45 @@ public class SkeletonInstance {
     private final Set<Bone> dirtyBones;
     private Set<Bone> lastDirtyBones;
 
-    private final Queue<Pair<Bone, Transform>> updateQueue = new LinkedList<>();
+    /** BFS work queue; bones only — parent absolutes are read from {@link #absoluteTransforms}. */
+    private final ArrayDeque<Bone> updateQueue = new ArrayDeque<>();
+    /** Scratch for parent∘bind composition; single-threaded per instance. */
+    private final Transform composeScratch = new Transform();
+    /** Shared read-only identity for bones without an authored local transform. */
+    private static final Transform IDENTITY_TRANSFORM = new Transform();
+
+    // Preallocated scratch for grant/fixed-axis/IK math — these run per bone
+    // per evaluation, so per-call allocation would dominate frame cost.
+    private final Vector3f grantPositionScratch = new Vector3f();
+    private final Quaternionf grantSlerpScratch = new Quaternionf();
+    private final Vector3f fixedAxisDirScratch = new Vector3f();
+    private final Quaternionf fixedAxisRotScratch = new Quaternionf();
+    private final Quaternionf fixedAxisTwistScratch = new Quaternionf();
+    private final Vector3f fixedAxisVecScratch = new Vector3f();
+    private final Vector3f fixedAxisPosScratch = new Vector3f();
+    private final Vector3f fixedAxisScaleScratch = new Vector3f();
+    private final Matrix4f fixedAxisMatrixScratch = new Matrix4f();
+    private final Matrix4f anchorDeltaScratch = new Matrix4f();
+    private final Matrix4f anchorBlendScratch = new Matrix4f();
+    private final Vector3f ikTargetPositionScratch = new Vector3f();
+    private final Vector3f ikLinkPositionScratch = new Vector3f();
+    private final Vector3f ikEffectorPositionScratch = new Vector3f();
+    private final Vector3f ikEffectorDirectionScratch = new Vector3f();
+    private final Vector3f ikTargetDirectionScratch = new Vector3f();
+    private final Vector3f ikAxisScratch = new Vector3f();
+    private final Quaternionf ikWorldDeltaScratch = new Quaternionf();
+    private final Quaternionf ikWorldRotationScratch = new Quaternionf();
+    private final Quaternionf ikLocalDeltaScratch = new Quaternionf();
+    private final Vector3f ikEulerScratch = new Vector3f();
+    private final Matrix4f ikMatrixScratch = new Matrix4f();
+
+    /**
+     * Bumped by every pose-input mutation (bone locals, root, IK targets,
+     * physics writeback). Lets physics skip redundant kinematic re-evaluation
+     * without tracking individual mutators.
+     */
+    @Getter
+    private long mutationEpoch;
 
     @NonNull
     private Transform transform;
@@ -347,42 +386,66 @@ public class SkeletonInstance {
 
     private void evaluateHierarchy() {
         updateQueue.clear();
-        evaluatedTransforms.clear();
-        absoluteTransforms.clear();
         Bone rootBone = skeleton.getRoot();
-        Transform rootLocal = evaluatedLocalTransform(rootBone);
-        Transform rootAbsolute = transform.copy().mul(rootBone.getTransform());
+        Transform rootAbsolute = reusableAbsolute(rootBone);
+        rootAbsolute.set(transform).mul(rootBone.getTransform());
         getMorphTransform(rootBone, rootAbsolute);
-        rootAbsolute.mul(rootLocal);
-        absoluteTransforms.put(rootBone, rootAbsolute);
-        updateQueue.add(Pair.of(rootBone, rootAbsolute));
+        rootAbsolute.mul(evaluatedLocalTransform(rootBone));
+        updateQueue.add(rootBone);
         recursiveUpdate();
     }
 
     private void recursiveUpdate() {
-        Transform cache = new Transform();
         while (!updateQueue.isEmpty()) {
-            Pair<Bone, Transform> boneTransformPair = updateQueue.poll();
-            Bone bone = boneTransformPair.getFirst();
-            Transform parentTransform = boneTransformPair.getSecond();
-
+            Bone bone = updateQueue.poll();
+            Transform parentTransform = absoluteTransforms.get(bone);
             Bone[] children = bone.getChildren();
-            if (children == null) continue;
+            if (parentTransform == null || children == null) continue;
             for (Bone child : children) {
                 if (child == null) continue;
-                cache.set(child.getTransform());
-                getMorphTransform(child, cache);
-                cache = parentTransform.copy().mul(cache);
-                cache.mul(evaluatedLocalTransform(child));
-                Transform t = cache.copy();
-                absoluteTransforms.put(child, t);
-                updateQueue.add(Pair.of(child, t));
+                Transform childAbsolute = reusableAbsolute(child);
+                // absolute = parent ∘ bind ∘ morph ∘ evaluated-local, all in
+                // preallocated storage: zero steady-state allocation per bone.
+                composeScratch.set(parentTransform);
+                childAbsolute.set(child.getTransform());
+                getMorphTransform(child, childAbsolute);
+                composeScratch.mul(childAbsolute);
+                childAbsolute.set(composeScratch).mul(evaluatedLocalTransform(child));
+                updateQueue.add(child);
             }
         }
     }
 
+    /** Returns the map-stored absolute instance for a bone, allocating on first use only. */
+    private Transform reusableAbsolute(Bone bone) {
+        Transform existing = absoluteTransforms.get(bone);
+        if (existing == null) {
+            existing = new Transform();
+            absoluteTransforms.put(bone, existing);
+        }
+        return existing;
+    }
+
+    /** Returns the map-stored evaluated-local instance for a bone, allocating on first use only. */
+    private Transform reusableEvaluated(Bone bone) {
+        Transform existing = evaluatedTransforms.get(bone);
+        if (existing == null) {
+            existing = new Transform();
+            evaluatedTransforms.put(bone, existing);
+        }
+        return existing;
+    }
+
+    /**
+     * Composes the local pose of a bone (authored local + grant/fixed-axis +
+     * IK correction + physics override) into its stored evaluated slot.
+     * Callers must treat the returned instance as read-only — it aliases the
+     * {@link #evaluatedTransforms} entry.
+     */
     private Transform evaluatedLocalTransform(Bone bone) {
-        Transform result = transforms.getOrDefault(bone, new Transform()).copy();
+        Transform result = reusableEvaluated(bone);
+        Transform authored = transforms.get(bone);
+        result.set(authored == null ? IDENTITY_TRANSFORM : authored);
         if (bone.getBoneData() instanceof PmxBone pmx) {
             applyGrant(result, pmx);
             applyFixedAxis(result, pmx);
@@ -391,7 +454,6 @@ public class SkeletonInstance {
         if (ik != null) result.mul(ik);
         Transform physics = physicsTransforms.get(bone);
         if (physics != null) result.set(physics);
-        evaluatedTransforms.put(bone, result.copy());
         return result;
     }
 
@@ -403,6 +465,47 @@ public class SkeletonInstance {
         if (physicsTransforms.isEmpty()) return;
         physicsTransforms.clear();
         requestFullUpdate();
+    }
+
+    /**
+     * Computes the current world transform of a skeleton anchor, following the
+     * same linear-blend rule as skinned vertices: the anchor's authored
+     * transform is deformed by the weighted bind-to-current deltas of its
+     * bound bones. Returns {@code null} when no anchor of that name exists or
+     * none of its bones have been evaluated yet.
+     */
+    @Nullable
+    public Transform anchorTransform(String anchorName) {
+        Anchor anchor = skeleton.getAnchor(anchorName);
+        if (anchor == null) return null;
+        Pair<Bone, Float>[] weights = anchor.getBinding().getWeights();
+        // Weighted matrix blend accumulated component-wise — no per-bone
+        // matrix allocations on the hot path.
+        float m00 = 0f, m01 = 0f, m02 = 0f, m03 = 0f;
+        float m10 = 0f, m11 = 0f, m12 = 0f, m13 = 0f;
+        float m20 = 0f, m21 = 0f, m22 = 0f, m23 = 0f;
+        float m30 = 0f, m31 = 0f, m32 = 0f, m33 = 0f;
+        boolean blendedAnyBone = false;
+        for (Pair<Bone, Float> weight : weights) {
+            Bone bone = weight.getFirst();
+            Transform absolute = absoluteTransforms.get(bone);
+            Pair<Transform, Transform> binding = skeleton.getBoneTransforms().get(bone);
+            if (absolute == null || binding == null) continue;
+            // bind^-1 * current == deformation from bind pose to the evaluated pose.
+            Matrix4f delta = anchorDeltaScratch.set(binding.getSecond().transform())
+                    .mul(absolute.transform());
+            float w = weight.getSecond();
+            m00 += w * delta.m00(); m01 += w * delta.m01(); m02 += w * delta.m02(); m03 += w * delta.m03();
+            m10 += w * delta.m10(); m11 += w * delta.m11(); m12 += w * delta.m12(); m13 += w * delta.m13();
+            m20 += w * delta.m20(); m21 += w * delta.m21(); m22 += w * delta.m22(); m23 += w * delta.m23();
+            m30 += w * delta.m30(); m31 += w * delta.m31(); m32 += w * delta.m32(); m33 += w * delta.m33();
+            blendedAnyBone = true;
+        }
+        if (!blendedAnyBone) return null;
+        Matrix4f blended = anchorBlendScratch.set(m00, m01, m02, m03,
+                m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33);
+        blended.mul(anchor.getTransform().transform());
+        return new Transform().set(blended);
     }
 
     /** Applies a complete set of physics-produced local bone transforms. */
@@ -422,26 +525,30 @@ public class SkeletonInstance {
         Bone source = pmxBone(inherit.parentIndex().intValue());
         if (source == null) return;
         Transform sourceTransform = evaluatedTransforms.getOrDefault(source,
-                transforms.getOrDefault(source, new Transform()));
+                transforms.getOrDefault(source, IDENTITY_TRANSFORM));
         float weight = inherit.weight();
         if (pmx.flags.inheritParentTranslation) {
-            result.translateWorld(new Vector3f(sourceTransform.getPosition()).mul(weight));
+            Vector3f position = grantPositionScratch.set(sourceTransform.transform().m30(),
+                    sourceTransform.transform().m31(), sourceTransform.transform().m32());
+            result.translateWorld(position.mul(weight));
         }
         if (pmx.flags.inheritParentRotation) {
-            result.mul(new Quaternionf().identity().slerp(sourceTransform.getRotation(), weight));
+            result.mul(grantSlerpScratch.identity().slerp(sourceTransform.getRotation(), weight));
         }
     }
 
     private void applyFixedAxis(Transform result, PmxBone pmx) {
         if (!pmx.flags.isAxisFixed || pmx.fixedAxis == null || pmx.fixedAxis.lengthSquared() < 1e-8f) return;
-        Vector3f axis = new Vector3f(pmx.fixedAxis).normalize();
-        Quaternionf rotation = result.getRotation();
-        Vector3f vector = new Vector3f(rotation.x, rotation.y, rotation.z);
+        Vector3f axis = fixedAxisDirScratch.set(pmx.fixedAxis).normalize();
+        Quaternionf rotation = fixedAxisRotScratch.setFromUnnormalized(result.transform()).normalize();
+        Vector3f vector = fixedAxisVecScratch.set(rotation.x, rotation.y, rotation.z);
         float projection = vector.dot(axis);
-        Quaternionf twist = new Quaternionf(axis.x * projection, axis.y * projection,
+        Quaternionf twist = fixedAxisTwistScratch.set(axis.x * projection, axis.y * projection,
                 axis.z * projection, rotation.w).normalize();
-        result.set(new org.joml.Matrix4f().translationRotateScale(
-                result.getPosition(), twist, result.transform().getScale(new Vector3f())));
+        Matrix4f matrix = fixedAxisMatrixScratch.translationRotateScale(
+                result.transform().getTranslation(fixedAxisPosScratch), twist,
+                result.transform().getScale(fixedAxisScaleScratch));
+        result.set(matrix);
     }
 
     private void solvePmxIk() {
@@ -455,38 +562,47 @@ public class SkeletonInstance {
     private void solveIk(Bone controller, PmxIKBone ik) {
         Bone effector = pmxBone(ik.boneIndex.intValue());
         if (effector == null || absoluteTransforms.get(controller) == null) return;
-        Vector3f authoredTarget = absoluteTransforms.get(controller).getPosition();
+        Matrix4f controllerAbsolute = absoluteTransforms.get(controller).transform();
         IkTarget override = frameIkTargets.getOrDefault(controller, ikTargets.get(controller));
-        Vector3f targetPosition = override == null ? authoredTarget
-                : authoredTarget.lerp(override.position, override.weight, new Vector3f());
+        // Lives for the whole controller solve; never aliased by inner-loop scratches.
+        Vector3f targetPosition = ikTargetPositionScratch.set(controllerAbsolute.m30(),
+                controllerAbsolute.m31(), controllerAbsolute.m32());
+        if (override != null) targetPosition.lerp(override.position, override.weight);
         int iterations = Math.min(Math.max(ik.CCD_Count, 0), 256);
         boolean corrected = false;
         for (int iteration = 0; iteration < iterations; iteration++) {
             boolean converged = false;
             for (PmxIKChain chain : ik.chains) {
                 Bone link = pmxBone(chain.boneIndex.intValue());
-                if (link == null || absoluteTransforms.get(link) == null) continue;
-                Vector3f linkPosition = absoluteTransforms.get(link).getPosition();
-                Vector3f effectorDirection = absoluteTransforms.get(effector).getPosition()
-                        .sub(linkPosition, new Vector3f());
-                Vector3f targetDirection = new Vector3f(targetPosition)
-                        .sub(linkPosition, new Vector3f());
+                Transform linkState = link == null ? null : absoluteTransforms.get(link);
+                if (linkState == null) continue;
+                Matrix4f linkAbsolute = linkState.transform();
+                Vector3f linkPosition = ikLinkPositionScratch.set(linkAbsolute.m30(),
+                        linkAbsolute.m31(), linkAbsolute.m32());
+                Matrix4f effectorAbsolute = absoluteTransforms.get(effector).transform();
+                Vector3f effectorDirection = ikEffectorDirectionScratch.set(effectorAbsolute.m30(),
+                        effectorAbsolute.m31(), effectorAbsolute.m32()).sub(linkPosition);
+                Vector3f targetDirection = ikTargetDirectionScratch.set(targetPosition).sub(linkPosition);
                 if (effectorDirection.lengthSquared() < 1e-10f || targetDirection.lengthSquared() < 1e-10f) continue;
                 effectorDirection.normalize();
                 targetDirection.normalize();
                 float angle = (float) Math.acos(Math.clamp(effectorDirection.dot(targetDirection), -1f, 1f));
                 angle = Math.min(angle, Math.abs(ik.boneRotationLimit));
                 if (angle < 1e-6f) continue;
-                Vector3f axis = effectorDirection.cross(targetDirection, new Vector3f());
+                Vector3f axis = effectorDirection.cross(targetDirection, ikAxisScratch);
                 if (axis.lengthSquared() < 1e-10f) {
                     if (effectorDirection.dot(targetDirection) > 0f) continue;
-                    axis = Math.abs(effectorDirection.x) < 0.9f
-                            ? effectorDirection.cross(new Vector3f(1, 0, 0), axis)
-                            : effectorDirection.cross(new Vector3f(0, 1, 0), axis);
+                    if (Math.abs(effectorDirection.x) < 0.9f) {
+                        axis.set(effectorDirection).cross(1f, 0f, 0f);
+                    } else {
+                        axis.set(effectorDirection).cross(0f, 1f, 0f);
+                    }
                 }
-                Quaternionf worldDelta = new Quaternionf(new AxisAngle4f(angle, axis.normalize()));
-                Quaternionf worldRotation = absoluteTransforms.get(link).getRotation();
-                Quaternionf delta = new Quaternionf(worldRotation).invert()
+                Vector3f normalizedAxis = axis.normalize();
+                Quaternionf worldDelta = ikWorldDeltaScratch.rotationAxis(angle,
+                        normalizedAxis.x, normalizedAxis.y, normalizedAxis.z);
+                Quaternionf worldRotation = ikWorldRotationScratch.setFromUnnormalized(linkAbsolute).normalize();
+                Quaternionf delta = ikLocalDeltaScratch.set(worldRotation).invert()
                         .mul(worldDelta)
                         .mul(worldRotation)
                         .normalize();
@@ -495,7 +611,8 @@ public class SkeletonInstance {
                 if (chain.useRotationLimit && chain.limit != null) clampIk(correction, chain.limit);
                 corrected = true;
                 evaluateHierarchyFrom(link, effector);
-                if (absoluteTransforms.get(effector).getPosition()
+                Matrix4f refreshedEffector = absoluteTransforms.get(effector).transform();
+                if (ikLinkPositionScratch.set(refreshedEffector.m30(), refreshedEffector.m31(), refreshedEffector.m32())
                         .distanceSquared(targetPosition) < 1e-8f) {
                     converged = true;
                     break;
@@ -525,11 +642,13 @@ public class SkeletonInstance {
         }
 
         updateQueue.clear();
-        Transform rootAbsolute = parentAbsolute.copy().mul(root.getTransform());
+        Transform rootAbsolute = reusableAbsolute(root);
+        composeScratch.set(parentAbsolute);
+        rootAbsolute.set(root.getTransform());
         getMorphTransform(root, rootAbsolute);
-        rootAbsolute.mul(evaluatedLocalTransform(root));
-        absoluteTransforms.put(root, rootAbsolute);
-        updateQueue.add(Pair.of(root, rootAbsolute));
+        composeScratch.mul(rootAbsolute);
+        rootAbsolute.set(composeScratch).mul(evaluatedLocalTransform(root));
+        updateQueue.add(root);
         recursiveUpdate();
     }
 
@@ -541,12 +660,12 @@ public class SkeletonInstance {
     }
 
     private void clampIk(Transform correction, IKLimitation limit) {
-        Vector3f euler = correction.getRotation().getEulerAnglesXYZ(new Vector3f());
+        Vector3f euler = correction.getRotation().getEulerAnglesXYZ(ikEulerScratch);
         euler.set(
                 Math.clamp(euler.x, limit.min().x, limit.max().x),
                 Math.clamp(euler.y, limit.min().y, limit.max().y),
                 Math.clamp(euler.z, limit.min().z, limit.max().z));
-        correction.set(new org.joml.Matrix4f().rotationXYZ(euler.x, euler.y, euler.z));
+        correction.set(ikMatrixScratch.rotationXYZ(euler.x, euler.y, euler.z));
     }
 
     private Bone pmxBone(int pmxIndex) {
@@ -562,12 +681,14 @@ public class SkeletonInstance {
     private void markDirty(Bone bone) {
         dirtyBones.add(bone);
         shouldUpdate = true;
+        mutationEpoch++;
     }
 
     private void requestFullUpdate() {
         shouldUpdate = true;
         fullUpdateRequested = true;
         dirtyBones.clear();
+        mutationEpoch++;
     }
 
     public boolean isMorphUpdated() {

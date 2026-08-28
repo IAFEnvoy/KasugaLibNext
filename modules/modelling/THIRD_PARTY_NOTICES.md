@@ -1,13 +1,5 @@
 # Third-party notices
 
-## kmod reference implementation
-
-The primary-body profile, physical-ancestor topology lookup, and rigid
-helper-bone following are adapted from the project owner's kmod reference:
-
-- `src/main/kotlin/engine/physics/SimpleRagdoll.kt`
-- `src/test/kotlin/engine/physics/SimpleRagdollTest.kt`
-
 ## Box3D
 
 The modelling module vendors and links the Box3D rigid-body engine at commit

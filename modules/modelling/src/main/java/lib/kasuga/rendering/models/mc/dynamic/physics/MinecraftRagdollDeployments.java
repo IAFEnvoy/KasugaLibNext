@@ -4,6 +4,7 @@ import lib.kasuga.rendering.models.mc.registry.PipelineRegistry;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
 import lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll;
+import lib.kasuga.rendering.models.uml.dynamic.physics.box3d.NativeBox3D;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -55,6 +56,7 @@ public final class MinecraftRagdollDeployments {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(resourceManager, "resourceManager");
         Objects.requireNonNull(levelSupplier, "levelSupplier");
+        if (!NativeBox3D.availableOrWarn()) return Optional.empty();
 
         DeploymentHandle previous = DEPLOYMENTS.get(request.instanceId);
         if (previous != null) {
@@ -95,6 +97,10 @@ public final class MinecraftRagdollDeployments {
         try {
             instance.getSkeletonInstance().transformRoot(request.rootTransform);
             MmdRagdoll ragdoll = config.attach(instance, levelSupplier, request.applyInitialState);
+            if (ragdoll == null) {
+                pipeline.removeInstance(resolvedModel, request.instanceId);
+                return Optional.empty();
+            }
             pipeline.addToRenderer(resolvedModel, request.instanceId, BRIDGE, BACKEND);
             DeploymentHandle handle = new DeploymentHandle(request, resolvedModel, configResource,
                     pipeline, instance, ragdoll);

@@ -1,10 +1,12 @@
 package lib.kasuga.rendering.models.uml.dynamic.physics.box3d;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("box3d")
 class NativeBox3DTest {
     @Test
     void dynamicBoxFallsAndRestsOnStaticGround() {

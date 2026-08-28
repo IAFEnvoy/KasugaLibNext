@@ -6,6 +6,8 @@ import lib.kasuga.rendering.models.uml.dynamic.physics.core.CollisionEnvironment
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.Frames;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.GenericRigidBody;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.RigidBodyWorld;
+import lib.kasuga.rendering.models.uml.dynamic.physics.core.SimBody;
+import lib.kasuga.rendering.models.uml.dynamic.physics.box3d.NativeBox3D;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -29,8 +31,11 @@ import org.joml.Vector3f;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Official "physics block" playground built on the generic rigid-body engine.
@@ -46,6 +51,14 @@ public final class MinecraftBlockPhysics {
     /** Upper bound on simultaneously simulated physics blocks. */
     public static final int MAX_PROPS = 256;
     private static final float PLAYER_PROXY_MASS = 4f;
+    /** Horizontal shrink applied to the player proxy to avoid edge-brush kicks. */
+    private static final float PLAYER_PROXY_SHRINK = 0.85f;
+    /** Player proxy collision group; group 0 (terrain) is excluded via non-collision mask. */
+    private static final int PLAYER_COLLISION_GROUP = 15;
+    /** Per-axis cap on the contact correction applied to the player per frame, in blocks. */
+    static final float MAX_CORRECTION = 0.15f;
+    /** Contacts with |normal.y| at or above this count as ground support. */
+    static final float SUPPORT_NORMAL_Y = 0.55f;
 
     private static final ArrayDeque<MinecraftBlockRigidBody> PROPS = new ArrayDeque<>();
     private static RigidBodyWorld world;
@@ -53,13 +66,12 @@ public final class MinecraftBlockPhysics {
     private static ClientLevel boundLevel;
     private static GenericRigidBody playerCollider;
     private static final Vector3f playerHalfExtents = new Vector3f();
-    private static final Vector3f playerInputCenter = new Vector3f();
 
     private static final RigidBodyWorld.KinematicDriver ENTITY_DRIVER = new RigidBodyWorld.KinematicDriver() {
         @Override public void beginStep(RigidBodyWorld simulatedWorld) {}
 
         @Override
-        public Frames.Pose kinematicTarget(lib.kasuga.rendering.models.uml.dynamic.physics.core.SimBody body) {
+        public Frames.Pose kinematicTarget(SimBody body) {
             if (body == playerCollider) {
                 LocalPlayer player = Minecraft.getInstance().player;
                 if (player != null) return playerPose(player);
@@ -80,6 +92,7 @@ public final class MinecraftBlockPhysics {
      */
     public static synchronized Optional<MinecraftBlockRigidBody> spawn(
             ClientLevel level, Vec3 center, BlockState state) {
+        if (!NativeBox3D.availableOrWarn()) return Optional.empty();
         Objects_requireLevel(level);
         if (PROPS.size() >= MAX_PROPS) {
             MinecraftBlockRigidBody oldest = PROPS.pollFirst();
@@ -176,24 +189,40 @@ public final class MinecraftBlockPhysics {
      * feet into it. The finite proxy lets the contact solver move the player
      * back onto the supporting face while transferring only a small response
      * to the block.
+     *
+     * <p>The proxy never collides with static terrain (collision group 0):
+     * vanilla already resolves player-vs-world, and a proxy/terrain manifold
+     * only injects solver noise between the player and props resting on the
+     * ground. Spectators and dead players get no proxy at all.</p>
      */
     private static synchronized void syncPlayerCollider(LocalPlayer player) {
-        if (world == null || player == null || PROPS.isEmpty()) {
+        if (world == null || player == null || PROPS.isEmpty()
+                || player.isSpectator() || !player.isAlive()) {
             removePlayerCollider();
             return;
         }
         AABB bounds = player.getBoundingBox();
-        Vector3f half = new Vector3f((float)(bounds.getXsize() * 0.5),
-                (float)(bounds.getYsize() * 0.5), (float)(bounds.getZsize() * 0.5));
+        // Slightly smaller than the authoritative AABB so brushing past a
+        // block edge does not kick it; contact response still supports the
+        // player standing on top.
+        Vector3f half = new Vector3f(
+                (float)(bounds.getXsize() * 0.5 * PLAYER_PROXY_SHRINK),
+                (float)(bounds.getYsize() * 0.5),
+                (float)(bounds.getZsize() * 0.5 * PLAYER_PROXY_SHRINK));
         Frames.Pose pose = playerPose(player);
         if (playerCollider == null || !half.equals(playerHalfExtents, 1e-4f)) {
             removePlayerCollider();
             playerHalfExtents.set(half);
             playerCollider = GenericRigidBody.box(half, PLAYER_PROXY_MASS)
                     .at(pose.position)
-                    .friction(0.65f)
+                    // Near-frictionless: tangential solver coupling with the
+                    // walked-on props must not drag them or the proxy sideways;
+                    // ground feel is synthesized from contacts, not friction.
+                    .friction(0.05f)
                     .damping(8f, 8f)
-                    .filter(15, 0);
+                    // Group 15 with group 0 (terrain + default bodies) excluded;
+                    // props live in MinecraftBlockRigidBody.COLLISION_GROUP.
+                    .filter(PLAYER_COLLISION_GROUP, 1);
             playerCollider.wireWake(world::wake);
             world.add(playerCollider);
             world.setGravityScale(playerCollider, 0f);
@@ -202,7 +231,6 @@ public final class MinecraftBlockPhysics {
             // frame. Its solved displacement is contact response only.
             playerCollider.teleport(pose.position, pose.rotation);
         }
-        playerInputCenter.set(pose.position);
     }
 
     private static Frames.Pose playerPose(LocalPlayer player) {
@@ -217,50 +245,86 @@ public final class MinecraftBlockPhysics {
         if (playerCollider != null && world != null) world.remove(playerCollider);
         playerCollider = null;
         playerHalfExtents.zero();
-        playerInputCenter.zero();
-    }
-
-    /** Applies native penetration and impact information back to the local Minecraft player. */
-    private static synchronized void resolvePlayerContacts(LocalPlayer player) {
-        if (player == null || playerCollider == null || world == null) return;
-        List<BodyContact> contacts = world.contacts(playerCollider).stream()
-                .filter(contact -> contact.other().isPresent() && PROPS.stream()
-                        .anyMatch(prop -> prop.body() == contact.other().get()))
-                .toList();
-        if (contacts.isEmpty()) return;
-        Vector3f correction = new Vector3f(playerCollider.positionRef()).sub(playerInputCenter);
-        Vector3f residual = penetrationCorrection(contacts);
-        if (residual.lengthSquared() > correction.lengthSquared()) correction.set(residual);
-        float correctionLength = correction.length();
-        if (correctionLength > 0.15f) correction.mul(0.15f / correctionLength);
-        if (correction.lengthSquared() > 0f) {
-            player.setPos(player.getX() + correction.x,
-                    player.getY() + correction.y, player.getZ() + correction.z);
-        }
-        Vec3 velocity = clipVelocityAgainstContacts(player.getDeltaMovement(), contacts);
-        player.setDeltaMovement(velocity);
-        boolean supported = contacts.stream().anyMatch(contact ->
-                contact.touching() && contact.normal().y > 0.55f);
-        if (supported && velocity.y <= 1e-7d) {
-            player.setOnGround(true);
-        }
     }
 
     /**
-     * Chooses one minimum-translation direction instead of combining unrelated
-     * manifold axes. The small per-frame cap avoids a stale/deep contact
-     * teleporting the player while Box3D moves the dynamic prop out of overlap.
+     * Applies native penetration and impact information back to the local
+     * Minecraft player.
+     *
+     * <p>The correction comes exclusively from the deepest-contact minimum
+     * translation vector — never from the proxy's solved displacement. The
+     * proxy is teleported onto vanilla's AABB every frame, so its pose delta
+     * contains solver reaction against the walk direction; feeding that back
+     * made ground movement rubber-band (the "sliding on ice" report).
+     * Tangential motion from top-like contacts is discarded: standing on a
+     * settling prop stack must not drift the player sideways.</p>
      */
-    static Vector3f penetrationCorrection(List<BodyContact> contacts) {
-        Vector3f result = new Vector3f();
-        float deepest = 0f;
+    private static synchronized void resolvePlayerContacts(LocalPlayer player) {
+        if (player == null || playerCollider == null || world == null || PROPS.isEmpty()) return;
+        Set<SimBody> propBodies = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (MinecraftBlockRigidBody prop : PROPS) propBodies.add(prop.body());
+        List<BodyContact> contacts = world.contacts(playerCollider).stream()
+                .filter(contact -> contact.other().isPresent() && propBodies.contains(contact.other().get()))
+                .toList();
+        if (contacts.isEmpty()) return;
+
+        Vec3 correction = playerCorrection(contacts);
+        if (correction.lengthSqr() > 0d) {
+            player.setPos(player.getX() + correction.x,
+                    player.getY() + correction.y, player.getZ() + correction.z);
+        }
+
+        Vec3 velocity = clipVelocityAgainstContacts(player.getDeltaMovement(), contacts);
+        if (supportedOnProps(contacts)) {
+            // Vanilla clears onGround every tick (no real collision beneath the
+            // props), so it must be re-asserted here: ground friction, jump
+            // availability and fall-distance reset all hang off this flag.
+            player.setOnGround(true);
+            player.fallDistance = 0f;
+            if (velocity.y < 0d) velocity = new Vec3(velocity.x, 0d, velocity.z);
+        }
+        player.setDeltaMovement(velocity);
+    }
+
+    /**
+     * Minimum translation of the deepest contact, split by orientation:
+     * vertical lift from top/bottom-like contacts always applies; horizontal
+     * push only from side-like contacts (walking into a stack stops like a
+     * real wall). Both components are clamped so a stale or deep manifold
+     * cannot teleport the player.
+     */
+    static Vec3 playerCorrection(List<BodyContact> contacts) {
+        BodyContact deepest = deepestContact(contacts);
+        if (deepest == null) return Vec3.ZERO;
+        float depth = -deepest.separation();
+        if (depth <= 0.0005f) return Vec3.ZERO;
+        Vector3f normal = deepest.normal();
+        float magnitude = Math.min(depth + 0.001f, MAX_CORRECTION);
+        boolean topLike = Math.abs(normal.y) >= SUPPORT_NORMAL_Y;
+        double x = topLike ? 0d : Mth.clamp(normal.x * magnitude, -MAX_CORRECTION, MAX_CORRECTION);
+        double y = Mth.clamp(normal.y * magnitude, -MAX_CORRECTION, MAX_CORRECTION);
+        double z = topLike ? 0d : Mth.clamp(normal.z * magnitude, -MAX_CORRECTION, MAX_CORRECTION);
+        return new Vec3(x, y, z);
+    }
+
+    /** True when at least one touching contact pushes upward — i.e. the props support the player. */
+    static boolean supportedOnProps(List<BodyContact> contacts) {
+        for (BodyContact contact : contacts) {
+            if (contact.touching() && contact.normal().y >= SUPPORT_NORMAL_Y) return true;
+        }
+        return false;
+    }
+
+    private static BodyContact deepestContact(List<BodyContact> contacts) {
+        BodyContact deepest = null;
+        float deepestDepth = 0f;
         for (BodyContact contact : contacts) {
             float depth = -contact.separation();
-            if (depth <= 0.0005f || depth <= deepest) continue;
-            deepest = depth;
-            result.set(contact.normal()).mul(Math.min(depth + 0.001f, 0.1f));
+            if (depth <= deepestDepth) continue;
+            deepestDepth = depth;
+            deepest = contact;
         }
-        return result;
+        return deepest;
     }
 
     /**

@@ -93,12 +93,12 @@ Java 代码不会按 `maribel`、`renko` 或任何骨骼名称写死选择逻辑
 
 - `bodies`：主体刚体拓扑。PMX 中 `rigid_body` 与 `parent` 是 PMX 刚体索引；glTF profile 中它们是
   manifest 所属模型的 glTF node index；根节点省略 `parent`。
-  MMD 适配器会像 kmod 一样优先沿真实骨骼树寻找最近的已注册物理祖先；只有找不到物理祖先时
+  MMD 适配器会优先沿真实骨骼树寻找最近的已注册物理祖先；只有找不到物理祖先时
   才使用 `parent` 桥接分离的 PMX 分支（例如同属“腰”下的“上半身”和“下半身”）。
 - `role`：`pelvis`、`spine`、`chest`、`neck`、`head`、`shoulder`、`upper_arm`、
   `lower_arm`、`hand`、`upper_leg`、`lower_leg`、`foot` 或 `toe`。
 - 顶层 `limits`：可按 role 统一声明 swing/twist 限位，避免每个 body 重复；body 自身字段优先。
-- 人体 profile 默认使用 kmod 风格的 swing/twist 限位：`max_swing_degrees` 控制圆锥摆动，
+- 人体 profile 默认使用 swing/twist 限位：`max_swing_degrees` 控制圆锥摆动，
   `min_twist_degrees` / `max_twist_degrees` 控制沿骨骼轴的扭转。`limit_stiffness` 是旧 profile
   兼容字段；Box3D 自行管理限位修正强度。
   三个角度字段必须一起提供。省略时使用 `role` 对应的人体默认值。
@@ -114,7 +114,7 @@ Java 代码不会按 `maribel`、`renko` 或任何骨骼名称写死选择逻辑
 - `simulation.max_linear_speed`：映射到 Box3D 世界最大线速度。`max_angular_speed` 是旧配置兼容字段；
   当前 Box3D API 没有对应的世界级设置。
 - `simulation.max_fixed_steps_per_update`：单次 tick/帧更新最多补算的固定世界步，默认 `12`，
-  与 kmod 一致。超过预算的积压时间会被丢弃，防止一次卡顿造成持续的 physics spiral。
+  超过预算的积压时间会被丢弃，防止一次卡顿造成持续的 physics spiral。
 - `sleeping.enabled`：是否启用整组刚体休眠。调试碰撞或持续空中模拟时建议关闭。
 - `sleeping.linear_speed` / `angular_speed`：按各 shape 的尺寸折算为 Box3D 每刚体的最远点速度阈值。
   `delay_seconds` 是旧配置兼容字段；实际休眠延迟由 Box3D 固定管理。

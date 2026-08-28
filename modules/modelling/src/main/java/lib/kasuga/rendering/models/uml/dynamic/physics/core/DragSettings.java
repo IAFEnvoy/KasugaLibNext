@@ -1,6 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.physics.core;
 
-/** Tunable soft mouse/anchor constraint, using the defaults from kmod SimpleRagdoll. */
+/** Tunable soft mouse/anchor constraint with stable interactive defaults. */
 public record DragSettings(float positionSlop, float positionStiffness,
                            float maxPositionCorrection, float biasRate,
                            float maxBiasSpeed, float maxTargetSpeed,

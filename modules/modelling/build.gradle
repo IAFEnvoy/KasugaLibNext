@@ -316,19 +316,35 @@ def box3dSourceDirectory = layout.projectDirectory.dir('src/main/native')
 def box3dBuildDirectory = layout.buildDirectory.dir('native/box3d')
 def box3dResourceDirectory = box3dBuildDirectory.map { it.dir('resources') }
 def box3dResourceOverlay = providers.gradleProperty('kasugaBox3DNativeResources')
+def box3dCmakeExecutable = {
+    def path = System.getenv('PATH')
+    if (path == null || path.isBlank()) return null
+    def suffixes = box3dOs == 'windows' ? ['.exe', '.cmd', '.bat', ''] : ['']
+    return path.split(java.util.regex.Pattern.quote(File.pathSeparator)).findResult { directory ->
+        suffixes.collect { suffix -> new File(directory, "cmake${suffix}") }
+                .find { candidate -> candidate.isFile() && (box3dOs == 'windows' || candidate.canExecute()) }
+                ?.absolutePath
+    }
+}.call()
+def box3dCanBuild = box3dCmakeExecutable != null
 def box3dJavaHome = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(21)
 }.map { it.metadata.installationPath.asFile.absolutePath.replace('\\', '/') }
 
+if (!box3dCanBuild) {
+    logger.warn('CMake was not found on PATH. Box3D native support and its tests will be omitted; Java-only modelling features will still be built.')
+}
+
 tasks.register('configureBox3D', Exec) {
     description = 'Configures the vendored Box3D JNI library for the current platform.'
     group = 'build'
+    onlyIf('CMake is available') { box3dCanBuild }
     inputs.files(fileTree(box3dSourceDirectory) {
         include '**/*.c', '**/*.h', '**/CMakeLists.txt', 'BOX3D_VERSION'
     })
     outputs.file(box3dBuildDirectory.map { it.file('CMakeCache.txt') })
     doFirst {
-        commandLine 'cmake',
+        commandLine box3dCmakeExecutable,
                 '-S', box3dSourceDirectory.asFile.absolutePath,
                 '-B', box3dBuildDirectory.get().asFile.absolutePath,
                 '-DCMAKE_BUILD_TYPE=Release',
@@ -341,6 +357,7 @@ tasks.register('buildBox3D', Exec) {
     description = 'Builds the Box3D JNI library for the current platform.'
     group = 'build'
     dependsOn tasks.named('configureBox3D')
+    onlyIf('CMake is available') { box3dCanBuild }
     inputs.files(fileTree(box3dSourceDirectory) {
         include '**/*.c', '**/*.h', '**/CMakeLists.txt', 'BOX3D_VERSION'
     })
@@ -353,14 +370,16 @@ tasks.register('buildBox3D', Exec) {
         // runs, so guarantee the output directory exists here before the linker runs.
         def outputDir = box3dResourceDirectory.get().file("native/${box3dClassifier}").asFile
         outputDir.mkdirs()
-        commandLine 'cmake', '--build', box3dBuildDirectory.get().asFile.absolutePath,
+        commandLine box3dCmakeExecutable, '--build', box3dBuildDirectory.get().asFile.absolutePath,
                 '--config', 'Release', '--target', 'kasuga_box3d'
     }
 }
 
 tasks.named('processResources') {
     dependsOn tasks.named('buildBox3D')
-    from(box3dResourceDirectory)
+    if (box3dCanBuild) {
+        from(box3dResourceDirectory)
+    }
     if (box3dResourceOverlay.isPresent()) {
         from(file(box3dResourceOverlay.get()))
     }
@@ -375,10 +394,14 @@ tasks.named('processResources') {
 
 tasks.withType(Test).configureEach {
     dependsOn tasks.named('buildBox3D')
-    doFirst {
+    if (box3dCanBuild) {
         def mappedName = System.mapLibraryName('kasuga_box3d')
         def library = box3dResourceDirectory.get().file("native/${box3dClassifier}/${mappedName}").asFile
-        jvmArgs "-Dkasuga.box3d.library=${library.absolutePath}"
+        jvmArgumentProviders.add({ ["-Dkasuga.box3d.library=${library.absolutePath}"] } as CommandLineArgumentProvider)
+    } else {
+        useJUnitPlatform {
+            excludeTags 'box3d'
+        }
     }
 }
 

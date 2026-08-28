@@ -51,6 +51,7 @@ final class Box3DBackend implements AutoCloseable {
     private final Map<SimBody, BodyHandle> bodies = new IdentityHashMap<>();
     private final Map<Long, SimBody> bodiesByNativeId = new java.util.HashMap<>();
     private final Map<BallJoint, Long> joints = new IdentityHashMap<>();
+    private final Map<PhysicsJoint, Long> genericJoints = new IdentityHashMap<>();
     private final Map<PlaneCollider, Long> planes = new IdentityHashMap<>();
     private final Map<StaticBoxCollider, Long> staticBoxes = new IdentityHashMap<>();
     private final List<StaticEnvironmentMesh> environmentMeshes = new ArrayList<>();
@@ -201,6 +202,76 @@ final class Box3DBackend implements AutoCloseable {
     void removeJoint(BallJoint joint) {
         Long removed = joints.remove(joint);
         if (removed != null && removed != 0L) NativeBox3D.destroyJoint(removed);
+    }
+
+    void addJoint(PhysicsJoint joint) {
+        if (genericJoints.containsKey(joint)) return;
+        BodyHandle a = bodies.get(joint.bodyA());
+        BodyHandle b = bodies.get(joint.bodyB());
+        if (a == null || b == null) throw new IllegalArgumentException("joint bodies must belong to the world");
+        Frames.Pose localA = joint.localFrameA();
+        Frames.Pose localB = joint.localFrameB();
+        long id = switch (joint) {
+            case WeldJoint weld -> NativeBox3D.createWeldJoint(worldId, a.nativeId, b.nativeId,
+                    poseX(localA), posY(localA), posZ(localA),
+                    quatX(localA), quatY(localA), quatZ(localA), quatW(localA),
+                    poseX(localB), posY(localB), posZ(localB),
+                    quatX(localB), quatY(localB), quatZ(localB), quatW(localB),
+                    weld.linearHertz(), weld.angularHertz(),
+                    weld.linearDampingRatio(), weld.angularDampingRatio(),
+                    joint.constraintHertz(), joint.constraintDampingRatio(),
+                    joint.collideConnected());
+            case DistanceJoint distance -> NativeBox3D.createDistanceJoint(worldId, a.nativeId, b.nativeId,
+                    poseX(localA), posY(localA), posZ(localA),
+                    quatX(localA), quatY(localA), quatZ(localA), quatW(localA),
+                    poseX(localB), posY(localB), posZ(localB),
+                    quatX(localB), quatY(localB), quatZ(localB), quatW(localB),
+                    distance.length(),
+                    distance.springEnabled(), distance.hertz(), distance.dampingRatio(),
+                    distance.limitEnabled(), distance.minLength(), distance.maxLength(),
+                    distance.motorEnabled(), distance.motorSpeed(), distance.maxMotorForce(),
+                    joint.constraintHertz(), joint.constraintDampingRatio(),
+                    joint.collideConnected());
+            case RevoluteJoint revolute -> NativeBox3D.createRevoluteJoint(worldId, a.nativeId, b.nativeId,
+                    poseX(localA), posY(localA), posZ(localA),
+                    quatX(localA), quatY(localA), quatZ(localA), quatW(localA),
+                    poseX(localB), posY(localB), posZ(localB),
+                    quatX(localB), quatY(localB), quatZ(localB), quatW(localB),
+                    revolute.targetAngle(),
+                    revolute.springEnabled(), revolute.springHertz(), revolute.springDampingRatio(),
+                    revolute.limitEnabled(), revolute.lowerAngle(), revolute.upperAngle(),
+                    revolute.motorEnabled(), revolute.maxMotorTorque(), revolute.motorSpeed(),
+                    joint.constraintHertz(), joint.constraintDampingRatio(),
+                    joint.collideConnected());
+            case PrismaticJoint prismatic -> NativeBox3D.createPrismaticJoint(worldId, a.nativeId, b.nativeId,
+                    poseX(localA), posY(localA), posZ(localA),
+                    quatX(localA), quatY(localA), quatZ(localA), quatW(localA),
+                    poseX(localB), posY(localB), posZ(localB),
+                    quatX(localB), quatY(localB), quatZ(localB), quatW(localB),
+                    prismatic.springEnabled(), prismatic.springHertz(), prismatic.springDampingRatio(),
+                    prismatic.targetTranslation(),
+                    prismatic.limitEnabled(), prismatic.lowerTranslation(), prismatic.upperTranslation(),
+                    prismatic.motorEnabled(), prismatic.maxMotorForce(), prismatic.motorSpeed(),
+                    joint.constraintHertz(), joint.constraintDampingRatio(),
+                    joint.collideConnected());
+        };
+        if (id == 0L) throw new IllegalStateException("Box3D failed to create " + joint.getClass().getSimpleName());
+        genericJoints.put(joint, id);
+        joint.nativeId = id;
+    }
+
+    private static float poseX(Frames.Pose pose) { return pose.position.x; }
+    private static float posY(Frames.Pose pose) { return pose.position.y; }
+    private static float posZ(Frames.Pose pose) { return pose.position.z; }
+    private static float quatX(Frames.Pose pose) { return pose.rotation.x; }
+    private static float quatY(Frames.Pose pose) { return pose.rotation.y; }
+    private static float quatZ(Frames.Pose pose) { return pose.rotation.z; }
+    private static float quatW(Frames.Pose pose) { return pose.rotation.w; }
+
+    void removeJoint(PhysicsJoint joint) {
+        Long removed = genericJoints.remove(joint);
+        if (removed != null && removed != 0L) NativeBox3D.destroyJoint(removed);
+        joint.nativeId = 0L;
     }
 
     void step(float timeStep, int subStepCount, RigidBodyWorld.KinematicDriver driver) {
@@ -614,6 +685,7 @@ final class Box3DBackend implements AutoCloseable {
         bodies.clear();
         bodiesByNativeId.clear();
         joints.clear();
+        genericJoints.clear();
         planes.clear();
         staticBoxes.clear();
         environmentMeshes.clear();
