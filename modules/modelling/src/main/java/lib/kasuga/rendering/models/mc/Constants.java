@@ -27,7 +27,6 @@ import lib.kasuga.rendering.models.mc.backend.data_type.KasugaShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaGlobalBatchShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.ui.UIBackend;
 import lib.kasuga.rendering.models.mc.compat.iris.IrisCompat;
-import lib.kasuga.rendering.models.mc.dynamic.physics.MinecraftRagdollConfig;
 import lib.kasuga.rendering.models.mc.registry.PipelineRegistry;
 import lib.kasuga.rendering.models.mc.source.model.*;
 import lib.kasuga.rendering.models.mc.source.texture.BufferedImageTextureSource;
@@ -36,10 +35,7 @@ import lib.kasuga.rendering.models.mc.source.texture.FileTextureSource;
 import lib.kasuga.rendering.models.mc.source.texture.JarTextureSource;
 import lib.kasuga.rendering.models.mc.source.texture.bake.PbrBakeCoordinator;
 import lib.kasuga.rendering.models.mc.source.texture.bake.PbrBakeState;
-import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
-import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
 import lib.kasuga.rendering.models.uml.loaders.sources.SourceType;
-import lib.kasuga.rendering.models.uml.math.Transform;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.AlertScreen;
@@ -74,12 +70,7 @@ public class Constants {
     public static SourceType TEXTURE_TYPE, MODEL_TYPE;
     public static UIBackend UI_BACKEND;
 
-    public static ModelInstance currentInstance;
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static boolean missingTestMmdLogged;
-    private static boolean missingTestBbmodelLogged;
-    private static final ResourceLocation TEST_MMD_PHYSICS = ResourceLocation.fromNamespaceAndPath(
-            KasugaLib.MODID, "ragdolls/tda_bunny_miku.json");
     private static final RenderPipelineScope CLIENT_RENDER_PIPELINES = RenderPipelineScope.create(
             ResourceLocation.fromNamespaceAndPath(KasugaLib.MODID, "client_render_lifetime")
     );
@@ -394,92 +385,10 @@ public class Constants {
         Vec3 pos = pipelineContext.camera().getPosition();
         poseStack.translate(- pos.x(), - pos.y(), - pos.z());
         try {
-            testModel();
             mcBackend.renderAllObjects(context);
         } finally {
             source.endBatch(renderType);
         }
-    }
-
-    private static void testModel() {
-        // Render smoke switch: -Dkasuga.renderTestModels=false disables the default test models (hardcoded tests on by default).
-        if (!Boolean.parseBoolean(System.getProperty("kasuga.renderTestModels", "true"))) {
-            return;
-        }
-        // Match the original model-loader smoke test: bbmodels are the default scene.
-        switch (System.getProperty("kasuga.testModel", "bbmodel").toLowerCase(Locale.ROOT)) {
-            case "bbmodel" -> testBbModels();
-            case "obj" -> testObj();
-            case "be" -> testBe();
-            case "je" -> testJe();
-            default -> testMMD();
-        }
-//        testUI();
-    }
-
-    /** Renders the native Blockbench smoke models in front of the current player. */
-    public static void testBbModels() {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.player == null) return;
-
-        Vec3 playerPosition = minecraft.player.position();
-        Vec3 lookDirection = minecraft.player.getLookAngle();
-        String selected = System.getProperty("kasuga.testBbmodel");
-        if (selected != null && !selected.isBlank()) {
-            Vec3 position = playerPosition.add(lookDirection.scale(3.0)).add(0.0, 1.0, 0.0);
-            testBbmodel(normalizeTestBbmodelPath(selected), "test_bbmodel", position);
-            return;
-        }
-
-        Vec3 headPosition = playerPosition.add(lookDirection.scale(3.0)).add(0.0, 1.0, 0.0);
-        Vec3 bogeyPosition = playerPosition.add(lookDirection.scale(8.0)).add(0.0, 1.0, 0.0);
-        testBbmodel("models/block/test/blockbench/df11g_head.bbmodel", "test_bbmodel_head", headPosition);
-        testBbmodel("models/block/test/blockbench/qj_bogey_main.bbmodel", "test_bbmodel_bogey", bogeyPosition);
-    }
-
-    private static String normalizeTestBbmodelPath(String path) {
-        String trimmed = path.trim().replace('\\', '/');
-        if (trimmed.contains(":")) return trimmed;
-        if (!trimmed.startsWith("models/")) {
-            return "models/block/test/blockbench/" + trimmed;
-        }
-        return trimmed;
-    }
-
-    private static void testBbmodel(String modelPath, String instanceName, Vec3 position) {
-        ResourceLocation modelLoc = ResourceLocation.tryBuild(KasugaLib.MODID, modelPath);
-        ResourceLocation instanceLoc = ResourceLocation.tryBuild(KasugaLib.MODID, instanceName);
-        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> bbmodel = PipelineRegistry.bbmodel();
-        if (!bbmodel.hasModel(modelLoc)) {
-            // Models register their embedded textures while the resource reload builds the atlas.
-            // Loading here would create a model after that atlas has already been published.
-            if (!missingTestBbmodelLogged) {
-                missingTestBbmodelLogged = true;
-                LOGGER.warn("Test bbmodel '{}' is unavailable after resource reload; check assets/{}/models/model_proxy.json and restart the client",
-                        modelLoc, KasugaLib.MODID);
-            }
-            return;
-        }
-        missingTestBbmodelLogged = false;
-        if (bbmodel.hasInstance(modelLoc, instanceLoc)) return;
-        Transform transform = new Transform().translate(
-                (float) position.x, (float) position.y, (float) position.z);
-        ModelInstance instance = bbmodel.createInstance(modelLoc, instanceLoc, transform, null, null);
-        if (instance != null) {
-            bbmodel.addToRenderer(modelLoc, instanceLoc, "mc_bridge", "mc_backend");
-        }
-    }
-
-    public static void testMMD() {
-        String fileName1 = "test.mmd.zip";
-        String fileName2 = "test2.mmd.zip";
-        String fileName3 = "test3.mmd.zip";
-        String name = "PS - Classical Butterfly Kanade.pmx";
-        String name2 = "OL制服弱音盘发.pmx";
-        String name3 = "OL制服弱音散发.pmx";
-        String name4 = "tda bunny miku 2.0.pmx";
-        String name5 = "unfading_flowers_miku_black.pmx";
-        testMMD(fileName3, name4, "test_mmd");
     }
 
     public static void testUI() {
@@ -496,83 +405,4 @@ public class Constants {
         UI_BACKEND.renderAllUis(guiGraphics, 0);
     }
 
-    public static void testMMD(String fileName, String modelName, String instanceName) {
-        ResourceLocation rl = PipelineRegistry.pmxLoader().getLocByFileAndName(
-                ResourceLocation.tryBuild("kasuga_lib", "models/pmx/" + fileName),
-                modelName
-        );
-        if (rl == null) {
-            if (!missingTestMmdLogged) {
-                missingTestMmdLogged = true;
-                LOGGER.warn("Test MMD model '{}' was not registered from '{}'; check models/model_proxy.json",
-                        modelName, fileName);
-            }
-            return;
-        }
-        missingTestMmdLogged = false;
-        ResourceLocation instanceLoc = ResourceLocation.tryBuild("kasuga_lib", instanceName);
-        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> mmd = PipelineRegistry.pmx();
-        if (mmd.hasInstance(rl, instanceLoc)) {
-            attachTestMmdPhysics(mmd.getInstance(rl, instanceLoc));
-            return;
-        }
-        Transform worldTransform = new Transform().translate(0, 0, 0);
-        ModelInstance instance = mmd.createInstance(rl, instanceLoc, worldTransform, null, null);
-        if (instance == null) return;
-        attachTestMmdPhysics(instance);
-        mmd.addToRenderer(rl, instanceLoc, "mc_bridge", "mc_backend");
-    }
-
-    private static void attachTestMmdPhysics(ModelInstance instance) {
-        if (instance == null) return;
-        boolean physicsEnabled = Boolean.parseBoolean(
-                System.getProperty("kasuga.testModelPhysics", "true"));
-        if (currentInstance == instance) return;
-        currentInstance = instance;
-        if (!physicsEnabled) return;
-        try {
-            MinecraftRagdollConfig config = MinecraftRagdollConfig.load(
-                    Minecraft.getInstance().getResourceManager(), TEST_MMD_PHYSICS);
-            config.attach(instance, () -> Minecraft.getInstance().level,
-                    Boolean.parseBoolean(System.getProperty("kasuga.testModelPhysicsDrop", "true")));
-        } catch (IOException | RuntimeException exception) {
-            LOGGER.error("Failed to attach test ragdoll config {}", TEST_MMD_PHYSICS, exception);
-        }
-    }
-
-    public static void testObj() {
-        ResourceLocation loc =  ResourceLocation.tryBuild("kasuga_lib", "models/obj/df5_frame.obj");
-        ResourceLocation instanceLoc = ResourceLocation.tryBuild("kasuga_lib", "test_wheel");
-        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> obj = PipelineRegistry.obj();
-        if (obj.hasInstance(loc, instanceLoc)) return;
-        obj.createInstance(loc, instanceLoc, null, null, null);
-        obj.addToRenderer(loc, instanceLoc, "mc_bridge", "mc_backend");
-    }
-
-    public static void testBe() {
-        ResourceLocation loc = ResourceLocation.tryBuild("kasuga_lib", "geometry.unknown");
-        ResourceLocation instanceLoc = ResourceLocation.tryBuild("kasuga_lib", "test_model");
-        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> be = PipelineRegistry.be();
-        if (be.hasInstance(loc, instanceLoc)) return;
-        be.createInstance(loc, instanceLoc, null, null, null);
-        be.addToRenderer(loc, instanceLoc, "mc_bridge", "mc_backend");
-    }
-
-    public static void testJe() {
-        ResourceLocation locA = ResourceLocation.tryBuild("kasuga_lib", "models/je/test_parent_a.json");
-        ResourceLocation locB = ResourceLocation.tryBuild("kasuga_lib", "models/je/test_parent_b.json");
-        ResourceLocation instanceA = ResourceLocation.tryBuild("kasuga_lib", "test_je_a");
-        ResourceLocation instanceB = ResourceLocation.tryBuild("kasuga_lib", "test_je_b");
-
-        ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> je = PipelineRegistry.je();
-        if (!je.hasInstance(locA, instanceA)) {
-            je.createInstance(locA, instanceA, null, null, null);
-            je.addToRenderer(locA, instanceA, "mc_bridge", "mc_backend");
-        }
-        if (!je.hasInstance(locB, instanceB)) {
-            Transform offsetB = new Transform().translate(2, 0, 0);
-            je.createInstance(locB, instanceB, offsetB, null, null);
-            je.addToRenderer(locB, instanceB, "mc_bridge", "mc_backend");
-        }
-    }
 }
