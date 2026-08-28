@@ -126,10 +126,10 @@ Use `face.texture` as the texture-array index written by Blockbench. For externa
 
 Blockbench records UV coordinates in texture pixels. `KsgBbModelLoader` converts them to normalized UVs using the selected texture's actual dimensions while it creates vertices. This conversion is intentionally local to the bbmodel loader. Do not add pixel-UV normalization in `FlatModelData` or another shared backend path, because those paths are also used by OBJ, PMX, glTF, Bedrock, and Java Edition models.
 
-The repository has runnable examples in:
+The repository has runnable content-testing examples in:
 
 ```text
-modules/modelling/src/main/resources/assets/kasuga_lib/models/block/test/blockbench/
+modules/modelling/src/contentTesting/resources/assets/kasuga_lib/models/block/test/blockbench/
 ```
 
 ## Development And Debugging
@@ -154,7 +154,7 @@ To run only the Blockbench loader tests:
 
 ### Start The Client With A Selected Smoke Model
 
-The development client displays model smoke tests by default. The default selection is `bbmodel`; pass a filename or a complete resource path to show exactly one Blockbench model in front of the player:
+The `contentTesting` development client displays model smoke tests by default; production code does not create these instances. The default selection is `bbmodel`; pass a filename or a complete resource path to show exactly one Blockbench model in front of the player:
 
 ```powershell
 .\gradlew.bat :modules:modelling:runClient `

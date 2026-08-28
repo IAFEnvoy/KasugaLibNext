@@ -126,10 +126,10 @@ pipeline.removeInstance(modelKey, instanceKey);
 
 Blockbench 的 UV 坐标单位是纹理像素。`KsgBbModelLoader` 在创建顶点时按所选纹理实际宽高将其转换到标准化 UV。此转换刻意限制在 bbmodel loader 内部。不要在 `FlatModelData` 或其他共享后端路径中加入像素 UV 归一化，因为 OBJ、PMX、glTF、Bedrock 和 Java Edition 模型同样会经过这些路径。
 
-仓库中的可运行示例位于：
+仓库中的可运行内容测试示例位于：
 
 ```text
-modules/modelling/src/main/resources/assets/kasuga_lib/models/block/test/blockbench/
+modules/modelling/src/contentTesting/resources/assets/kasuga_lib/models/block/test/blockbench/
 ```
 
 ## 开发与调试
@@ -154,7 +154,7 @@ modules/modelling/src/main/resources/assets/kasuga_lib/models/block/test/blockbe
 
 ### 启动客户端并选择烟雾测试模型
 
-开发客户端默认显示模型烟雾测试，默认类型为 `bbmodel`。传入文件名或完整资源路径即可在玩家前方只显示一个 Blockbench 模型：
+`contentTesting` 开发客户端默认显示模型烟雾测试，生产代码不会创建这些实例。默认类型为 `bbmodel`。传入文件名或完整资源路径即可在玩家前方只显示一个 Blockbench 模型：
 
 ```powershell
 .\gradlew.bat :modules:modelling:runClient `
