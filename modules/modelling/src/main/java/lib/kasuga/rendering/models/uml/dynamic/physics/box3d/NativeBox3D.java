@@ -180,6 +180,8 @@ public final class NativeBox3D {
     public static native void setBodyGravityScale(long bodyId, float scale);
     public static native float bodyGravityScale(long bodyId);
     public static native void setBodyAwake(long bodyId, boolean awake);
+    public static native void setBodyEnabled(long bodyId, boolean enabled);
+    public static native boolean bodyEnabled(long bodyId);
     public static native void wakeBody(long bodyId);
     public static native boolean bodyAwake(long bodyId);
     /** Low 32 bits: unique non-static contacts; bit 32: this body touches static geometry. */

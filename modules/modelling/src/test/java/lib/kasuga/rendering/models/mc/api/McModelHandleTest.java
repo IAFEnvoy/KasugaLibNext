@@ -63,6 +63,26 @@ class McModelHandleTest {
     }
 
     @Test
+    void worldPositionApiSurvivesFloatingOriginActivation() {
+        ModelInstance instance = fixture(new Transform().translate(100f, 20f, -30f));
+        McModelHandle handle = McModelHandle.custom(MODEL, null, INSTANCE,
+                pose -> instance, loc -> null);
+        assertTrue(handle.mount());
+
+        instance.getSkeletonInstance().enableFloatingOrigin();
+        assertEquals(new Vec3(100d, 20d, -30d), handle.getPos());
+
+        handle.setPos(101.25, 21.5, -29.75);
+        assertEquals(new Vec3(101.25, 21.5, -29.75), handle.getPos());
+        assertEquals(new org.joml.Vector3f(1.25f, 1.5f, 0.25f),
+                instance.getSkeletonInstance().getTransform().getPosition());
+
+        handle.rotateByDegrees(0f, 45f, 0f);
+        assertEquals(new Vec3(101.25, 21.5, -29.75), handle.getPos(),
+                "rotation must preserve the exact world-space root position");
+    }
+
+    @Test
     void mountIsIdempotentAndReusesTheSameInstance() {
         ModelInstance instance = fixture(null);
         McModelHandle handle = McModelHandle.custom(MODEL, null, INSTANCE,
@@ -70,6 +90,23 @@ class McModelHandleTest {
         assertTrue(handle.mount());
         assertTrue(handle.mount());
         assertSame(instance, handle.instance());
+    }
+
+    @Test
+    void ambientLightEnhancementIsBufferedAndCanBeDisabled() {
+        ModelInstance instance = fixture(null);
+        McModelHandle handle = McModelHandle.custom(MODEL, null, INSTANCE,
+                pose -> instance, loc -> null);
+
+        handle.setAmbientLightEnhancement(2.25f);
+        assertEquals(2.25f, handle.ambientLightEnhancement());
+        assertTrue(handle.mount());
+        assertEquals(2.25f, instance.getAmbientLightEnhancement());
+
+        handle.disableAmbientLightEnhancement();
+        assertEquals(1f, instance.getAmbientLightEnhancement());
+        assertThrows(IllegalArgumentException.class,
+                () -> handle.setAmbientLightEnhancement(Float.NaN));
     }
 
     @Test

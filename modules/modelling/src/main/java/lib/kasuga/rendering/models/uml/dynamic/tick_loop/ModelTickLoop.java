@@ -11,6 +11,7 @@ import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import lombok.Getter;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -130,6 +131,34 @@ public class ModelTickLoop {
         Model model = instance.getModel();
         for (var h : this.pipeline.list()) {
             h.tick(model, transforms, this, deltaTime);
+        }
+    }
+
+    /** Runs every stage before the built-in physics slot for a shared scene. */
+    public void tickBeforeSharedPhysics(float deltaTime) {
+        clearTransientIkTargets();
+        runSharedRange(0, pipeline.ids().indexOf(SLOT_PHYSICS), deltaTime);
+    }
+
+    /** Runs every stage after the built-in physics slot once the scene wrote all poses back. */
+    public void tickAfterSharedPhysics(float deltaTime) {
+        int physicsIndex = pipeline.ids().indexOf(SLOT_PHYSICS);
+        runSharedRange(physicsIndex + 1, pipeline.size(), deltaTime);
+    }
+
+    private void clearTransientIkTargets() {
+        instance.getSkeletonInstance().clearFrameIkTargets();
+    }
+
+    private void runSharedRange(int start, int end, float deltaTime) {
+        List<String> ids = pipeline.ids();
+        if (start < 0 || end < start || end > ids.size()) {
+            throw new IllegalStateException("shared physics requires the built-in physics slot");
+        }
+        Model model = instance.getModel();
+        for (int index = start; index < end; index++) {
+            pipeline.get(ids.get(index), ModelTickLoopModule.class)
+                    .tick(model, transforms, this, deltaTime);
         }
     }
 

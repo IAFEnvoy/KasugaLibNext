@@ -4,6 +4,7 @@ import lib.kasuga.rendering.models.mc.registry.PipelineRegistry;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.ModelPipeLine;
 import lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll;
+import lib.kasuga.rendering.models.uml.dynamic.physics.MmdPhysicsScene;
 import lib.kasuga.rendering.models.uml.dynamic.physics.box3d.NativeBox3D;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import net.minecraft.client.Minecraft;
@@ -12,11 +13,13 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import org.joml.Vector3f;
+import org.joml.Vector3d;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -45,6 +48,13 @@ public final class MinecraftRagdollDeployments {
         return deploy(request, minecraft.getResourceManager(), () -> minecraft.level);
     }
 
+    /** Deploys this model as a participant in an existing shared physics scene. */
+    public static Optional<RagdollDeployment> deploy(Request request, MmdPhysicsScene scene)
+            throws IOException {
+        Minecraft minecraft = Minecraft.getInstance();
+        return deploy(request, minecraft.getResourceManager(), () -> minecraft.level, scene);
+    }
+
     /**
      * Deploys one configured ragdoll. An empty result means the routed model
      * has not been published yet; callers may retry after a
@@ -53,6 +63,12 @@ public final class MinecraftRagdollDeployments {
     public static synchronized Optional<RagdollDeployment> deploy(
             Request request, ResourceManager resourceManager,
             Supplier<? extends Level> levelSupplier) throws IOException {
+        return deploy(request, resourceManager, levelSupplier, null);
+    }
+
+    public static synchronized Optional<RagdollDeployment> deploy(
+            Request request, ResourceManager resourceManager,
+            Supplier<? extends Level> levelSupplier, MmdPhysicsScene scene) throws IOException {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(resourceManager, "resourceManager");
         Objects.requireNonNull(levelSupplier, "levelSupplier");
@@ -95,8 +111,11 @@ public final class MinecraftRagdollDeployments {
         if (instance == null) return Optional.empty();
 
         try {
-            instance.getSkeletonInstance().transformRoot(request.rootTransform);
-            MmdRagdoll ragdoll = config.attach(instance, levelSupplier, request.applyInitialState);
+            instance.getSkeletonInstance().enableFloatingOrigin(request.worldOrigin);
+            instance.getSkeletonInstance().transformRoot(request.localRootTransform());
+            MmdRagdoll ragdoll = scene == null
+                    ? config.attach(instance, levelSupplier, request.applyInitialState)
+                    : config.attach(instance, scene, levelSupplier, request.applyInitialState);
             if (ragdoll == null) {
                 pipeline.removeInstance(resolvedModel, request.instanceId);
                 return Optional.empty();
@@ -190,12 +209,27 @@ public final class MinecraftRagdollDeployments {
 
     public record Request(ResourceLocation modelResource, String modelName,
                           ResourceLocation instanceId, ResourceLocation configResource,
-                          Transform rootTransform, boolean applyInitialState) {
+                          Transform rootTransform, boolean applyInitialState,
+                          Vector3d worldOrigin) {
         public Request {
             Objects.requireNonNull(modelResource, "modelResource");
             Objects.requireNonNull(modelName, "modelName");
             Objects.requireNonNull(instanceId, "instanceId");
             rootTransform = rootTransform == null ? new Transform() : rootTransform.copy();
+            if (worldOrigin == null) {
+                Vector3f position = rootTransform.getPosition();
+                worldOrigin = new Vector3d(position.x, position.y, position.z);
+            } else {
+                worldOrigin = new Vector3d(worldOrigin);
+            }
+            if (!worldOrigin.isFinite()) throw new IllegalArgumentException("worldOrigin must be finite");
+        }
+
+        public Request(ResourceLocation modelResource, String modelName,
+                       ResourceLocation instanceId, ResourceLocation configResource,
+                       Transform rootTransform, boolean applyInitialState) {
+            this(modelResource, modelName, instanceId, configResource,
+                    rootTransform, applyInitialState, null);
         }
 
         @Override
@@ -203,10 +237,19 @@ public final class MinecraftRagdollDeployments {
             return rootTransform.copy();
         }
 
+        @Override
+        public Vector3d worldOrigin() {
+            return new Vector3d(worldOrigin);
+        }
+
+        private Transform localRootTransform() {
+            return rootTransform.copy().setPosition(new Vector3f());
+        }
+
         /** Uses the model manifest to resolve its ragdoll config. */
         public Request(ResourceLocation modelResource, ResourceLocation instanceId,
                        Transform rootTransform, boolean applyInitialState) {
-            this(modelResource, "", instanceId, null, rootTransform, applyInitialState);
+            this(modelResource, "", instanceId, null, rootTransform, applyInitialState, null);
         }
     }
 
@@ -250,7 +293,8 @@ public final class MinecraftRagdollDeployments {
                 if (anchoredEntity != null || ragdoll.dragging()) return false;
                 MmdRagdoll.Body body = nearestDynamicBody(entity);
                 if (body == null) return false;
-                if (!ragdoll.beginDrag(body, anchorTarget(entity))) return false;
+                Vec3 target = anchorTarget(entity);
+                if (!ragdoll.beginDragWorld(body, target.x, target.y, target.z)) return false;
                 anchoredEntity = entity;
                 anchoredBody = body;
                 ANCHOR_COUNT++;
@@ -279,11 +323,12 @@ public final class MinecraftRagdollDeployments {
                 detachAnchor();
                 return;
             }
-            ragdoll.updateDragTarget(anchorTarget(entity), deltaSeconds);
+            Vec3 target = anchorTarget(entity);
+            ragdoll.updateDragTargetWorld(target.x, target.y, target.z, deltaSeconds);
         }
 
-        private Vector3f anchorTarget(Entity entity) {
-            return new Vector3f((float) entity.getX(), (float) entity.getEyeY(), (float) entity.getZ());
+        private Vec3 anchorTarget(Entity entity) {
+            return new Vec3(entity.getX(), entity.getEyeY(), entity.getZ());
         }
 
         private MmdRagdoll.Body nearestDynamicBody(Entity entity) {
@@ -292,12 +337,13 @@ public final class MinecraftRagdollDeployments {
             double z = entity.getZ();
             MmdRagdoll.Body best = null;
             float bestDistanceSquared = Float.POSITIVE_INFINITY;
+            Vector3f target = ragdoll.worldToSimulation(x, y, z);
             for (MmdRagdoll.Body body : ragdoll.bodies()) {
                 if (body.source().mode() == 0 || body.source().mass() <= 0f) continue;
                 Vector3f position = body.position();
-                float dx = position.x - (float) x;
-                float dy = position.y - (float) y;
-                float dz = position.z - (float) z;
+                float dx = position.x - target.x;
+                float dy = position.y - target.y;
+                float dz = position.z - target.z;
                 float distanceSquared = dx * dx + dy * dy + dz * dz;
                 if (distanceSquared < bestDistanceSquared) {
                     bestDistanceSquared = distanceSquared;

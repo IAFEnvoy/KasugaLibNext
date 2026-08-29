@@ -1,6 +1,7 @@
 package lib.kasuga.rendering.models.mc.dynamic.physics;
 
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
+import lib.kasuga.rendering.models.uml.dynamic.physics.MmdPhysicsScene;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.neoforged.api.distmarker.Dist;
@@ -18,6 +19,8 @@ import java.util.WeakHashMap;
 @EventBusSubscriber(value = Dist.CLIENT)
 public final class MinecraftRagdollRuntime {
     private static final Map<ModelInstance, MinecraftRagdollConfig.UpdateMode> INSTANCES =
+            new WeakHashMap<>();
+    private static final Map<MmdPhysicsScene, MinecraftRagdollConfig.UpdateMode> SCENES =
             new WeakHashMap<>();
     private static ClientLevel previousLevel;
 
@@ -38,6 +41,18 @@ public final class MinecraftRagdollRuntime {
         INSTANCES.remove(instance);
     }
 
+    public static synchronized void register(MmdPhysicsScene scene,
+                                             MinecraftRagdollConfig.UpdateMode updateMode) {
+        Objects.requireNonNull(scene, "scene");
+        Objects.requireNonNull(updateMode, "updateMode");
+        if (updateMode == MinecraftRagdollConfig.UpdateMode.MANUAL) SCENES.remove(scene);
+        else SCENES.put(scene, updateMode);
+    }
+
+    public static synchronized void unregister(MmdPhysicsScene scene) {
+        SCENES.remove(scene);
+    }
+
     /** Explicit stepping entry point for MANUAL mode and non-render integrations. */
     public static void step(ModelInstance instance, float deltaSeconds) {
         Objects.requireNonNull(instance, "instance").simulatePhysics(deltaSeconds);
@@ -45,6 +60,11 @@ public final class MinecraftRagdollRuntime {
 
     public static synchronized int registeredCount() {
         return INSTANCES.size();
+    }
+
+    static synchronized int registeredSceneCount() {
+        SCENES.keySet().removeIf(MmdPhysicsScene::closed);
+        return SCENES.size();
     }
 
     @SubscribeEvent
@@ -57,6 +77,9 @@ public final class MinecraftRagdollRuntime {
         // may indirectly mutate registrations while a ragdoll is updating.
         for (ModelInstance instance : snapshot()) {
             instance.evaluatePhysicsFrame(partialTick, deltaSeconds);
+        }
+        for (MmdPhysicsScene scene : sceneSnapshot()) {
+            if (!scene.closed()) scene.evaluateFrame(partialTick, deltaSeconds);
         }
     }
 
@@ -78,5 +101,10 @@ public final class MinecraftRagdollRuntime {
 
     private static synchronized ArrayList<ModelInstance> snapshot() {
         return new ArrayList<>(INSTANCES.keySet());
+    }
+
+    private static synchronized ArrayList<MmdPhysicsScene> sceneSnapshot() {
+        SCENES.keySet().removeIf(MmdPhysicsScene::closed);
+        return new ArrayList<>(SCENES.keySet());
     }
 }

@@ -382,8 +382,6 @@ public class Constants {
                 pipelineContext.projectionMatrix(), pipelineContext.renderTick(), pipelineContext.partialTick(),
                 pipelineContext.level()
         );
-        Vec3 pos = pipelineContext.camera().getPosition();
-        poseStack.translate(- pos.x(), - pos.y(), - pos.z());
         try {
             mcBackend.renderAllObjects(context);
         } finally {

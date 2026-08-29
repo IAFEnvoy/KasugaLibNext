@@ -15,6 +15,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.joml.Vector3f;
+import org.joml.Vector3d;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -277,15 +278,18 @@ public final class MinecraftBlockRagdollEnvironment
     private EnvironmentCell geometry(Level level, BlockPos position, BlockState state) {
         if (excludedBlock.test(position.immutable())) return EnvironmentCell.EMPTY;
         int blockX = position.getX(), blockY = position.getY(), blockZ = position.getZ();
+        Vector3d origin = attachedWorld.worldOrigin();
         List<EnvironmentBox> solids = new ArrayList<>();
         VoxelShape shape = state.getCollisionShape(level, position);
         if (!shape.isEmpty()) {
             shape.forAllBoxes((boxMinX, boxMinY, boxMinZ, boxMaxX, boxMaxY, boxMaxZ) ->
                     solids.add(new EnvironmentBox(
-                            new Vector3f((float) (blockX + boxMinX),
-                                    (float) (blockY + boxMinY), (float) (blockZ + boxMinZ)),
-                            new Vector3f((float) (blockX + boxMaxX),
-                                    (float) (blockY + boxMaxY), (float) (blockZ + boxMaxZ)))));
+                            new Vector3f((float) (blockX + boxMinX - origin.x),
+                                    (float) (blockY + boxMinY - origin.y),
+                                    (float) (blockZ + boxMinZ - origin.z)),
+                            new Vector3f((float) (blockX + boxMaxX - origin.x),
+                                    (float) (blockY + boxMaxY - origin.y),
+                                    (float) (blockZ + boxMaxZ - origin.z)))));
         }
 
         return solids.isEmpty() ? EnvironmentCell.EMPTY : new EnvironmentCell(solids);
@@ -308,13 +312,16 @@ public final class MinecraftBlockRagdollEnvironment
     }
 
     private Bounds bounds(RigidBodyWorld world) {
-        Vector3f minimum = new Vector3f(Float.POSITIVE_INFINITY);
-        Vector3f maximum = new Vector3f(Float.NEGATIVE_INFINITY);
+        Vector3d origin = world.worldOrigin();
+        Vector3d minimum = new Vector3d(Double.POSITIVE_INFINITY);
+        Vector3d maximum = new Vector3d(Double.NEGATIVE_INFINITY);
         for (SimBody body : world.bodies()) {
             float radius = boundingRadius(body) + padding;
-            Vector3f position = new Vector3f(body.positionRef());
-            minimum.min(new Vector3f(position).sub(radius, radius, radius));
-            maximum.max(new Vector3f(position).add(radius, radius, radius));
+            Vector3f position = body.positionRef();
+            minimum.min(new Vector3d(origin).add(position.x - radius,
+                    position.y - radius, position.z - radius));
+            maximum.max(new Vector3d(origin).add(position.x + radius,
+                    position.y + radius, position.z + radius));
         }
         return new Bounds(minimum, maximum);
     }
@@ -356,5 +363,5 @@ public final class MinecraftBlockRagdollEnvironment
 
     private record CachedCell(boolean loaded, BlockState state, FluidState fluid,
                               EnvironmentCell geometry) {}
-    private record Bounds(Vector3f minimum, Vector3f maximum) {}
+    private record Bounds(Vector3d minimum, Vector3d maximum) {}
 }

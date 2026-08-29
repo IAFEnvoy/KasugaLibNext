@@ -68,9 +68,11 @@ final class GlobalModelBatcher implements AutoCloseable {
         return collecting;
     }
 
-    boolean submit(BackendInstance instance, Matrix4f pose, Matrix3f normal, float emissiveStrength) {
+    boolean submit(BackendInstance instance, Matrix4f pose, Matrix3f normal,
+                   float emissiveStrength, float ambientLightEnhancement) {
         if (!canBatch(instance)) return false;
-        BatchKey key = new BatchKey(instance.getMeshMode(), Float.floatToIntBits(emissiveStrength));
+        BatchKey key = new BatchKey(instance.getMeshMode(), Float.floatToIntBits(emissiveStrength),
+                Float.floatToIntBits(ambientLightEnhancement));
         submissions.computeIfAbsent(key, ignored -> new ArrayList<>())
                 .add(new BatchItem(instance, new Matrix4f(pose), new Matrix3f(normal)));
         return true;
@@ -159,9 +161,13 @@ final class GlobalModelBatcher implements AutoCloseable {
         submissions.clear();
     }
 
-    private record BatchKey(VertexFormat.Mode mode, int emissiveBits) {
+    private record BatchKey(VertexFormat.Mode mode, int emissiveBits, int ambientLightEnhancementBits) {
         float emissiveStrength() {
             return Float.intBitsToFloat(emissiveBits);
+        }
+
+        float ambientLightEnhancement() {
+            return Float.intBitsToFloat(ambientLightEnhancementBits);
         }
     }
 
@@ -432,6 +438,7 @@ final class GlobalModelBatcher implements AutoCloseable {
                 if (!(shader instanceof KasugaGlobalBatchShaderInstance batchShader)) return;
                 batchShader.setBatchTextures(instanceTextureId, boneTextureId);
                 batchShader.setEmissiveStrength(key.emissiveStrength());
+                batchShader.setAmbientLightEnhancement(key.ambientLightEnhancement());
                 shader.setDefaultUniforms(key.mode(), modelViewMatrix, projectionMatrix,
                         Minecraft.getInstance().getWindow());
                 shader.apply();

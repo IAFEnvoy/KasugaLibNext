@@ -49,6 +49,15 @@ public interface SimBody {
     /** Enables the maintained Box3D humanoid-ragdoll contact/joint tuning. */
     default boolean profiledRagdollBody() { return false; }
 
+    /** True for authored PMX cloth/hair bodies kept beside a generated humanoid profile. */
+    default boolean authoredSecondaryBody() { return false; }
+
+    /**
+     * Optional negative Box3D group used to suppress contact within one model
+     * while allowing bodies owned by other models to collide.
+     */
+    default int selfCollisionGroup() { return 0; }
+
     /** Generated humanoid profiles additionally align their inferred joint frames. */
     default boolean ragdollAlignmentSpring() { return false; }
 

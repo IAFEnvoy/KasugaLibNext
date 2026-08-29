@@ -1,8 +1,9 @@
 {
+  "include_secondary_bodies": true,
   "simulation": {
     "hertz": 120,
     "update_mode": "render_frame",
-    "substeps": 4,
+    "substeps": 8,
     "solver_iterations": 16,
     "constraint_hertz": 60,
     "constraint_damping_ratio": 2,
