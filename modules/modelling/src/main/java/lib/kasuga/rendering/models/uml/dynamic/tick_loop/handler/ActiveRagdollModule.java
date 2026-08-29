@@ -1,7 +1,10 @@
-package lib.kasuga.rendering.models.uml.dynamic;
+package lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler;
 
 import lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.Frames;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.ModelTickLoop;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.PendingTransform;
+import lib.kasuga.rendering.models.uml.structure.Model;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
@@ -13,24 +16,28 @@ import java.util.Set;
  * Drives dynamic Box3D bodies toward their same-frame animation/IK targets.
  *
  * <p>This is an active-ragdoll controller, not a second physics solver: it
- * computes spring forces and torques at {@link Stage#AFTER_IK}, then Box3D
- * performs all integration, collision and joint solving. An empty body-name
- * set controls every dynamic body; otherwise only the named bone bodies are
- * affected.</p>
+ * computes spring forces and torques against the freshly evaluated kinematic
+ * targets, then Box3D performs all integration, collision and joint solving
+ * during the physics stage. An empty body-name set controls every dynamic
+ * body; otherwise only the named bone bodies are affected.</p>
+ *
+ * <p>Mount with {@code loop.addPostIk(...)} (equivalently addBefore
+ * {@link ModelTickLoop#SLOT_PHYSICS}) so forces are enqueued before the
+ * physics stage integrates them.</p>
  */
-public final class ActiveRagdollEffector implements PoseEffector {
+public final class ActiveRagdollModule implements ModelTickLoopModule {
     private final Set<String> bodyBones;
     private volatile Settings settings;
     private volatile boolean enabled = true;
 
-    public ActiveRagdollEffector(float frequencyHz, float dampingRatio,
-                                 float maximumForce, float maximumTorque) {
+    public ActiveRagdollModule(float frequencyHz, float dampingRatio,
+                               float maximumForce, float maximumTorque) {
         this(Set.of(), frequencyHz, dampingRatio, maximumForce, maximumTorque, 1f);
     }
 
-    public ActiveRagdollEffector(Collection<String> bodyBones,
-                                 float frequencyHz, float dampingRatio,
-                                 float maximumForce, float maximumTorque, float weight) {
+    public ActiveRagdollModule(Collection<String> bodyBones,
+                               float frequencyHz, float dampingRatio,
+                               float maximumForce, float maximumTorque, float weight) {
         this.bodyBones = Set.copyOf(Objects.requireNonNull(bodyBones, "bodyBones"));
         setSettings(frequencyHz, dampingRatio, maximumForce, maximumTorque, weight);
     }
@@ -52,10 +59,15 @@ public final class ActiveRagdollEffector implements PoseEffector {
     }
 
     @Override
-    public void apply(PoseEvaluationContext context) {
-        if (!enabled || context.stage() != Stage.AFTER_IK || context.physics() == null) return;
-        MmdRagdoll physics = context.physics();
+    public void tick(Model model, PendingTransform[] transforms, ModelTickLoop loop, float deltaTime) {
         Settings value = settings;
+        if (!enabled) return;
+        MmdRagdoll physics = loop.getInstance().getRagdoll();
+        if (physics == null || !physics.enabled()) return;
+        // Refresh the kinematic targets so forces chase THIS tick's post-IK pose,
+        // not a stale snapshot from the previous step.
+        physics.evaluateAnimationTarget();
+
         float omega = (float)(2.0 * Math.PI) * value.frequencyHz;
         float spring = omega * omega;
         float damping = 2f * value.dampingRatio * omega;
@@ -82,6 +94,9 @@ public final class ActiveRagdollEffector implements PoseEffector {
             physics.applyTorque(body, torque);
         }
     }
+
+    @Override
+    public void destroy(Model model) {}
 
     private static void clampLength(Vector3f value, float maximum) {
         float lengthSquared = value.lengthSquared();

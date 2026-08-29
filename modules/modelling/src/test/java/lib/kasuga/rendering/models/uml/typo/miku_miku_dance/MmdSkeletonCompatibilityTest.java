@@ -1,7 +1,7 @@
 package lib.kasuga.rendering.models.uml.typo.miku_miku_dance;
 
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
-import lib.kasuga.rendering.models.uml.dynamic.IkEffector;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.IkTargetModule;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.material.MaterialSet;
@@ -98,7 +98,7 @@ class MmdSkeletonCompatibilityTest {
     }
 
     @Test
-    void externalIkEffectorOverridesTheAuthoredControllerTargetForOneEvaluation() {
+    void externalIkTargetModuleOverridesTheAuthoredControllerTargetForOneTick() {
         Bone root = bone("root", new Transform(), data("root", -1, plainFlags(), null, null, null));
         Bone link = bone("link", new Transform(), data("link", 0, plainFlags(), null, null, null));
         Bone effector = bone("effector", new Transform().translate(1, 0, 0),
@@ -111,13 +111,14 @@ class MmdSkeletonCompatibilityTest {
         connect(link, effector);
         ModelInstance instance = instance(root, link, effector, controller);
         Vector3f externalTarget = new Vector3f(-1f, 0f, 0f);
-        instance.getPoseEffectors().add("hand-target", new IkEffector("controller", externalTarget));
+        IkTargetModule hand = new IkTargetModule("controller", externalTarget);
+        instance.getTickLoop().addPreIk("hand-target", hand);
 
         instance.updateImmediate();
 
         Vector3f solved = instance.getSkeletonInstance().getAbsoluteTransforms().get(effector).getPosition();
         assertTrue(solved.distance(externalTarget) < 1e-4f,
-                "BEFORE_IK effectors must feed the same-frame PMX IK solve");
+                "pre-IK tick loop modules must feed the same-frame PMX IK solve");
     }
 
     private static ModelInstance instance(Bone... bones) {

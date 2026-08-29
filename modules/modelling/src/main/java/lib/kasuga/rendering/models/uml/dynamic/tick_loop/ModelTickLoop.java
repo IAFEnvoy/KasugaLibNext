@@ -1,7 +1,11 @@
 package lib.kasuga.rendering.models.uml.dynamic.tick_loop;
 
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.AnchorModule;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.IkModule;
 import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.ModelTickLoopModule;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.RagdollModule;
+import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.SkeletonApplyModule;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import lombok.Getter;
@@ -9,7 +13,32 @@ import lombok.Getter;
 import java.util.Arrays;
 import java.util.Objects;
 
+/**
+ * The single ordered evaluation pipeline of one {@link ModelInstance}.
+ *
+ * <p>Every procedural stage — animation post-processing, IK, physics, anchor
+ * tracking — is a {@link ModelTickLoopModule} mounted into this pipeline. The
+ * framework owns the ordering through well-known slots; modules only implement
+ * their own internal logic and never schedule each other.</p>
+ *
+ * <p>Canonical order:</p>
+ * <pre>{@code
+ * [user pre-IK modules] -> kasuga:apply -> kasuga:ik -> [user post-IK modules]
+ *   -> kasuga:physics -> [user post-physics modules] -> kasuga:anchor
+ * }</pre>
+ */
 public class ModelTickLoop {
+    /** Flushes the per-node pending transforms into the skeleton. Always first. */
+    public static final String SLOT_APPLY = "kasuga:apply";
+    /** Evaluates the hierarchy and solves PMX IK. Skipped while physics owns the pose. */
+    public static final String SLOT_IK = "kasuga:ik";
+    /** Advances the attached ragdoll (Box3D) and writes the result back. No-op without physics. */
+    public static final String SLOT_PHYSICS = "kasuga:physics";
+    /** Recomputes display-anchor world transforms after the final pose is known. Always last. */
+    public static final String SLOT_ANCHOR = "kasuga:anchor";
+
+    private static final int BUILTIN_MODULE_COUNT = 4;
+
     @Getter
     private final TickLoopPipeline<ModelTickLoopModule> pipeline = new TickLoopPipeline<>();
     @Getter
@@ -22,6 +51,9 @@ public class ModelTickLoop {
     @Getter
     private final PendingTransform[] transforms;
 
+    /** Set by the typed helpers; direct {@link #getPipeline()} mutations are detected via size. */
+    private boolean proceduralModulesAttached;
+
     public ModelTickLoop(ModelInstance instance) {
         this(instance, createTransforms(instance));
     }
@@ -29,10 +61,60 @@ public class ModelTickLoop {
     public ModelTickLoop(ModelInstance instance, PendingTransform[] transforms) {
         this.instance = Objects.requireNonNull(instance, "instance");
         this.transforms = validateTransforms(instance, transforms);
+        installDefaults();
+    }
+
+    private void installDefaults() {
+        this.pipeline.addLast(SLOT_APPLY, new SkeletonApplyModule());
+        this.pipeline.addLast(SLOT_IK, new IkModule());
+        this.pipeline.addLast(SLOT_PHYSICS, new RagdollModule());
+        this.pipeline.addLast(SLOT_ANCHOR, new AnchorModule());
     }
 
     public Model getModel() {
         return instance.getModel();
+    }
+
+    /**
+     * Registers a module that runs before the IK stage — the place to write
+     * pending transforms or transient IK targets for this tick.
+     */
+    public void addPreIk(String id, ModelTickLoopModule module) {
+        this.proceduralModulesAttached = true;
+        this.pipeline.addBefore(SLOT_IK, id, module);
+    }
+
+    /**
+     * Registers a module that runs after IK but before physics — the place to
+     * read the solved pose or drive controllers such as active ragdolls.
+     */
+    public void addPostIk(String id, ModelTickLoopModule module) {
+        this.proceduralModulesAttached = true;
+        this.pipeline.addAfter(SLOT_IK, id, module);
+    }
+
+    /**
+     * Registers a module that runs after physics wrote its pose back — the
+     * place to observe or amend the final pose before anchors are recomputed.
+     */
+    public void addPostPhysics(String id, ModelTickLoopModule module) {
+        this.proceduralModulesAttached = true;
+        this.pipeline.addBefore(SLOT_ANCHOR, id, module);
+    }
+
+    /** Returns the built-in or user module registered under a slot/id. */
+    public <M extends ModelTickLoopModule> M module(String id, Class<M> type) {
+        return this.pipeline.get(id, type);
+    }
+
+    /**
+     * True when any user module is mounted, so consumers (such as
+     * {@code ModelInstance.update()}) know the loop must run even without a
+     * dirty skeleton. Removing built-ins via {@code getPipeline()} bypasses
+     * this flag on purpose — whoever removes them owns their responsibilities.
+     */
+    public boolean hasProceduralModules() {
+        return this.proceduralModulesAttached || this.pipeline.size() != BUILTIN_MODULE_COUNT;
     }
 
     public void tick(float deltaTime) {
@@ -41,6 +123,10 @@ public class ModelTickLoop {
 
     public void tickWithTransforms(PendingTransform[] transforms, float deltaTime) {
         validateTransforms(instance, transforms);
+        // Transient IK targets live for exactly one tick: cleared here so the
+        // pre-IK modules of THIS tick repopulate them and every later consumer
+        // (IK solve, physics kinematic target) sees the same values.
+        instance.getSkeletonInstance().clearFrameIkTargets();
         Model model = instance.getModel();
         for (var h : this.pipeline.list()) {
             h.tick(model, transforms, this, deltaTime);

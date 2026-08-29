@@ -8,9 +8,21 @@ import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 
+/**
+ * Flushes the tick loop's pending transforms into the skeleton.
+ *
+ * <p>Only non-identity slots are written, so bones driven purely by a
+ * {@code PoseDriver} keep their sampled locals untouched. Evaluation of the
+ * hierarchy is NOT performed here — that is the IK stage's responsibility
+ * ({@link IkModule}), keeping "write" and "solve" independently mountable.</p>
+ */
 public class SkeletonApplyModule implements ModelTickLoopModule {
 
     private final TransformLimitation limitation;
+
+    public SkeletonApplyModule() {
+        this(new TransformLimitation());
+    }
 
     public SkeletonApplyModule(TransformLimitation limitation) {
         this.limitation = limitation;
@@ -19,15 +31,18 @@ public class SkeletonApplyModule implements ModelTickLoopModule {
     @Override
     public void tick(Model model, PendingTransform[] transforms, ModelTickLoop loop, float deltaTime) {
         ModelInstance instance = loop.getInstance();
-        instance.getSkeletonInstance().transformRoot(
-                transforms[0].process(new Transform(), limitation));
+        // Alloc-free identity screening: only touched slots allocate a Transform.
+        if (!transforms[0].isIdentity()) {
+            instance.getSkeletonInstance().transformRoot(
+                    transforms[0].process(new Transform(), limitation));
+        }
 
         Bone[] bones = model.getSkeleton().getBones();
         for (int i = 0; i < bones.length; i++) {
-            Transform transform = transforms[i + 1].process(new Transform(), limitation);
-            instance.getSkeletonInstance().transform(bones[i], transform);
+            PendingTransform pending = transforms[i + 1];
+            if (pending.isIdentity()) continue;
+            instance.getSkeletonInstance().transform(bones[i], pending.process(new Transform(), limitation));
         }
-        instance.getSkeletonInstance().tick();
     }
 
     @Override

@@ -43,6 +43,7 @@ public final class RigidBodyWorld implements AutoCloseable {
 
     private final List<SimBody> bodies = new ArrayList<>();
     private final List<BallJoint> joints = new ArrayList<>();
+    private final List<PhysicsJoint> physicsJoints = new ArrayList<>();
     private final Box3DBackend backend;
     private final Vector3f gravity = new Vector3f(0f, -EARTH_GRAVITY, 0f);
 
@@ -102,6 +103,10 @@ public final class RigidBodyWorld implements AutoCloseable {
                 .filter(joint -> joint.bodyA() == body || joint.bodyB() == body)
                 .toList();
         for (BallJoint joint : attachedJoints) remove(joint);
+        List<PhysicsJoint> attachedPhysicsJoints = physicsJoints.stream()
+                .filter(joint -> joint.bodyA() == body || joint.bodyB() == body)
+                .toList();
+        for (PhysicsJoint joint : attachedPhysicsJoints) remove(joint);
         backend.removeBody(body);
         return true;
     }
@@ -122,8 +127,27 @@ public final class RigidBodyWorld implements AutoCloseable {
         if (joints.remove(value)) backend.removeJoint(value);
     }
 
+    /** Registers a weld/distance/revolute/prismatic joint between two world bodies. */
+    public void add(PhysicsJoint joint) {
+        ensureOpen();
+        PhysicsJoint value = Objects.requireNonNull(joint, "joint");
+        if (physicsJoints.contains(value)) return;
+        if (!bodies.contains(value.bodyA()) || !bodies.contains(value.bodyB())) {
+            throw new IllegalArgumentException("joint bodies must belong to this world");
+        }
+        physicsJoints.add(value);
+        backend.addJoint(value);
+    }
+
+    public void remove(PhysicsJoint joint) {
+        ensureOpen();
+        PhysicsJoint value = Objects.requireNonNull(joint, "joint");
+        if (physicsJoints.remove(value)) backend.removeJoint(value);
+    }
+
     public List<SimBody> bodies() { return Collections.unmodifiableList(bodies); }
     public List<BallJoint> joints() { return Collections.unmodifiableList(joints); }
+    public List<PhysicsJoint> physicsJoints() { return Collections.unmodifiableList(physicsJoints); }
 
     public boolean applyImpulse(SimBody body, Vector3f impulse) {
         if (!ownsDynamicBody(body) || impulse == null || !impulse.isFinite()) return false;

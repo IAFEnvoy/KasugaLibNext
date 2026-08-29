@@ -4,6 +4,7 @@ import lib.kasuga.rendering.models.uml.dynamic.physics.core.Frames.Pose;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.util.List;
 
@@ -17,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Exercises the generic rigid-body engine without any model adapter: plain
  * boxes and spheres stepped directly in a {@link RigidBodyWorld}.
  */
+@Tag("box3d")
 class RigidBodyWorldTest {
     private static final float DT = 1f / 60f;
 

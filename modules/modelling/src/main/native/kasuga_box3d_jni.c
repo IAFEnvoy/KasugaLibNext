@@ -31,6 +31,11 @@ static b3Pos position(jfloat x, jfloat y, jfloat z)
     return result;
 }
 
+static jfloat clamp_non_negative(jfloat value)
+{
+    return isfinite(value) ? fmaxf(0.0f, value) : 0.0f;
+}
+
 static b3WorldId world_id(jint packed)
 {
     return b3LoadWorldId((uint32_t)packed);
@@ -788,4 +793,284 @@ JNIEXPORT void JNICALL JNI_METHOD(destroyDrag)(JNIEnv* env, jclass type, jlong p
     if (b3Joint_IsValid(jointId)) b3DestroyJoint(jointId, true);
     b3BodyId anchorId = body_id(packedAnchor);
     if (b3Body_IsValid(anchorId)) b3DestroyBody(anchorId);
+}
+
+// ---------------------------------------------------------------------------
+// Rigid joint types ported for the generic physics surface: weld, distance,
+// revolute (hinge) and prismatic (slider). Constraint solving stays entirely
+// inside native Box3D; the JNI layer only maps packed ids onto def structs.
+// ---------------------------------------------------------------------------
+
+static void fill_joint_base(b3JointDef* base, jint packedWorld, jlong packedA, jlong packedB,
+                            jfloat ax, jfloat ay, jfloat az,
+                            jfloat aqx, jfloat aqy, jfloat aqz, jfloat aqw,
+                            jfloat bx, jfloat by, jfloat bz,
+                            jfloat bqx, jfloat bqy, jfloat bqz, jfloat bqw,
+                            jfloat constraintHertz, jfloat constraintDampingRatio,
+                            jboolean collideConnected)
+{
+    base->bodyIdA = body_id(packedA);
+    base->bodyIdB = body_id(packedB);
+    base->localFrameA = (b3Transform){.p = vec3(ax, ay, az), .q = quat(aqx, aqy, aqz, aqw)};
+    base->localFrameB = (b3Transform){.p = vec3(bx, by, bz), .q = quat(bqx, bqy, bqz, bqw)};
+    if (isfinite(constraintHertz) && constraintHertz > 0.0f)
+    {
+        base->constraintHertz = constraintHertz;
+    }
+    if (isfinite(constraintDampingRatio) && constraintDampingRatio > 0.0f)
+    {
+        base->constraintDampingRatio = fminf(constraintDampingRatio, 1.0f);
+    }
+    base->collideConnected = collideConnected == JNI_TRUE;
+}
+
+JNIEXPORT jlong JNICALL JNI_METHOD(createWeldJoint)(JNIEnv* env, jclass type, jint packedWorld,
+                                                     jlong packedA, jlong packedB,
+                                                     jfloat ax, jfloat ay, jfloat az,
+                                                     jfloat aqx, jfloat aqy, jfloat aqz, jfloat aqw,
+                                                     jfloat bx, jfloat by, jfloat bz,
+                                                     jfloat bqx, jfloat bqy, jfloat bqz, jfloat bqw,
+                                                     jfloat linearHertz, jfloat angularHertz,
+                                                     jfloat linearDampingRatio, jfloat angularDampingRatio,
+                                                     jfloat constraintHertz, jfloat constraintDampingRatio,
+                                                     jboolean collideConnected)
+{
+    (void)env;
+    (void)type;
+    b3WeldJointDef def = b3DefaultWeldJointDef();
+    fill_joint_base(&def.base, packedWorld, packedA, packedB,
+                    ax, ay, az, aqx, aqy, aqz, aqw, bx, by, bz, bqx, bqy, bqz, bqw,
+                    constraintHertz, constraintDampingRatio, collideConnected);
+    def.linearHertz = isfinite(linearHertz) ? fmaxf(0.0f, linearHertz) : 0.0f;
+    def.angularHertz = isfinite(angularHertz) ? fmaxf(0.0f, angularHertz) : 0.0f;
+    def.linearDampingRatio = isfinite(linearDampingRatio) ? fmaxf(0.0f, linearDampingRatio) : 1.0f;
+    def.angularDampingRatio = isfinite(angularDampingRatio) ? fmaxf(0.0f, angularDampingRatio) : 1.0f;
+    return (jlong)b3StoreJointId(b3CreateWeldJoint(world_id(packedWorld), &def));
+}
+
+JNIEXPORT jlong JNICALL JNI_METHOD(createDistanceJoint)(JNIEnv* env, jclass type, jint packedWorld,
+                                                        jlong packedA, jlong packedB,
+                                                        jfloat ax, jfloat ay, jfloat az,
+                                                        jfloat aqx, jfloat aqy, jfloat aqz, jfloat aqw,
+                                                        jfloat bx, jfloat by, jfloat bz,
+                                                        jfloat bqx, jfloat bqy, jfloat bqz, jfloat bqw,
+                                                        jfloat length,
+                                                        jboolean enableSpring, jfloat hertz, jfloat dampingRatio,
+                                                        jboolean enableLimit, jfloat minLength, jfloat maxLength,
+                                                        jboolean enableMotor, jfloat motorSpeed, jfloat maxMotorForce,
+                                                        jfloat constraintHertz, jfloat constraintDampingRatio,
+                                                        jboolean collideConnected)
+{
+    (void)env;
+    (void)type;
+    b3DistanceJointDef def = b3DefaultDistanceJointDef();
+    fill_joint_base(&def.base, packedWorld, packedA, packedB,
+                    ax, ay, az, aqx, aqy, aqz, aqw, bx, by, bz, bqx, bqy, bqz, bqw,
+                    constraintHertz, constraintDampingRatio, collideConnected);
+    def.length = isfinite(length) ? fmaxf(0.0f, length) : 0.0f;
+    def.enableSpring = enableSpring == JNI_TRUE;
+    def.hertz = clamp_non_negative(hertz);
+    def.dampingRatio = clamp_non_negative(dampingRatio);
+    def.enableLimit = enableLimit == JNI_TRUE;
+    def.minLength = isfinite(minLength) ? fmaxf(0.0f, minLength) : 0.0f;
+    def.maxLength = isfinite(maxLength) && maxLength >= def.minLength
+                        ? maxLength
+                        : (isfinite(def.minLength) ? def.minLength + 1.0f : 1.0f);
+    def.enableMotor = enableMotor == JNI_TRUE;
+    def.motorSpeed = isfinite(motorSpeed) ? motorSpeed : 0.0f;
+    def.maxMotorForce = clamp_non_negative(maxMotorForce);
+    return (jlong)b3StoreJointId(b3CreateDistanceJoint(world_id(packedWorld), &def));
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setDistanceJointLength)(JNIEnv* env, jclass type, jlong packed,
+                                                          jfloat length)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (b3Joint_IsValid(id) && isfinite(length)) b3DistanceJoint_SetLength(id, fmaxf(0.0f, length));
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setDistanceJointSpring)(JNIEnv* env, jclass type, jlong packed,
+                                                          jboolean enable, jfloat hertz, jfloat dampingRatio)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id)) return;
+    b3DistanceJoint_EnableSpring(id, enable == JNI_TRUE);
+    b3DistanceJoint_SetSpringHertz(id, clamp_non_negative(hertz));
+    b3DistanceJoint_SetSpringDampingRatio(id, clamp_non_negative(dampingRatio));
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setDistanceJointLimits)(JNIEnv* env, jclass type, jlong packed,
+                                                          jboolean enable, jfloat minLength, jfloat maxLength)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id)) return;
+    b3DistanceJoint_EnableLimit(id, enable == JNI_TRUE);
+    if (!isfinite(minLength) || !isfinite(maxLength)) return;
+    float lower = fmaxf(0.0f, minLength);
+    float upper = fmaxf(lower, maxLength);
+    b3DistanceJoint_SetLengthRange(id, lower, upper);
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setDistanceJointMotor)(JNIEnv* env, jclass type, jlong packed,
+                                                         jboolean enable, jfloat speed, jfloat maxForce)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id)) return;
+    b3DistanceJoint_EnableMotor(id, enable == JNI_TRUE);
+    b3DistanceJoint_SetMotorSpeed(id, isfinite(speed) ? speed : 0.0f);
+    b3DistanceJoint_SetMaxMotorForce(id, clamp_non_negative(maxForce));
+}
+
+JNIEXPORT jlong JNICALL JNI_METHOD(createRevoluteJoint)(JNIEnv* env, jclass type, jint packedWorld,
+                                                        jlong packedA, jlong packedB,
+                                                        jfloat ax, jfloat ay, jfloat az,
+                                                        jfloat aqx, jfloat aqy, jfloat aqz, jfloat aqw,
+                                                        jfloat bx, jfloat by, jfloat bz,
+                                                        jfloat bqx, jfloat bqy, jfloat bqz, jfloat bqw,
+                                                        jfloat targetAngle,
+                                                        jboolean enableSpring, jfloat springHertz, jfloat springDampingRatio,
+                                                        jboolean enableLimit, jfloat lowerAngle, jfloat upperAngle,
+                                                        jboolean enableMotor, jfloat maxMotorTorque, jfloat motorSpeed,
+                                                        jfloat constraintHertz, jfloat constraintDampingRatio,
+                                                        jboolean collideConnected)
+{
+    (void)env;
+    (void)type;
+    b3RevoluteJointDef def = b3DefaultRevoluteJointDef();
+    fill_joint_base(&def.base, packedWorld, packedA, packedB,
+                    ax, ay, az, aqx, aqy, aqz, aqw, bx, by, bz, bqx, bqy, bqz, bqw,
+                    constraintHertz, constraintDampingRatio, collideConnected);
+    def.targetAngle = isfinite(targetAngle) ? targetAngle : 0.0f;
+    def.enableSpring = enableSpring == JNI_TRUE;
+    def.hertz = clamp_non_negative(springHertz);
+    def.dampingRatio = clamp_non_negative(springDampingRatio);
+    def.enableLimit = enableLimit == JNI_TRUE;
+    def.lowerAngle = isfinite(lowerAngle) ? fmaxf(-0.99f * B3_PI, lowerAngle) : -0.99f * B3_PI;
+    def.upperAngle = isfinite(upperAngle) ? fminf(0.99f * B3_PI, upperAngle) : 0.99f * B3_PI;
+    def.enableMotor = enableMotor == JNI_TRUE;
+    def.maxMotorTorque = clamp_non_negative(maxMotorTorque);
+    def.motorSpeed = isfinite(motorSpeed) ? motorSpeed : 0.0f;
+    return (jlong)b3StoreJointId(b3CreateRevoluteJoint(world_id(packedWorld), &def));
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setRevoluteJointLimits)(JNIEnv* env, jclass type, jlong packed,
+                                                          jboolean enable, jfloat lowerAngle, jfloat upperAngle)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id)) return;
+    b3RevoluteJoint_EnableLimit(id, enable == JNI_TRUE);
+    if (!isfinite(lowerAngle) || !isfinite(upperAngle)) return;
+    float lower = fmaxf(-0.99f * B3_PI, lowerAngle);
+    float upper = fminf(fmaxf(lower, upperAngle), 0.99f * B3_PI);
+    b3RevoluteJoint_SetLimits(id, lower, upper);
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setRevoluteJointMotor)(JNIEnv* env, jclass type, jlong packed,
+                                                         jboolean enable, jfloat speed, jfloat maxTorque)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id)) return;
+    b3RevoluteJoint_EnableMotor(id, enable == JNI_TRUE);
+    b3RevoluteJoint_SetMotorSpeed(id, isfinite(speed) ? speed : 0.0f);
+    b3RevoluteJoint_SetMaxMotorTorque(id, clamp_non_negative(maxTorque));
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setRevoluteJointSpring)(JNIEnv* env, jclass type, jlong packed,
+                                                          jboolean enable, jfloat hertz, jfloat dampingRatio,
+                                                          jfloat targetAngle)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id)) return;
+    b3RevoluteJoint_EnableSpring(id, enable == JNI_TRUE);
+    b3RevoluteJoint_SetSpringHertz(id, clamp_non_negative(hertz));
+    b3RevoluteJoint_SetSpringDampingRatio(id, clamp_non_negative(dampingRatio));
+    if (isfinite(targetAngle)) b3RevoluteJoint_SetTargetAngle(id, targetAngle);
+}
+
+JNIEXPORT jlong JNICALL JNI_METHOD(createPrismaticJoint)(JNIEnv* env, jclass type, jint packedWorld,
+                                                         jlong packedA, jlong packedB,
+                                                         jfloat ax, jfloat ay, jfloat az,
+                                                         jfloat aqx, jfloat aqy, jfloat aqz, jfloat aqw,
+                                                         jfloat bx, jfloat by, jfloat bz,
+                                                         jfloat bqx, jfloat bqy, jfloat bqz, jfloat bqw,
+                                                         jboolean enableSpring, jfloat springHertz, jfloat springDampingRatio,
+                                                         jfloat targetTranslation,
+                                                         jboolean enableLimit, jfloat lowerTranslation, jfloat upperTranslation,
+                                                         jboolean enableMotor, jfloat maxMotorForce, jfloat motorSpeed,
+                                                         jfloat constraintHertz, jfloat constraintDampingRatio,
+                                                         jboolean collideConnected)
+{
+    (void)env;
+    (void)type;
+    b3PrismaticJointDef def = b3DefaultPrismaticJointDef();
+    fill_joint_base(&def.base, packedWorld, packedA, packedB,
+                    ax, ay, az, aqx, aqy, aqz, aqw, bx, by, bz, bqx, bqy, bqz, bqw,
+                    constraintHertz, constraintDampingRatio, collideConnected);
+    def.enableSpring = enableSpring == JNI_TRUE;
+    def.hertz = clamp_non_negative(springHertz);
+    def.dampingRatio = clamp_non_negative(springDampingRatio);
+    def.targetTranslation = isfinite(targetTranslation) ? targetTranslation : 0.0f;
+    def.enableLimit = enableLimit == JNI_TRUE;
+    def.lowerTranslation = isfinite(lowerTranslation) ? lowerTranslation : -1.0f;
+    def.upperTranslation = isfinite(upperTranslation) && upperTranslation >= def.lowerTranslation
+                               ? upperTranslation
+                               : def.lowerTranslation + 1.0f;
+    def.enableMotor = enableMotor == JNI_TRUE;
+    def.maxMotorForce = clamp_non_negative(maxMotorForce);
+    def.motorSpeed = isfinite(motorSpeed) ? motorSpeed : 0.0f;
+    return (jlong)b3StoreJointId(b3CreatePrismaticJoint(world_id(packedWorld), &def));
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setPrismaticJointLimits)(JNIEnv* env, jclass type, jlong packed,
+                                                           jboolean enable, jfloat lowerTranslation, jfloat upperTranslation)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id)) return;
+    b3PrismaticJoint_EnableLimit(id, enable == JNI_TRUE);
+    if (!isfinite(lowerTranslation) || !isfinite(upperTranslation)) return;
+    float lower = lowerTranslation;
+    float upper = fmaxf(lower, upperTranslation);
+    b3PrismaticJoint_SetLimits(id, lower, upper);
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setPrismaticJointMotor)(JNIEnv* env, jclass type, jlong packed,
+                                                          jboolean enable, jfloat speed, jfloat maxForce)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id)) return;
+    b3PrismaticJoint_EnableMotor(id, enable == JNI_TRUE);
+    b3PrismaticJoint_SetMotorSpeed(id, isfinite(speed) ? speed : 0.0f);
+    b3PrismaticJoint_SetMaxMotorForce(id, clamp_non_negative(maxForce));
+}
+
+JNIEXPORT void JNICALL JNI_METHOD(setPrismaticJointSpring)(JNIEnv* env, jclass type, jlong packed,
+                                                           jboolean enable, jfloat hertz, jfloat dampingRatio,
+                                                           jfloat targetTranslation)
+{
+    (void)env;
+    (void)type;
+    b3JointId id = b3LoadJointId((uint64_t)packed);
+    if (!b3Joint_IsValid(id)) return;
+    b3PrismaticJoint_EnableSpring(id, enable == JNI_TRUE);
+    b3PrismaticJoint_SetSpringHertz(id, clamp_non_negative(hertz));
+    b3PrismaticJoint_SetSpringDampingRatio(id, clamp_non_negative(dampingRatio));
+    if (isfinite(targetTranslation)) b3PrismaticJoint_SetTargetTranslation(id, targetTranslation);
 }
