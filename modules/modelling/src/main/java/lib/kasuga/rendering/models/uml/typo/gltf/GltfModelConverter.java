@@ -164,17 +164,29 @@ public final class GltfModelConverter {
     @SuppressWarnings("unchecked")
     private static BoneBinding binding(GltfAsset asset, GltfAsset.Primitive primitive, int vertex,
                                        Bone[] nodeBones, Bone fallback) {
-        List<Pair<Bone, Float>> weights = new ArrayList<>(4);
+        // glTF permits float weights whose sum is not exactly one. Some
+        // exporters also duplicate a joint component. Canonicalize both here
+        // before entering the format-neutral skinning path; PMX BDEF/SDEF/QDEF
+        // semantics must not leak into glTF just because both use four slots.
+        Map<Bone, Double> mergedWeights = new LinkedHashMap<>(4);
         if (primitive.skinned() && primitive.skinIndex() < asset.skins().size()) {
             GltfAsset.Skin skin = asset.skins().get(primitive.skinIndex());
             for (int component = 0; component < 4; component++) {
                 int offset = vertex * 4 + component;
                 float weight = primitive.weights()[offset];
                 int joint = primitive.joints()[offset];
-                if (weight <= 0f || joint < 0 || joint >= skin.jointNodeIndices().length) continue;
+                if (!Float.isFinite(weight) || weight <= 0f
+                        || joint < 0 || joint >= skin.jointNodeIndices().length) continue;
                 int node = skin.jointNodeIndices()[joint];
-                if (node >= 0 && node < nodeBones.length) weights.add(Pair.of(nodeBones[node], weight));
+                if (node >= 0 && node < nodeBones.length) {
+                    mergedWeights.merge(nodeBones[node], (double) weight, Double::sum);
+                }
             }
+        }
+        List<Pair<Bone, Float>> weights = new ArrayList<>(mergedWeights.size());
+        double sum = mergedWeights.values().stream().mapToDouble(Double::doubleValue).sum();
+        if (sum > 0.0 && Double.isFinite(sum)) {
+            mergedWeights.forEach((bone, weight) -> weights.add(Pair.of(bone, (float) (weight / sum))));
         }
         if (weights.isEmpty()) {
             Bone bone = primitive.nodeIndex() >= 0 && primitive.nodeIndex() < nodeBones.length

@@ -35,15 +35,15 @@ public class MCRenderableContext extends BackendContext<MCBridge, BackendInstanc
      * Extract the TRS of the skeleton root transform into a {@link MCBackend.BackendTransform} for
      * world-space lighting/culling in {@link MCBackend#render}.
      *
-     * <p>The root is already baked into all bones' absoluteTransforms by
-     * {@code SkeletonInstance.updateTransform} (skinned vertices are world-space), so the result
-     * is returned with {@code appliesTransform=false} — lighting/culling data only, never pushed
-     * onto the pose stack, avoiding double offset from "baked root × pose TRS". An identity root
-     * yields {@link IDENTITY_TRANSFORM} (all-null, no-op), bit-for-bit equivalent to legacy behavior.
+     * <p>The origin-local root is already baked into every bone by
+     * {@code SkeletonInstance.updateTransform}. {@link MCBackend} applies the separate double
+     * world origin camera-relatively, so this result carries {@code appliesTransform=false}
+     * and supplies lighting/culling metadata without double-applying the root.
      */
     @Override
     public MCBackend.BackendTransform beforeRender(MCBackendContext context) {
-        return toBackendTransform(getModelInstance().getSkeletonInstance().getTransform());
+        var skeleton = getModelInstance().getSkeletonInstance();
+        return toBackendTransform(skeleton.getTransform(), skeleton.getWorldOrigin());
     }
 
     /** Push the full root matrix onto the pose stack; kept as a public utility (beforeRender uses TRS extraction instead, to avoid double application). */
@@ -62,25 +62,34 @@ public class MCRenderableContext extends BackendContext<MCBridge, BackendInstanc
      * {@code QuaternionHelper.fromXYZDegrees} and JOML column-major indexing (mXY = M[row=Y][col=X]):
      * x = atan2(−r12, r22), y = asin(r02), z = atan2(−r01, r00).
      *
-     * <p>The root is already baked into skinning matrices, so the result carries
+     * <p>The origin-local root is already baked into skinning matrices, so the result carries
      * {@code appliesTransform=false}; identity → all components null; pure translation → rotation/scale null.
      */
     static MCBackend.BackendTransform toBackendTransform(@Nullable Transform transform) {
+        return toBackendTransform(transform, new org.joml.Vector3d());
+    }
+
+    static MCBackend.BackendTransform toBackendTransform(@Nullable Transform transform,
+                                                          org.joml.Vector3dc worldOrigin) {
         if (transform == null) {
             return DEFAULT_TRANSFORM;
         }
-        if (transform.isIdentity()) {
+        boolean zeroOrigin = worldOrigin.x() == 0.0 && worldOrigin.y() == 0.0 && worldOrigin.z() == 0.0;
+        if (transform.isIdentity() && zeroOrigin) {
             return IDENTITY_TRANSFORM;
         }
-        Vector3f position = transform.getPosition();
+        Vector3f position = transform.isIdentity() ? null : transform.getPosition();
         Vector3f scale = extractScale(transform);
         Vector3f rotation = extractRotationDegrees(transform, scale);
         if (scale != null && close(scale.x(), 1f) && close(scale.y(), 1f) && close(scale.z(), 1f)) {
             scale = null;
         }
+        org.joml.Vector3d preciseWorldPosition = new org.joml.Vector3d(worldOrigin);
+        if (position != null) preciseWorldPosition.add(position.x, position.y, position.z);
         return new MCBackend.BackendTransform(position, rotation, scale,
                 false, false, true, true,
-                1f, 1f, -1, -1, false /* root already baked into skinning matrices */);
+                1f, 1f, -1, -1, false /* root already baked into skinning matrices */,
+                preciseWorldPosition);
     }
 
     /** Scale = lengths of the rotation-part columns (valid for M = R·S layout; negative scale approximated via abs). */

@@ -3,12 +3,27 @@
 `MmdRagdoll` 有两种构建方式：
 
 - `enablePhysics()` 使用 PMX 中全部刚体，因此会包含裙摆、头发等次级物理刚体。
-- `enablePhysics(profile)` 可用于 PMX 或 glTF，仅使用 profile 的 `bodies` 并生成稳定的人形胶囊和
-  语义质量；惯量由 Box3D 根据 shape 与质量生成。glTF 不允许无 profile 自动猜测人体结构。
+- `enablePhysics(profile)` 可用于 PMX 或 glTF，使用 profile 的 `bodies` 生成稳定的人形胶囊和
+  语义质量；PMX profile 可通过 `include_secondary_bodies` 同时保留未登记的裙摆、头发、饰品等
+  作者刚体链。惯量由 Box3D 根据 shape 与质量生成。glTF 不允许无 profile 自动猜测人体结构。
 
 物理求解由 vendored Box3D C17 引擎完成。`uml/dynamic/physics/core` 中的
 `RigidBodyWorld`、`SimBody`、`GenericRigidBody` 和 `BallJoint` 只负责 Java 对象映射、
 固定步长、生命周期与状态同步；`MmdRagdoll` 是 PMX/骨骼适配器。任何代码都可以直接创建世界：
+
+## 大坐标精度
+
+启用 `MmdRagdoll` 时，模型根节点的世界平移会从 float 骨骼矩阵中移出，作为独立的 double
+`worldOrigin` 保存。骨骼求值、Box3D 刚体、关节以及缓存的方块碰撞均使用原点附近的局部坐标；
+渲染阶段先以 double 计算 `worldOrigin - cameraPosition`，然后才写入 float pose matrix。因此即使在
+Minecraft 世界边界附近，短发束、裙摆关节和亚方块拖拽目标也不会被绝对坐标量化成整格。
+
+`Body.position()` 与 `RayHit.point()` 是模拟局部坐标；需要世界位置时使用
+`ragdoll.worldPosition(body)`。相机、实体等 double 世界坐标应通过 `raycastWorld(...)`、
+`beginDragWorld(...)`、`updateDragTargetWorld(...)`、`addStaticBoxColliderWorld(...)` 或
+`worldToSimulation(...)` 进入物理世界。
+`MinecraftRagdollDeployments.Request` 的带 `Vector3d worldOrigin` 构造器可保留部署位置的小数部分；
+旧构造器仍兼容，但只能继承原 `Transform` 已有的 float 精度。
 
 ```java
 var crate = GenericRigidBody.box(new Vector3f(0.5f), 8f).at(2f, 5f, 1f);
@@ -95,6 +110,13 @@ Java 代码不会按 `maribel`、`renko` 或任何骨骼名称写死选择逻辑
   manifest 所属模型的 glTF node index；根节点省略 `parent`。
   MMD 适配器会优先沿真实骨骼树寻找最近的已注册物理祖先；只有找不到物理祖先时
   才使用 `parent` 桥接分离的 PMX 分支（例如同属“腰”下的“上半身”和“下半身”）。
+- `include_secondary_bodies`：仅对 PMX 生效，默认 `false`。开启后，未被 `bodies` 替换且不与主体
+  骨骼冲突的作者刚体及其关节会一并进入物理世界，适用于常见的骨骼驱动裙摆和头发。它不等同于
+  PMX 2.1 的逐顶点 soft-body。混合 profile 下次级骨骼保留动画平移、只写回物理旋转，以保证发束和
+  裙摆骨长不被主体胶囊的不同参考系拉伸。主体挂点通过随主体移动的 kinematic proxy 单向驱动
+  次级链，并使用独立的 16 层碰撞命名空间，避免大量次级刚体反向拖动主体或与生成胶囊互相弹飞。
+  内置 TDA 示例使用 8 个 Box3D substep；逐顶点 soft-body 当前只完成格式读取，尚未接入 Box3D
+  求解与顶点写回。
 - `role`：`pelvis`、`spine`、`chest`、`neck`、`head`、`shoulder`、`upper_arm`、
   `lower_arm`、`hand`、`upper_leg`、`lower_leg`、`foot` 或 `toe`。
 - 顶层 `limits`：可按 role 统一声明 swing/twist 限位，避免每个 body 重复；body 自身字段优先。
@@ -108,7 +130,8 @@ Java 代码不会按 `maribel`、`renko` 或任何骨骼名称写死选择逻辑
 - `simulation.update_mode`：`render_frame` 由独立 runtime 推进，不再依赖模型是否进入 backend
   的实际 draw；`manual` 由调用方使用 `MinecraftRagdollRuntime.step(instance, dt)` 或
   `instance.simulatePhysics(dt)` 推进。
-- `simulation.substeps`：每个固定世界步的求解子步数。
+- `simulation.substeps`：每个固定世界步的求解子步数。长头发、裙摆等多节次级链建议使用 `8`；
+  内置 TDA 配置采用该值。
 - `simulation.solver_iterations`：旧配置兼容字段；Box3D 不公开该迭代次数，当前仅校验而不改变求解。
 - `simulation.constraint_hertz` / `constraint_damping_ratio`：关节约束软化参数。
 - `simulation.max_linear_speed`：映射到 Box3D 世界最大线速度。`max_angular_speed` 是旧配置兼容字段；

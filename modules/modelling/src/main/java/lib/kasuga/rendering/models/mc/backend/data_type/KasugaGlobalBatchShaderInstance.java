@@ -37,6 +37,7 @@ public class KasugaGlobalBatchShaderInstance extends KasugaShaderInstance {
         safeGetUniform("ksg_ParallaxScale").set(getParallaxScale());
         safeGetUniform("ksg_ParallaxSamples").set(getParallaxSamplerTimes());
         safeGetUniform("ksg_AmbientLightEnhancement").set(getAmbientLightEnhancement());
+        safeGetUniform("ksg_StylizedShadingStrength").set(getStylizedShadingStrength());
         setSampler("ksg_NormalMap", Constants.TEXTURE_BASIC.getNormalMap().getId());
         setSampler("ksg_SpecularMap", Constants.TEXTURE_BASIC.getSpecularMap().getId());
     }

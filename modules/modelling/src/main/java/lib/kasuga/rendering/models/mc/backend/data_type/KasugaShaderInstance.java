@@ -39,6 +39,9 @@ public class KasugaShaderInstance extends ShaderInstance {
     @Getter
     private float ambientLightEnhancement = 1.5f;
 
+    @Getter
+    private float stylizedShadingStrength = 0.65f;
+
     private float brightness = 1.0f;
     private int packedLight = 0;
     private int packedOverlay = 0;
@@ -101,6 +104,19 @@ public class KasugaShaderInstance extends ShaderInstance {
         setAmbientLightEnhancement(1f);
     }
 
+    /** Blends between physically-shaped Lambert lighting and the readable toon ramp. */
+    public void setStylizedShadingStrength(float strength) {
+        this.stylizedShadingStrength = Math.clamp(strength, 0f, 1f);
+    }
+
+    public void resetStylizedShadingStrength() {
+        setStylizedShadingStrength(0.65f);
+    }
+
+    public void disableStylizedShading() {
+        setStylizedShadingStrength(0f);
+    }
+
     public void setLightData(float brightness, int packedLight, int packedOverlay) {
         this.brightness = brightness;
         this.packedLight = packedLight;
@@ -118,6 +134,7 @@ public class KasugaShaderInstance extends ShaderInstance {
         this.safeGetUniform("ksg_ParallaxScale").set(this.parallaxScale);
         this.safeGetUniform("ksg_ParallaxSamples").set(this.parallaxSamplerTimes);
         this.safeGetUniform("ksg_AmbientLightEnhancement").set(this.ambientLightEnhancement);
+        this.safeGetUniform("ksg_StylizedShadingStrength").set(this.stylizedShadingStrength);
         this.safeGetUniform("ksg_BrightnessScale").set(this.brightness);
         this.safeGetUniform("ksg_PackedLight").set(this.packedLight & 0xffff, (this.packedLight >>> 16) & 0xffff);
         this.safeGetUniform("ksg_PackedOverlay").set(this.packedOverlay & 0xffff, (this.packedOverlay >>> 16) & 0xffff);
