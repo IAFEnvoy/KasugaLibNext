@@ -30,6 +30,7 @@ final class Box3DBackend implements AutoCloseable {
         final Quaternionf rotation = new Quaternionf();
         final Vector3f linearVelocity = new Vector3f();
         final Vector3f angularVelocity = new Vector3f();
+        boolean enabled = true;
 
         BodyHandle(long nativeId, SimBody body) {
             this.nativeId = nativeId;
@@ -101,7 +102,7 @@ final class Box3DBackend implements AutoCloseable {
         }
         float density = nativeType == NativeBox3D.DYNAMIC_BODY ? 1f : 0f;
         long activeMask = collisionsEnabled ? maskBits : 0L;
-        int groupIndex = selfCollisionsEnabled ? 0 : disabledSelfCollisionGroup;
+        int groupIndex = selfCollisionGroup(body);
         for (BodyShape shape : shapes) {
             addShape(id, shape, density, body.friction(), body.restitution(), body.rollingResistance(),
                     categoryBits, activeMask, groupIndex);
@@ -279,6 +280,7 @@ final class Box3DBackend implements AutoCloseable {
         for (Map.Entry<SimBody, BodyHandle> entry : bodies.entrySet()) {
             SimBody body = entry.getKey();
             BodyHandle handle = entry.getValue();
+            if (!handle.enabled) continue;
             body.previousPositionRef().set(body.positionRef());
             body.previousRotationRef().set(body.rotationRef());
             if (body.kinematic()) {
@@ -313,6 +315,7 @@ final class Box3DBackend implements AutoCloseable {
         for (Map.Entry<SimBody, BodyHandle> entry : bodies.entrySet()) {
             SimBody body = entry.getKey();
             BodyHandle handle = entry.getValue();
+            if (!handle.enabled) continue;
             NativeBox3D.readBodyState(handle.nativeId, state);
             body.positionRef().set(state[0], state[1], state[2]);
             body.rotationRef().set(state[3], state[4], state[5], state[6]).normalize();
@@ -376,14 +379,28 @@ final class Box3DBackend implements AutoCloseable {
 
     boolean setAwake(SimBody body, boolean awake) {
         BodyHandle handle = bodies.get(body);
-        if (handle == null) return false;
+        if (handle == null || !handle.enabled) return false;
         NativeBox3D.setBodyAwake(handle.nativeId, awake);
         return true;
     }
 
     boolean awake(SimBody body) {
         BodyHandle handle = bodies.get(body);
-        return handle != null && NativeBox3D.bodyAwake(handle.nativeId);
+        return handle != null && handle.enabled && NativeBox3D.bodyAwake(handle.nativeId);
+    }
+
+    boolean setBodyEnabled(SimBody body, boolean enabled) {
+        BodyHandle handle = bodies.get(body);
+        if (handle == null) return false;
+        if (handle.enabled == enabled) return true;
+        NativeBox3D.setBodyEnabled(handle.nativeId, enabled);
+        handle.enabled = enabled;
+        return true;
+    }
+
+    boolean bodyEnabled(SimBody body) {
+        BodyHandle handle = bodies.get(body);
+        return handle != null && handle.enabled;
     }
 
     java.util.Optional<RayHit> raycast(Vector3f origin, Vector3f direction, float maximumDistance) {
@@ -461,13 +478,15 @@ final class Box3DBackend implements AutoCloseable {
     }
 
     void wake() {
-        for (BodyHandle handle : bodies.values()) NativeBox3D.wakeBody(handle.nativeId);
+        for (BodyHandle handle : bodies.values()) {
+            if (handle.enabled) NativeBox3D.wakeBody(handle.nativeId);
+        }
     }
 
     boolean sleeping() {
         boolean hasDynamic = false;
         for (Map.Entry<SimBody, BodyHandle> entry : bodies.entrySet()) {
-            if (entry.getKey().inverseLinearMass() <= 0f) continue;
+            if (!entry.getValue().enabled || entry.getKey().inverseLinearMass() <= 0f) continue;
             hasDynamic = true;
             if (NativeBox3D.bodyAwake(entry.getValue().nativeId)) return false;
         }
@@ -542,8 +561,17 @@ final class Box3DBackend implements AutoCloseable {
             long category = 1L << body.collisionGroup();
             long mask = enabled ? ~Integer.toUnsignedLong(body.nonCollisionMask()) : 0L;
             NativeBox3D.setBodyFilter(entry.getValue().nativeId, category, mask,
-                    selfCollisionsEnabled ? 0 : disabledSelfCollisionGroup);
+                    selfCollisionGroup(body));
         }
+    }
+
+    private int selfCollisionGroup(SimBody body) {
+        // The negative group is a humanoid-profile policy, not a whole-world
+        // policy. Authored PMX skirt/hair bodies must keep their category/mask
+        // filters so neighboring cloth chains can still interact as authored.
+        if (body.authoredSecondaryBody()) return 0;
+        if (body.selfCollisionGroup() < 0) return body.selfCollisionGroup();
+        return selfCollisionsEnabled ? 0 : disabledSelfCollisionGroup;
     }
 
     private void readState(SimBody body, BodyHandle handle) {

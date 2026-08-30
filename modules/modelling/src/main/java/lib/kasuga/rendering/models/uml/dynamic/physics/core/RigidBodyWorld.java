@@ -1,6 +1,8 @@
 package lib.kasuga.rendering.models.uml.dynamic.physics.core;
 
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.Frames.Pose;
+import org.joml.Vector3d;
+import org.joml.Vector3dc;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -46,6 +48,7 @@ public final class RigidBodyWorld implements AutoCloseable {
     private final List<PhysicsJoint> physicsJoints = new ArrayList<>();
     private final Box3DBackend backend;
     private final Vector3f gravity = new Vector3f(0f, -EARTH_GRAVITY, 0f);
+    private final Vector3d worldOrigin = new Vector3d();
 
     private int solverIterations = 1;
     private float simulationHertz = DEFAULT_SIMULATION_HERTZ;
@@ -149,6 +152,27 @@ public final class RigidBodyWorld implements AutoCloseable {
     public List<BallJoint> joints() { return Collections.unmodifiableList(joints); }
     public List<PhysicsJoint> physicsJoints() { return Collections.unmodifiableList(physicsJoints); }
 
+    /** High-precision anchor added to every local Box3D position. */
+    public Vector3d worldOrigin() { return new Vector3d(worldOrigin); }
+
+    public void setWorldOrigin(Vector3dc origin) {
+        Objects.requireNonNull(origin, "origin");
+        if (!Double.isFinite(origin.x()) || !Double.isFinite(origin.y()) || !Double.isFinite(origin.z())) {
+            throw new IllegalArgumentException("world origin must be finite");
+        }
+        worldOrigin.set(origin);
+    }
+
+    public Vector3f worldToLocal(double x, double y, double z) {
+        return new Vector3f((float) (x - worldOrigin.x),
+                (float) (y - worldOrigin.y), (float) (z - worldOrigin.z));
+    }
+
+    public Vector3d localToWorld(Vector3f local) {
+        Objects.requireNonNull(local, "local");
+        return new Vector3d(worldOrigin).add(local.x, local.y, local.z);
+    }
+
     public boolean applyImpulse(SimBody body, Vector3f impulse) {
         if (!ownsDynamicBody(body) || impulse == null || !impulse.isFinite()) return false;
         return backend.applyImpulse(body, impulse, null);
@@ -204,8 +228,18 @@ public final class RigidBodyWorld implements AutoCloseable {
         return body != null && bodies.contains(body) && backend.awake(body);
     }
 
+    /** Enables or completely removes one body from native simulation without destroying it or its joints. */
+    public boolean setBodyEnabled(SimBody body, boolean enabled) {
+        return body != null && bodies.contains(body) && backend.setBodyEnabled(body, enabled);
+    }
+
+    public boolean bodyEnabled(SimBody body) {
+        return body != null && bodies.contains(body) && backend.bodyEnabled(body);
+    }
+
     private boolean ownsDynamicBody(SimBody body) {
-        return body != null && bodies.contains(body) && body.inverseLinearMass() > 0f;
+        return body != null && bodies.contains(body) && backend.bodyEnabled(body)
+                && body.inverseLinearMass() > 0f;
     }
 
     public java.util.Optional<RayHit> raycast(Vector3f origin, Vector3f direction,

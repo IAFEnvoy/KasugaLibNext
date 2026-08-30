@@ -3,6 +3,7 @@ package lib.kasuga.rendering.models.uml.dynamic;
 import lib.kasuga.rendering.models.uml.dynamic.morph.MorphInstance;
 import lib.kasuga.rendering.models.uml.dynamic.morph.MorphResult;
 import lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll;
+import lib.kasuga.rendering.models.uml.dynamic.physics.MmdPhysicsScene;
 import lib.kasuga.rendering.models.uml.dynamic.physics.box3d.NativeBox3D;
 import lib.kasuga.rendering.models.uml.dynamic.tick_loop.ModelTickLoop;
 import lib.kasuga.rendering.models.uml.dynamic.tick_loop.handler.AnchorModule;
@@ -33,6 +34,9 @@ import java.util.Map;
 @Getter
 public class ModelInstance implements AutoCloseable {
 
+    /** Vanilla-pipeline ambient multiplier. {@code 1} disables the extra enhancement. */
+    public static final float DEFAULT_AMBIENT_LIGHT_ENHANCEMENT = 1.5f;
+
     private final Model model;
 
     private final SkeletonInstance skeletonInstance;
@@ -47,6 +51,8 @@ public class ModelInstance implements AutoCloseable {
 
     @Setter
     private MeshMode meshMode;
+
+    private float ambientLightEnhancement = DEFAULT_AMBIENT_LIGHT_ENHANCEMENT;
 
     /**
      * Optional pose driver — the animation source that advances this instance's pose one tick at a time.
@@ -102,6 +108,21 @@ public class ModelInstance implements AutoCloseable {
         return materialInstance.getSprite(mat);
     }
 
+    /**
+     * Sets the additional ambient-light multiplier used by compatible render backends.
+     * Minecraft applies it only on the vanilla (non-Iris) shader path.
+     */
+    public void setAmbientLightEnhancement(float enhancement) {
+        if (!Float.isFinite(enhancement)) {
+            throw new IllegalArgumentException("ambient light enhancement must be finite");
+        }
+        ambientLightEnhancement = Math.clamp(enhancement, 0f, 10000f);
+    }
+
+    public void disableAmbientLightEnhancement() {
+        setAmbientLightEnhancement(1f);
+    }
+
     public void forceUpdate() {
         skeletonInstance.setShouldUpdate(true);
     }
@@ -140,7 +161,11 @@ public class ModelInstance implements AutoCloseable {
     @Nullable
     public MmdRagdoll enablePhysics() {
         if (!NativeBox3D.availableOrWarn()) return null;
-        if (ragdoll == null) ragdoll = new MmdRagdoll(this);
+        if (ragdoll != null && ragdoll.physicsScene() != null) {
+            ragdoll.moveTo(null);
+        } else if (ragdoll == null) {
+            ragdoll = new MmdRagdoll(this);
+        }
         ragdoll.setEnabled(true);
         return ragdoll;
     }
@@ -152,9 +177,32 @@ public class ModelInstance implements AutoCloseable {
     @Nullable
     public MmdRagdoll enablePhysics(MmdRagdoll.Profile profile) {
         if (!NativeBox3D.availableOrWarn()) return null;
-        if (ragdoll == null) ragdoll = new MmdRagdoll(this, profile);
-        else if (!java.util.Objects.equals(ragdoll.profile(), profile)) {
-            throw new IllegalStateException("physics is already enabled with a different profile");
+        if (ragdoll != null && !java.util.Objects.equals(ragdoll.profile(), profile)) {
+            ragdoll.close();
+            ragdoll = null;
+        }
+        if (ragdoll != null && ragdoll.physicsScene() != null) {
+            ragdoll.moveTo(null);
+        } else if (ragdoll == null) {
+            ragdoll = new MmdRagdoll(this, profile);
+        }
+        ragdoll.setEnabled(true);
+        return ragdoll;
+    }
+
+    /** Registers this model in a shared Box3D scene for cross-model contact and joints. */
+    @Nullable
+    public MmdRagdoll enablePhysics(MmdPhysicsScene scene, @Nullable MmdRagdoll.Profile profile) {
+        if (!NativeBox3D.availableOrWarn()) return null;
+        java.util.Objects.requireNonNull(scene, "scene");
+        if (ragdoll != null && !java.util.Objects.equals(ragdoll.profile(), profile)) {
+            ragdoll.close();
+            ragdoll = null;
+        }
+        if (ragdoll != null && ragdoll.physicsScene() != scene) {
+            ragdoll.moveTo(scene);
+        } else if (ragdoll == null) {
+            ragdoll = new MmdRagdoll(this, profile, scene);
         }
         ragdoll.setEnabled(true);
         return ragdoll;
@@ -163,6 +211,14 @@ public class ModelInstance implements AutoCloseable {
     /** Disables physics and restores the current animation/IK pose. */
     public void disablePhysics() {
         if (ragdoll != null) ragdoll.setEnabled(false);
+    }
+
+    /** Detaches physics from any scene and tears down the ragdoll adapter. */
+    public void detachPhysics() {
+        if (ragdoll != null) {
+            ragdoll.close();
+            ragdoll = null;
+        }
     }
 
     /**
@@ -197,6 +253,17 @@ public class ModelInstance implements AutoCloseable {
             frameSamplePrepared = true;
         }
         tickLoop.tick(deltaSeconds);
+    }
+
+    /** Samples animation for a scene that will advance several models in one shared step. */
+    public void prepareSharedPhysicsFrame(float partialTick) {
+        if (!Float.isFinite(partialTick)) {
+            throw new IllegalArgumentException("partialTick must be finite");
+        }
+        if (poseDriver != null) {
+            poseDriver.sample(partialTick);
+            frameSamplePrepared = true;
+        }
     }
 
     /**

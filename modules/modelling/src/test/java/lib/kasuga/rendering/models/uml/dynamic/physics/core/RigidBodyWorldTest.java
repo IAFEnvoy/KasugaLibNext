@@ -2,6 +2,7 @@ package lib.kasuga.rendering.models.uml.dynamic.physics.core;
 
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.Frames.Pose;
 import org.joml.Quaternionf;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
@@ -21,6 +22,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Tag("box3d")
 class RigidBodyWorldTest {
     private static final float DT = 1f / 60f;
+
+    @Test
+    void convertsWorldBorderCoordinatesAroundADoubleOrigin() {
+        GenericRigidBody body = GenericRigidBody.sphere(0.5f, 1f);
+        RigidBodyWorld world = new RigidBodyWorld(List.of(body), List.of(), 1);
+        Vector3d origin = new Vector3d(30_000_000.375, 96.125, -29_999_999.625);
+        world.setWorldOrigin(origin);
+
+        Vector3f local = world.worldToLocal(
+                origin.x + 0.03125, origin.y - 0.0625, origin.z + 0.125);
+        assertEquals(new Vector3f(0.03125f, -0.0625f, 0.125f), local);
+        Vector3d restored = world.localToWorld(local);
+        assertEquals(local.x, restored.x - origin.x, 1e-8);
+        assertEquals(local.y, restored.y - origin.y, 1e-8);
+        assertEquals(local.z, restored.z - origin.z, 1e-8);
+        world.close();
+    }
 
     @Test
     void independentBoxesFallAndRestOnAGroundPlane() {

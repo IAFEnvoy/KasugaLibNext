@@ -21,6 +21,7 @@ uniform float ksg_EmissiveStrength;
 uniform float ksg_ParallaxScale;
 uniform int ksg_ParallaxSamples;
 uniform float ksg_AmbientLightEnhancement;
+uniform float ksg_StylizedShadingStrength;
 
 in float vertexDistance;
 in vec4 vertexColor;
@@ -72,6 +73,16 @@ float SubsurfaceScattering(float NdotL, float sssStrength) {
     float wrapNdotL = (NdotL + wrap) / (1.0 + wrap);
     // 在原始 NdotL 和包裹光照之间根据强度插值
     return mix(max(NdotL, 0.0), clamp(wrapNdotL, 0.0, 1.0), sssStrength);
+}
+
+// Preserve readable albedo when no shader pack supplies bounced light.  The
+// smooth two-step ramp keeps the result stylized without introducing unstable
+// hard bands on animated normals.  A strength of zero restores Lambert.
+float StylizedDiffuse(float NdotL) {
+    float shadow = smoothstep(-0.35, 0.15, NdotL);
+    float light = smoothstep(0.25, 0.8, NdotL);
+    float ramp = 0.28 + shadow * 0.30 + light * 0.42;
+    return mix(max(NdotL, 0.0), ramp, ksg_StylizedShadingStrength);
 }
 
 // 预定义金属的 F0 值（根据光学常数 n,k计算）
@@ -212,7 +223,8 @@ void main() {
     for (int i = 0; i < 2; ++i) {
         vec3 L = (i == 0) ? L0 : L1;
         vec3 H = normalize(V + L);
-        float NdotL = max(dot(N, L), 0.0);
+        float rawNdotL = dot(N, L);
+        float NdotL = max(rawNdotL, 0.0);
         float VdotH = max(dot(V, H), 0.0);
         float NdotH = max(dot(N, H), 0.0);
 
@@ -221,11 +233,13 @@ void main() {
         vec3 F = FresnelSchlick(F0, VdotH);
         vec3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001);
 
-        float diffuseFactor = NdotL;
+        float diffuseFactor = StylizedDiffuse(rawNdotL);
         if (sssStrength > 0.0 && metallic < 0.5) {
-            diffuseFactor = SubsurfaceScattering(NdotL, sssStrength);
+            diffuseFactor = mix(diffuseFactor,
+                    SubsurfaceScattering(NdotL, 1.0), sssStrength);
         }
-        color += (diffuse + specular) * lightColor * diffuseFactor;
+        color += diffuse * lightColor * diffuseFactor;
+        color += specular * lightColor * NdotL;
     }
 
     vec3 ambient = vec3(0.2 * ksg_AmbientLightEnhancement) * albedo.rgb * aoCombined;

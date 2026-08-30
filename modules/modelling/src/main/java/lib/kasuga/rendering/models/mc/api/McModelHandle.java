@@ -60,6 +60,7 @@ public final class McModelHandle {
     private ModelInstance instance;
     @Nullable
     private Transform pendingPose;
+    private float ambientLightEnhancement = ModelInstance.DEFAULT_AMBIENT_LIGHT_ENHANCEMENT;
     private boolean destroyed;
     @Nullable
     private FsmAnimatedModel syncedFsm;
@@ -128,6 +129,7 @@ public final class McModelHandle {
         ModelInstance bound = binder.bind(pendingPose);
         if (bound == null) return false;
         instance = bound;
+        bound.setAmbientLightEnhancement(ambientLightEnhancement);
         if (pendingPose != null) {
             bound.getSkeletonInstance().transformRoot(pendingPose.copy());
             pendingPose = null;
@@ -179,8 +181,16 @@ public final class McModelHandle {
     /** World-space root position; buffered while unmounted and applied on mount. */
     public McModelHandle setPos(Vec3 pos) {
         Objects.requireNonNull(pos, "pos");
-        ensurePose().setPosition(new Vector3f((float) pos.x, (float) pos.y, (float) pos.z));
-        flushPose();
+        if (instance != null) {
+            instance.getSkeletonInstance().setWorldRootPosition(
+                    new org.joml.Vector3d(pos.x, pos.y, pos.z));
+            if (pendingPose != null) {
+                pendingPose.setPosition(instance.getSkeletonInstance().getTransform().getPosition());
+                flushPose();
+            }
+        } else {
+            ensurePose().setPosition(new Vector3f((float) pos.x, (float) pos.y, (float) pos.z));
+        }
         return this;
     }
 
@@ -190,17 +200,24 @@ public final class McModelHandle {
 
     @Nullable
     public Vec3 getPos() {
-        Transform pose = currentPose();
-        if (pose == null) return null;
-        Vector3f p = pose.getPosition();
+        if (instance != null) {
+            var p = instance.getSkeletonInstance().getWorldRootPosition();
+            return new Vec3(p.x, p.y, p.z);
+        }
+        if (pendingPose == null) return null;
+        Vector3f p = pendingPose.getPosition();
         return new Vec3(p.x, p.y, p.z);
     }
 
     /** Moves relative to the current position (world-space translation). */
     public McModelHandle move(Vec3 delta) {
         Objects.requireNonNull(delta, "delta");
-        ensurePose().translateWorld(new Vector3f((float) delta.x, (float) delta.y, (float) delta.z));
-        flushPose();
+        if (instance != null) {
+            Vec3 position = getPos();
+            setPos(position.x + delta.x, position.y + delta.y, position.z + delta.z);
+        } else {
+            ensurePose().translateWorld(new Vector3f((float) delta.x, (float) delta.y, (float) delta.z));
+        }
         return this;
     }
 
@@ -240,6 +257,9 @@ public final class McModelHandle {
         if (pendingPose == null) {
             pendingPose = new Transform();
             if (instance != null) {
+                // Mounted pose edits operate in the skeleton's origin-local
+                // coordinate system so rotation/scale changes cannot quantize
+                // the separate double-precision world anchor.
                 pendingPose.set(instance.getSkeletonInstance().getTransform());
             }
         }
@@ -249,12 +269,13 @@ public final class McModelHandle {
     private void flushPose() {
         if (instance != null && pendingPose != null) {
             instance.getSkeletonInstance().transformRoot(pendingPose.copy());
+            pendingPose = null;
         }
     }
 
     @Nullable
     private Transform currentPose() {
-        if (instance != null) return instance.getSkeletonInstance().getTransform();
+        if (instance != null) return instance.getSkeletonInstance().getWorldTransform();
         return pendingPose;
     }
 
@@ -287,6 +308,27 @@ public final class McModelHandle {
     /** Whether the current schedule allows rendering this frame (mounted instances only). */
     public boolean shown() {
         return instance != null && ModelRenderScheduler.shouldRender(instance);
+    }
+
+    /**
+     * Additional per-model ambient-light multiplier for the vanilla shader pipeline.
+     * {@code 1} disables the enhancement; Iris shader packs always receive {@code 1}.
+     */
+    public McModelHandle setAmbientLightEnhancement(float enhancement) {
+        if (!Float.isFinite(enhancement)) {
+            throw new IllegalArgumentException("ambient light enhancement must be finite");
+        }
+        ambientLightEnhancement = Math.clamp(enhancement, 0f, 10000f);
+        if (instance != null) instance.setAmbientLightEnhancement(ambientLightEnhancement);
+        return this;
+    }
+
+    public McModelHandle disableAmbientLightEnhancement() {
+        return setAmbientLightEnhancement(1f);
+    }
+
+    public float ambientLightEnhancement() {
+        return instance != null ? instance.getAmbientLightEnhancement() : ambientLightEnhancement;
     }
 
     /** Per-instance view-distance cap in blocks; 0 disables distance culling. */
@@ -396,6 +438,7 @@ public final class McModelHandle {
     private synchronized void adoptFromFsm(ModelInstance bound) {
         if (destroyed || instance == bound) return;
         instance = bound;
+        bound.setAmbientLightEnhancement(ambientLightEnhancement);
         pendingPose = null; // FSM 在创建实例时已应用 rootTransform supplier 的值
     }
 

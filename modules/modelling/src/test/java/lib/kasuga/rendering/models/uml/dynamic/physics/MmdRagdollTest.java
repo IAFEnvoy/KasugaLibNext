@@ -1,5 +1,6 @@
 package lib.kasuga.rendering.models.uml.dynamic.physics;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.CollisionEnvironment;
+import lib.kasuga.rendering.models.uml.dynamic.physics.core.DistanceJoint;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.RayHit;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.RigidBodyWorld;
 
@@ -24,6 +25,7 @@ import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.header.PmxGloba
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.header.PmxHeader;
 import lib.kasuga.rendering.models.uml.util.MeshMode;
 import org.joml.Quaternionf;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
@@ -39,6 +41,133 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("box3d")
 class MmdRagdollTest {
+    @Test
+    void sharedSceneLetsDifferentModelsCollideAtALargeWorldOrigin() {
+        Vector3d sceneOrigin = new Vector3d(30_000_000.375, 96.125, -29_999_999.625);
+        ModelInstance leftInstance = freeBodyInstance(0f);
+        ModelInstance rightInstance = freeBodyInstance(0f);
+        leftInstance.getSkeletonInstance().enableFloatingOrigin(
+                new Vector3d(sceneOrigin).add(-1.5, 0.0, 0.0));
+        rightInstance.getSkeletonInstance().enableFloatingOrigin(
+                new Vector3d(sceneOrigin).add(1.5, 0.0, 0.0));
+
+        try (MmdPhysicsScene scene = new MmdPhysicsScene(sceneOrigin, 4)) {
+            MmdRagdoll left = scene.attach(leftInstance);
+            MmdRagdoll right = scene.attach(rightInstance);
+            MmdRagdoll.Body leftBody = left.bodies().getFirst();
+            MmdRagdoll.Body rightBody = right.bodies().getFirst();
+            scene.world().setGravity(new Vector3f());
+            left.setSelfCollisionsEnabled(false);
+            right.setSelfCollisionsEnabled(false);
+            leftBody.setLinearVelocity(new Vector3f(2f, 0f, 0f));
+            rightBody.setLinearVelocity(new Vector3f(-2f, 0f, 0f));
+
+            assertTrue(leftBody.selfCollisionGroup() != rightBody.selfCollisionGroup(),
+                    "each model needs a distinct no-self-contact group");
+            for (int step = 0; step < 240; step++) scene.step(1f / 120f);
+
+            assertTrue(leftBody.position().x < rightBody.position().x,
+                    "bodies from separate models must not tunnel through each other");
+            assertTrue(leftBody.position().distance(rightBody.position()) > 1.8f,
+                    "cross-model contact must keep the two radius-one bodies separated");
+            assertEquals(sceneOrigin.x + leftBody.position().x,
+                    left.worldPosition(leftBody).x, 1e-8);
+        }
+    }
+
+    @Test
+    void sharedSceneBindsAJointAcrossTwoModels() {
+        Vector3d origin = new Vector3d(1_000_000.25, 80.0, -1_000_000.25);
+        ModelInstance firstInstance = freeBodyInstance(0f);
+        ModelInstance secondInstance = freeBodyInstance(0f);
+        firstInstance.getSkeletonInstance().enableFloatingOrigin(new Vector3d(origin).add(-3.0, 0.0, 0.0));
+        secondInstance.getSkeletonInstance().enableFloatingOrigin(new Vector3d(origin).add(3.0, 0.0, 0.0));
+
+        try (MmdPhysicsScene scene = new MmdPhysicsScene(origin, 4)) {
+            MmdRagdoll first = scene.attach(firstInstance);
+            MmdRagdoll second = scene.attach(secondInstance);
+            MmdRagdoll.Body a = first.bodies().getFirst();
+            MmdRagdoll.Body b = second.bodies().getFirst();
+            scene.world().setGravity(new Vector3f());
+            DistanceJoint tether = DistanceJoint.between(a, b)
+                    .length(2f)
+                    .spring(true, 5f, 0.9f)
+                    .build();
+            scene.addJoint(tether);
+
+            for (int step = 0; step < 360; step++) scene.step(1f / 120f);
+
+            assertTrue(tether.isBound());
+            assertEquals(2f, a.position().distance(b.position()), 0.15f,
+                    "one native joint must constrain bodies owned by different models");
+        }
+    }
+
+    @Test
+    void disabledSharedRagdollLeavesTheNativeSimulationUntilReenabled() {
+        ModelInstance instance = freeBodyInstance(0f);
+        try (MmdPhysicsScene scene = new MmdPhysicsScene(new Vector3d(), 4)) {
+            MmdRagdoll ragdoll = scene.attach(instance);
+            MmdRagdoll.Body body = ragdoll.bodies().getFirst();
+            scene.world().setGravity(new Vector3f());
+            body.setLinearVelocity(new Vector3f(5f, 0f, 0f));
+
+            instance.disablePhysics();
+            Vector3f disabledPosition = body.position();
+            assertFalse(scene.world().bodyEnabled(body));
+            for (int step = 0; step < 60; step++) scene.step(1f / 60f);
+            assertEquals(disabledPosition, body.position(),
+                    "disabled shared bodies must neither integrate nor collide");
+
+            instance.enablePhysics(scene, null);
+            assertTrue(scene.world().bodyEnabled(body));
+        }
+    }
+
+    @Test
+    void keepsLargeWorldCoordinatesOutOfBoneAndBox3dFloats() {
+        Vector3d origin = new Vector3d(30_000_000.375, 96.125, -29_999_999.625);
+        ModelInstance instance = freeBodyInstance(0f);
+        instance.getSkeletonInstance().enableFloatingOrigin(origin);
+        MmdRagdoll ragdoll = instance.enablePhysics();
+        ragdoll.setGravity(new Vector3f());
+        MmdRagdoll.Body body = ragdoll.bodies().getFirst();
+
+        assertEquals(origin.x, ragdoll.worldOrigin().x, 0.0);
+        assertEquals(origin.z, ragdoll.worldOrigin().z, 0.0);
+        assertEquals(0f, body.position().length(), 1e-7f,
+                "native physics positions must remain origin-local");
+        assertEquals(0f, instance.getSkeletonInstance().getAbsoluteTransforms()
+                .get(body.bone()).getPosition().length(), 1e-7f,
+                "bone matrices must not contain the large world anchor");
+        var worldBox = ragdoll.addStaticBoxColliderWorld(
+                origin.x - 1.0, origin.y - 2.0, origin.z - 1.0,
+                origin.x + 1.0, origin.y - 1.0, origin.z + 1.0, 0.8f, 0f);
+        assertEquals(new Vector3f(-1f, -2f, -1f), worldBox.minimum());
+        assertEquals(new Vector3f(1f, -1f, 1f), worldBox.maximum());
+        ragdoll.removeStaticBoxCollider(worldBox);
+
+        RayHit hit = ragdoll.raycastWorld(origin.x, origin.y, origin.z - 3.0,
+                new Vector3f(0f, 0f, 1f), 10f).orElseThrow();
+        assertEquals(body, hit.body());
+        assertTrue(ragdoll.beginDrag(hit));
+        Vector3f localTarget = ragdoll.worldToSimulation(
+                origin.x + 0.25, origin.y, origin.z - 1.0);
+        assertEquals(new Vector3f(0.25f, 0f, -1f), localTarget,
+                "double subtraction must retain sub-block targets at the world border");
+        for (int step = 0; step < 120; step++) {
+            ragdoll.updateDragTargetWorld(origin.x + 0.25, origin.y,
+                    origin.z - 1.0, 1f / 120f);
+            ragdoll.step(1f / 120f);
+        }
+        assertTrue(body.position().isFinite());
+
+        Vector3d worldPosition = ragdoll.worldPosition(body);
+        assertEquals(body.position().x, worldPosition.x - origin.x, 1e-8);
+        assertEquals(body.position().y, worldPosition.y - origin.y, 1e-8);
+        assertEquals(body.position().z, worldPosition.z - origin.z, 1e-8);
+    }
+
     @Test
     void ordersTickLoopModulesAroundTheIkAndPhysicsSlotsDeterministically() {
         ModelInstance instance = freeBodyInstance(0f);
@@ -338,6 +467,27 @@ class MmdRagdollTest {
                 "one configured humanoid uses Box3D-style negative-group self filtering");
         assertEquals(ragdoll.bodies().getFirst(), ragdoll.joints().getFirst().bodyA());
         assertEquals(ragdoll.bodies().get(1), ragdoll.joints().getFirst().bodyB());
+    }
+
+    @Test
+    void pmxProfileCanRetainAuthoredSecondaryBodyChains() {
+        ModelInstance instance = instance(new Vector3f(1f));
+        MmdRagdoll.Profile profile = MmdRagdoll.Profile.of(
+                new MmdRagdoll.Registration(0, MmdRagdoll.BodyRole.PELVIS))
+                .withSecondaryBodies();
+
+        MmdRagdoll ragdoll = instance.enablePhysics(profile);
+
+        assertTrue(ragdoll.profile().includeSecondaryBodies());
+        assertEquals(2, ragdoll.bodies().size(),
+                "the unregistered authored child must remain as secondary motion");
+        assertEquals(1, ragdoll.joints().size(),
+                "an authored primary-to-secondary joint must be retained");
+        assertTrue(((MmdRagdoll.Body) ragdoll.joints().getFirst().bodyA()).secondaryAnchorBody(),
+                "secondary chains must use a one-way kinematic primary anchor");
+        assertEquals(ragdoll.body(1).orElseThrow(), ragdoll.joints().getFirst().bodyB());
+        assertEquals(new Vector3f(1f), ragdoll.body(1).orElseThrow().shapeSize(),
+                "secondary motion must preserve the author's PMX shape");
     }
 
     @Test

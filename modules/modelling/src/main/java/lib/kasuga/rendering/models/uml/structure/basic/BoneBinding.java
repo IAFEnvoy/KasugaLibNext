@@ -22,19 +22,25 @@ public class BoneBinding {
     private final BoneBindingFunc func;
 
     public BoneBinding(Pair<Bone, Float>[] weights, BoneBindingFunc func, BoneBindingData data) {
-        this.weights = weights;
+        this.weights = weights.clone();
         this.data = data;
         this.func = func;
-        if (weights.length < 1) return;
-        float w = 0;
-        for (Pair<Bone, Float> weight : weights) {
-            w += weight.getSecond();
-        }
-        if (w != 1) {
-            for (int i = 0; i < weights.length; i++) {
-                Pair<Bone, Float> weight = weights[i];
-                weights[i] = Pair.of(weight.getFirst(), weight.getSecond() / w);
+        if (this.weights.length < 1) return;
+        double sum = 0.0;
+        for (Pair<Bone, Float> weight : this.weights) {
+            float value = weight.getSecond();
+            if (!Float.isFinite(value) || value < 0f) {
+                throw new IllegalArgumentException("Bone weights must be finite and non-negative");
             }
+            sum += value;
+        }
+        if (!(sum > 0.0) || !Double.isFinite(sum)) {
+            throw new IllegalArgumentException("Bone weights must have a finite positive sum");
+        }
+        if (Math.abs(sum - 1.0) <= 1.0e-7) return;
+        for (int i = 0; i < this.weights.length; i++) {
+            Pair<Bone, Float> weight = this.weights[i];
+            this.weights[i] = Pair.of(weight.getFirst(), (float) (weight.getSecond() / sum));
         }
     }
 }

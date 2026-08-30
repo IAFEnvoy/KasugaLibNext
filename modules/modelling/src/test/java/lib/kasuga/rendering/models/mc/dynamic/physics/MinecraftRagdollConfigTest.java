@@ -14,6 +14,7 @@ class MinecraftRagdollConfigTest {
         MinecraftRagdollConfig config = MinecraftRagdollConfig.fromJson(
                 JsonParser.parseString("""
                         {
+                          "include_secondary_bodies": true,
                           "simulation": {
                             "hertz": 144,
                             "substeps": 4,
@@ -68,6 +69,7 @@ class MinecraftRagdollConfigTest {
         assertTrue(config.dragging().enabled());
         assertEquals(16f, config.dragging().maxDistance());
         assertEquals(3, config.profile().bodies().size());
+        assertTrue(config.profile().includeSecondaryBodies());
         assertEquals((float) Math.toRadians(30),
                 config.profile().bodies().getFirst().swingTwistLimit().maxSwing(), 1e-6f);
         MmdRagdoll.Registration spine = config.profile().bodies().get(1);
