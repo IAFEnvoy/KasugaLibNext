@@ -73,7 +73,7 @@ void main() {
     }
 
     vec4 posWorld = modelPose * vec4(skinnedPosition, 1.0);
-    vertexColor = vec4(Color.rgb * parameters.x, Color.a);
+    vertexColor = vec4(Color.rgb, Color.a);
     lightMapColor = texelFetch(Sampler2, ivec2(packedLighting.xy) / 16, 0);
     overlayColor = texelFetch(Sampler1, ivec2(packedLighting.zw), 0);
     texCoord0 = UV0;
@@ -93,5 +93,9 @@ void main() {
     mat3 viewRotation = mat3(ModelViewMat);
     viewLight0_Direction = normalize(viewRotation * Light0_Direction);
     viewLight1_Direction = normalize(viewRotation * Light1_Direction);
+    // Zero/NaN light directions (uniforms left at defaults in manual draw paths) would poison
+    // NdotH/specular — fall back to a valid direction.
+    if (!(length(viewLight0_Direction) > 1e-6)) viewLight0_Direction = vec3(0.0, 1.0, 0.0);
+    if (!(length(viewLight1_Direction) > 1e-6)) viewLight1_Direction = vec3(0.0, 1.0, 0.0);
     gl_Position = ProjMat * viewPos4;
 }

@@ -211,6 +211,9 @@ void main() {
     aoCombined *= (1.0 - porosity * 0.5);
 
     vec3 N = normalize(TBN * normalTS);
+    if (!(length(N) > 1e-6)) {
+        N = vec3(0.0, 1.0, 0.0);
+    }
     float NdotV = max(dot(N, V), 0.0);
     mat3 viewMatrix = mat3(ModelViewMat);
     vec3 L0 = viewLight0_Direction;
@@ -220,13 +223,24 @@ void main() {
     vec3 diffuse = kD * albedo.rgb / 3.14159265;
 
     vec3 color = vec3(0.0);
+    // Directional (L0/L1) intensity must follow the block light level like vanilla (the light texture
+    // Sampler2 encodes sky+block light as a brightness); otherwise models in dark spots render as bright
+    // as daylight ones. lightLevel = 0 in pitch darkness, 1 in full light.
+    float lightLevel = lightMapColor.r;
+    if (!(lightLevel >= 0.0 && lightLevel <= 1.0)) lightLevel = 0.0;
     for (int i = 0; i < 2; ++i) {
         vec3 L = (i == 0) ? L0 : L1;
+        if (!(length(L) > 1e-6)) L = vec3(0.0, 1.0, 0.0);
         vec3 H = normalize(V + L);
         float rawNdotL = dot(N, L);
+        // NaN guard: degenerate normals/tangents/lights would otherwise poison the whole lighting
+        // chain and render black. NaN fails every comparison, so this catches it.
+        if (!(rawNdotL >= -1.0 && rawNdotL <= 1.0)) rawNdotL = 0.0;
         float NdotL = max(rawNdotL, 0.0);
         float VdotH = max(dot(V, H), 0.0);
         float NdotH = max(dot(N, H), 0.0);
+        if (!(VdotH >= 0.0 && VdotH <= 1.0)) VdotH = 0.0;
+        if (!(NdotH >= 0.0 && NdotH <= 1.0)) NdotH = 1.0;
 
         float D = DistributionGGX(NdotH, roughness);
         float G = GeometrySmith(NdotV, NdotL, roughness);
@@ -238,8 +252,8 @@ void main() {
             diffuseFactor = mix(diffuseFactor,
                     SubsurfaceScattering(NdotL, 1.0), sssStrength);
         }
-        color += diffuse * lightColor * diffuseFactor;
-        color += specular * lightColor * NdotL;
+        color += diffuse * lightColor * diffuseFactor * lightLevel;
+        color += specular * lightColor * NdotL * lightLevel;
     }
 
     vec3 ambient = vec3(0.2 * ksg_AmbientLightEnhancement) * albedo.rgb * aoCombined;
