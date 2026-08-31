@@ -37,7 +37,7 @@ import java.util.function.Function;
  * <p>生命周期语义与资源管线对齐：模型资源尚未发布时 {@link #mount()} 返回
  * false，宿主每 tick 重试即可；挂载前的姿态修改会暂存并在挂载成功后生效，
  * 因此句柄可以安全地早于资源加载创建。若实例由逻辑端先行创建
- * （如 {@code FsmAnimatedModel} 的自愈绑定），用 {@link #ofExisting()} 收编它。</p>
+ * （如 {@code FsmAnimatedModel} 的自愈绑定），用 {@link #ofExisting(ResourceLocation, String, ResourceLocation)} 收编它。</p>
  */
 public final class McModelHandle {
 

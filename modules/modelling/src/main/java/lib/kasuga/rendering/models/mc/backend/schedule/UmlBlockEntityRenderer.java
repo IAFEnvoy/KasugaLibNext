@@ -16,7 +16,7 @@ import java.util.Objects;
  * <p>Vanilla decides per frame whether a {@code BlockEntityRenderer} runs:
  * the section frustum test ({@code ClientHooks.isBlockEntityRendererVisible})
  * plus this renderer's {@link #shouldRender} view-distance check gate
- * {@code BlockEntityRenderDispatcher.render}. Reaching {@link #render()}
+ * {@code BlockEntityRenderDispatcher.render}. Reaching {@link #render(T, float, PoseStack, MultiBufferSource, int, int)}
  * therefore proves vanilla visibility, and that is exactly what we forward to
  * the {@link ModelRenderScheduler}: instances mounted with
  * {@code RenderScheduleMode.VANILLA_RENDERER} are drawn by the global

@@ -734,7 +734,7 @@ public final class MmdRagdoll implements AutoCloseable {
      * Re-evaluates the kinematic (animation + IK) pose this ragdoll tracks and
      * refreshes every body's cached target. Skipped when no skeleton input has
      * changed since the last evaluation — controllers mounted before the
-     * physics stage and {@link #step()} then share one hierarchy solve.
+     * physics stage and {@link #step(float)} then share one hierarchy solve.
      */
     public void evaluateAnimationTarget() {
         long epoch = skeleton.getMutationEpoch();
