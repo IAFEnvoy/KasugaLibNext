@@ -194,10 +194,7 @@ public class Constants {
                         .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
                         .setOutputState(RenderStateShard.MAIN_TARGET)
                         .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
-                        // This pass uses translucent blending and runs before vanilla's
-                        // translucent blocks. Writing model fragments into the depth
-                        // buffer here makes later water fragments fail their depth test.
-                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
                         .setLineState(RenderStateShard.DEFAULT_LINE)
                         .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
                         .createCompositeState(false)
@@ -222,7 +219,7 @@ public class Constants {
                         .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
                         .setOutputState(RenderStateShard.MAIN_TARGET)
                         .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
-                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
                         .setLineState(RenderStateShard.DEFAULT_LINE)
                         .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
                         .createCompositeState(false)
@@ -247,7 +244,7 @@ public class Constants {
                         .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
                         .setOutputState(RenderStateShard.MAIN_TARGET)
                         .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
-                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
                         .setLineState(RenderStateShard.DEFAULT_LINE)
                         .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
                         .createCompositeState(false)
