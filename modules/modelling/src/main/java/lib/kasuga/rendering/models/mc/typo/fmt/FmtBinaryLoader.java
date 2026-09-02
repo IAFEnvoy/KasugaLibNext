@@ -56,7 +56,9 @@ public final class FmtBinaryLoader implements ModelLoader<byte[], ResourceLocati
         ResourceLocation loc = MissingTextureAtlasSprite.getLocation();
         MCTexture texture = new MCTexture("main", () -> new net.minecraft.client.resources.model.Material(RenderState.KSG_LAYER_0, loc), 16, 16,
                 new MCTextureData(loc, Constants.TEXTURE_BASIC));
-        materials.beginMaterial().registerTexture(0, texture).useTexture(0).endMaterial(0);
+        materials.beginMaterial().registerTexture(0, texture).useTexture(0)
+                .addSpriteBuildingFunc((builder, sprites, material) -> sprites.textureId(0).endSprite())
+                .endMaterial(0);
         return materials.getNamedMaterial(0);
     }
 

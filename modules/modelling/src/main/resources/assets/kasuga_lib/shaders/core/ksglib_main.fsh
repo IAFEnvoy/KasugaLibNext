@@ -237,6 +237,7 @@ void main() {
 
     color += albedo.rgb * emission;
     float alpha = albedo.a * ColorModulator.a;
+    if(alpha <= 0.01) discard; // Solve rendering issues with transparent objects in some cases, such as background water layer
     vec4 finalColor = vec4(color, alpha);
 
     fragColor = linear_fog(finalColor, vertexDistance, FogStart, FogEnd, FogColor);
