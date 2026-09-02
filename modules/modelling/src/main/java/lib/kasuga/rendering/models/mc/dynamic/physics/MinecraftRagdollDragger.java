@@ -1,6 +1,5 @@
 package lib.kasuga.rendering.models.mc.dynamic.physics;
 
-import lib.kasuga.rendering.models.mc.util.RayTracingHelper;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.RayHit;
@@ -10,6 +9,7 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFW;
 
@@ -63,9 +63,8 @@ public final class MinecraftRagdollDragger {
         }
         if (event.getAction() != GLFW.GLFW_PRESS) return;
 
-        Vector3f origin = new Vector3f();
-        Vector3f direction = new Vector3f();
-        RayTracingHelper.getRayFromCamera(origin, direction);
+        Vec3 origin = minecraft.gameRenderer.getMainCamera().getPosition();
+        Vector3f direction = new Vector3f(minecraft.gameRenderer.getMainCamera().getLookVector());
         Pick closest = null;
         for (Map.Entry<ModelInstance, MinecraftRagdollConfig.Dragging> entry
                 : REGISTRATIONS.entrySet()) {
@@ -73,7 +72,8 @@ public final class MinecraftRagdollDragger {
             if (!settings.enabled() || settings.mouseButton() != event.getButton()) continue;
             MmdRagdoll ragdoll = entry.getKey().getRagdoll();
             if (ragdoll == null || !ragdoll.enabled()) continue;
-            RayHit hit = ragdoll.raycast(origin, direction, settings.maxDistance())
+            RayHit hit = ragdoll.raycastWorld(origin.x, origin.y, origin.z,
+                            direction, settings.maxDistance())
                     .orElse(null);
             if (hit != null && (closest == null || hit.distance() < closest.hit.distance())) {
                 closest = new Pick(entry.getKey(), ragdoll, settings, hit);
@@ -100,12 +100,14 @@ public final class MinecraftRagdollDragger {
             release();
             return;
         }
-        Vector3f origin = new Vector3f();
-        Vector3f direction = new Vector3f();
-        RayTracingHelper.getRayFromCamera(origin, direction);
-        Vector3f target = origin.fma(active.distance, direction.normalize());
+        Vec3 origin = minecraft.gameRenderer.getMainCamera().getPosition();
+        Vector3f direction = new Vector3f(minecraft.gameRenderer.getMainCamera().getLookVector()).normalize();
         float deltaSeconds = event.getPartialTick().getRealtimeDeltaTicks() / 20f;
-        active.ragdoll.updateDragTarget(target, deltaSeconds);
+        active.ragdoll.updateDragTargetWorld(
+                origin.x + direction.x * active.distance,
+                origin.y + direction.y * active.distance,
+                origin.z + direction.z * active.distance,
+                deltaSeconds);
     }
 
     private static void release() {

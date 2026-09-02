@@ -20,6 +20,7 @@ import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.PmxTail.PmxRigi
 import lib.kasuga.rendering.models.uml.util.ModelProfiler;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -46,6 +47,7 @@ import java.util.Set;
  * authored limits onto Box3D's spherical-joint cone/twist model.</p>
  */
 public final class MmdRagdoll implements AutoCloseable {
+    private static final int PROFILE_SECONDARY_SUBSTEP_COUNT = 8;
     private final ModelInstance instance;
     private final SkeletonInstance skeleton;
     private final Vector3f modelScale;
@@ -54,12 +56,16 @@ public final class MmdRagdoll implements AutoCloseable {
     private final Set<Bone> gltfSkinBones;
     private final Map<Bone, Transform> gltfBindWorlds;
     private final List<Body> bodies;
+    private final List<Body> exposedBodies;
     private final List<Joint> joints;
     private final Map<Bone, Body> bodyByBone = new IdentityHashMap<>();
     private final Map<Integer, Body> bodyByRigidBodyIndex = new HashMap<>();
     private final Bone profileMotionRoot;
     private final Body profileRootBody;
-    private final RigidBodyWorld world;
+    private RigidBodyWorld world;
+    private MmdPhysicsScene physicsScene;
+    private int sharedSelfCollisionGroup;
+    private boolean sharedSelfCollisionsEnabled;
     private final Profile profile;
     private boolean enabled = true;
     /** Mutation epoch of the skeleton at the last kinematic evaluation. */
@@ -80,7 +86,7 @@ public final class MmdRagdoll implements AutoCloseable {
     };
 
     public MmdRagdoll(ModelInstance instance) {
-        this(instance, null);
+        this(instance, null, null);
     }
 
     /**
@@ -89,8 +95,20 @@ public final class MmdRagdoll implements AutoCloseable {
      * rigid body, which is useful for small assets and compatibility tests.
      */
     public MmdRagdoll(ModelInstance instance, Profile profile) {
+        this(instance, profile, null);
+    }
+
+    /** Creates a model participant owned and stepped by a shared physics scene. */
+    public MmdRagdoll(ModelInstance instance, Profile profile, MmdPhysicsScene physicsScene) {
         this.instance = Objects.requireNonNull(instance, "instance");
         this.skeleton = instance.getSkeletonInstance();
+        this.physicsScene = physicsScene;
+        // Bone evaluation and Box3D share one origin-relative coordinate
+        // system. The high-precision world anchor remains on the skeleton and
+        // never enters float matrices or the native solver.
+        if (physicsScene == null) this.skeleton.enableFloatingOrigin();
+        else this.skeleton.rebaseFloatingOrigin(physicsScene.worldOrigin());
+        this.skeleton.updateTransform();
         this.profile = profile;
         List<PmxRigidBody> bodyDefinitions;
         List<PmxJoint> jointDefinitions;
@@ -134,22 +152,35 @@ public final class MmdRagdoll implements AutoCloseable {
             this.profileMotionRoot = null;
             this.profileRootBody = null;
         } else {
-            RegisteredPhysics registered = buildRegisteredPhysics(bodyDefinitions, profile);
+            RegisteredPhysics registered = buildRegisteredPhysics(bodyDefinitions, jointDefinitions, profile);
             this.bodies = registered.bodies();
             this.joints = registered.joints();
             this.profileMotionRoot = registered.motionRoot();
             this.profileRootBody = registered.rootBody();
+            this.bodyByRigidBodyIndex.putAll(registered.bodyByDefinition());
         }
+        this.exposedBodies = bodies.stream().filter(body -> !body.secondaryAnchorBody).toList();
         // Positions and collider dimensions are converted from PMX units into
         // world units by modelScale. Gravity stays in world units per second
         // squared so a 1/12-scale Minecraft model does not fall in slow motion.
-        this.world = new RigidBodyWorld(bodies, joints,
-                profile == null ? RigidBodyWorld.DEFAULT_SUBSTEP_COUNT
-                        : RigidBodyWorld.PROFILE_SUBSTEP_COUNT);
+        if (physicsScene == null) {
+            this.world = new RigidBodyWorld(bodies, joints,
+                    profile == null ? RigidBodyWorld.DEFAULT_SUBSTEP_COUNT
+                            : profile.includeSecondaryBodies ? PROFILE_SECONDARY_SUBSTEP_COUNT
+                            : RigidBodyWorld.PROFILE_SUBSTEP_COUNT);
+            this.world.setWorldOrigin(skeleton.getWorldOrigin());
+        } else {
+            this.world = physicsScene.world();
+            this.sharedSelfCollisionGroup = physicsScene.allocateSelfCollisionGroup();
+            this.sharedSelfCollisionsEnabled = profile == null;
+            for (Body body : bodies) {
+                body.selfCollisionGroup = sharedSelfCollisionsEnabled ? 0 : sharedSelfCollisionGroup;
+            }
+        }
         // Box3D assigns every shape in one ragdoll a negative group index so
         // the character does not collide with itself. Authored PMX secondary
         // physics keeps its original per-body masks instead.
-        if (profile != null) world.setSelfCollisionsEnabled(false);
+        if (profile != null && physicsScene == null) world.setSelfCollisionsEnabled(false);
         for (Body body : bodies) {
             body.wireWake(world::wake);
             if (body.bone != null && body.source.mode() != 0) bodyByBone.putIfAbsent(body.bone, body);
@@ -158,24 +189,47 @@ public final class MmdRagdoll implements AutoCloseable {
             for (int index = 0; index < bodies.size(); index++) {
                 bodyByRigidBodyIndex.put(index, bodies.get(index));
             }
-        } else {
-            for (int index = 0; index < profile.bodies().size(); index++) {
-                bodyByRigidBodyIndex.put(profile.bodies().get(index).rigidBodyIndex(), bodies.get(index));
-            }
         }
         bodySet.addAll(bodies);
+        if (physicsScene != null) physicsScene.register(this);
     }
 
     public Profile profile() {
         return profile;
     }
 
+    public MmdPhysicsScene physicsScene() { return physicsScene; }
+
+    List<Body> allBodies() { return bodies; }
+    List<Joint> allJoints() { return joints; }
+    ModelInstance modelInstance() { return instance; }
+
     public List<Body> bodies() {
-        return Collections.unmodifiableList(bodies);
+        return exposedBodies;
     }
 
     public List<Joint> joints() {
         return Collections.unmodifiableList(joints);
+    }
+
+    /** High-precision world anchor for this origin-relative simulation. */
+    public Vector3d worldOrigin() {
+        return world.worldOrigin();
+    }
+
+    public Vector3f worldToSimulation(double x, double y, double z) {
+        return world.worldToLocal(x, y, z);
+    }
+
+    public Vector3d simulationToWorld(Vector3f local) {
+        return world.localToWorld(local);
+    }
+
+    public Vector3d worldPosition(Body body) {
+        if (!bodySet.contains(Objects.requireNonNull(body, "body"))) {
+            throw new IllegalArgumentException("body does not belong to this ragdoll");
+        }
+        return world.localToWorld(body.pose.position);
     }
 
     /** Finds a body by its PMX rigid-body index or profiled glTF node index. */
@@ -206,9 +260,14 @@ public final class MmdRagdoll implements AutoCloseable {
         return world.applyImpulse(body, impulse);
     }
 
-    /** Applies a world-space impulse at a point, including the resulting torque. */
-    public boolean applyImpulse(Body body, Vector3f impulse, Vector3f worldPoint) {
-        return world.applyImpulse(body, impulse, worldPoint);
+    /** Applies an impulse at an origin-local simulation point, including torque. */
+    public boolean applyImpulse(Body body, Vector3f impulse, Vector3f simulationPoint) {
+        return world.applyImpulse(body, impulse, simulationPoint);
+    }
+
+    public boolean applyImpulseWorld(Body body, Vector3f impulse,
+                                     double pointX, double pointY, double pointZ) {
+        return world.applyImpulse(body, impulse, world.worldToLocal(pointX, pointY, pointZ));
     }
 
     /** Applies a world-space angular impulse through the body's inertia tensor. */
@@ -220,8 +279,13 @@ public final class MmdRagdoll implements AutoCloseable {
         return world.applyForce(body, force);
     }
 
-    public boolean applyForce(Body body, Vector3f force, Vector3f worldPoint) {
-        return world.applyForce(body, force, worldPoint);
+    public boolean applyForce(Body body, Vector3f force, Vector3f simulationPoint) {
+        return world.applyForce(body, force, simulationPoint);
+    }
+
+    public boolean applyForceWorld(Body body, Vector3f force,
+                                   double pointX, double pointY, double pointZ) {
+        return world.applyForce(body, force, world.worldToLocal(pointX, pointY, pointZ));
     }
 
     public boolean applyTorque(Body body, Vector3f torque) {
@@ -236,14 +300,24 @@ public final class MmdRagdoll implements AutoCloseable {
         return world.gravityScale(body);
     }
 
-    /** Finds the closest authored rigid-body shape intersected by a world-space ray. */
+    /** Finds the closest shape intersected by an origin-local simulation ray. */
     public Optional<RayHit> raycast(Vector3f origin, Vector3f direction, float maximumDistance) {
         return world.raycast(origin, direction, maximumDistance);
     }
 
-    /** Starts a soft point constraint at the exact picked point on a dynamic body. */
-    public boolean beginDrag(Body body, Vector3f worldPoint) {
-        return world.beginDrag(body, worldPoint);
+    /** Raycasts from a double-precision world position without a large float cast. */
+    public Optional<RayHit> raycastWorld(double originX, double originY, double originZ,
+                                         Vector3f direction, float maximumDistance) {
+        return world.raycast(world.worldToLocal(originX, originY, originZ), direction, maximumDistance);
+    }
+
+    /** Starts a soft constraint at an origin-local point on a dynamic body. */
+    public boolean beginDrag(Body body, Vector3f simulationPoint) {
+        return world.beginDrag(body, simulationPoint);
+    }
+
+    public boolean beginDragWorld(Body body, double x, double y, double z) {
+        return world.beginDrag(body, world.worldToLocal(x, y, z));
     }
 
     public boolean beginDrag(RayHit hit) {
@@ -253,6 +327,10 @@ public final class MmdRagdoll implements AutoCloseable {
     /** Updates the world-space mouse target and derives a bounded target velocity. */
     public void updateDragTarget(Vector3f worldTarget, float frameSeconds) {
         world.updateDragTarget(worldTarget, frameSeconds);
+    }
+
+    public void updateDragTargetWorld(double x, double y, double z, float frameSeconds) {
+        world.updateDragTarget(world.worldToLocal(x, y, z), frameSeconds);
     }
 
     public void endDrag() {
@@ -314,12 +392,19 @@ public final class MmdRagdoll implements AutoCloseable {
     }
 
     public boolean selfCollisionsEnabled() {
-        return world.selfCollisionsEnabled();
+        return physicsScene == null ? world.selfCollisionsEnabled() : sharedSelfCollisionsEnabled;
     }
 
     /** Enables contacts between bodies belonging to this same ragdoll. */
     public void setSelfCollisionsEnabled(boolean enabled) {
-        world.setSelfCollisionsEnabled(enabled);
+        if (physicsScene == null) {
+            world.setSelfCollisionsEnabled(enabled);
+            return;
+        }
+        sharedSelfCollisionsEnabled = enabled;
+        for (Body body : bodies) body.selfCollisionGroup = enabled ? 0 : sharedSelfCollisionGroup;
+        // The native filters cache group indices; reapply the scene policy.
+        world.setSelfCollisionsEnabled(true);
     }
 
     /** Unique body-to-body contacts from the latest Box3D step. */
@@ -399,7 +484,7 @@ public final class MmdRagdoll implements AutoCloseable {
     }
 
     /**
-     * Adds an infinite static plane. The allowed half-space satisfies
+     * Adds an origin-local infinite static plane. The allowed half-space satisfies
      * {@code dot(point, normal) >= offset}.
      */
     public PlaneCollider addPlaneCollider(Vector3f normal, float offset,
@@ -412,6 +497,10 @@ public final class MmdRagdoll implements AutoCloseable {
         return world.addGroundPlane(y, friction, restitution);
     }
 
+    public PlaneCollider addGroundPlaneWorld(double y, float friction, float restitution) {
+        return world.addGroundPlane((float) (y - world.worldOrigin().y), friction, restitution);
+    }
+
     public void removePlaneCollider(PlaneCollider plane) {
         world.removePlaneCollider(plane);
     }
@@ -420,10 +509,18 @@ public final class MmdRagdoll implements AutoCloseable {
         world.clearPlaneColliders();
     }
 
-    /** Adds a static axis-aligned collision box in world coordinates. */
+    /** Adds a static axis-aligned collision box in origin-local coordinates. */
     public StaticBoxCollider addStaticBoxCollider(Vector3f minimum, Vector3f maximum,
                                                   float friction, float restitution) {
         return world.addStaticBoxCollider(minimum, maximum, friction, restitution);
+    }
+
+    public StaticBoxCollider addStaticBoxColliderWorld(
+            double minX, double minY, double minZ,
+            double maxX, double maxY, double maxZ,
+            float friction, float restitution) {
+        return world.addStaticBoxCollider(world.worldToLocal(minX, minY, minZ),
+                world.worldToLocal(maxX, maxY, maxZ), friction, restitution);
     }
 
     public void removeStaticBoxCollider(StaticBoxCollider box) {
@@ -456,10 +553,68 @@ public final class MmdRagdoll implements AutoCloseable {
         world.setCollisionEnvironment(environment);
     }
 
+    /** Migrates this ragdoll and its bodies to another shared physics scene (or standalone if null). */
+    public void moveTo(MmdPhysicsScene newScene) {
+        if (this.physicsScene == newScene) return;
+        Vector3d oldOrigin = world.worldOrigin();
+        if (this.physicsScene != null) {
+            this.physicsScene.detach(this);
+        } else if (this.world != null) {
+            this.world.close();
+        }
+
+        this.physicsScene = newScene;
+        if (newScene == null) {
+            this.skeleton.enableFloatingOrigin();
+            rebaseBodyPoses(oldOrigin, skeleton.getWorldOrigin());
+            this.world = new RigidBodyWorld(bodies, joints,
+                    profile == null ? RigidBodyWorld.DEFAULT_SUBSTEP_COUNT
+                            : profile.includeSecondaryBodies ? PROFILE_SECONDARY_SUBSTEP_COUNT
+                            : RigidBodyWorld.PROFILE_SUBSTEP_COUNT);
+            this.world.setWorldOrigin(skeleton.getWorldOrigin());
+            if (profile != null) this.world.setSelfCollisionsEnabled(false);
+            for (Body body : bodies) {
+                body.wireWake(world::wake);
+                body.selfCollisionGroup = 0;
+            }
+        } else {
+            this.skeleton.rebaseFloatingOrigin(newScene.worldOrigin());
+            rebaseBodyPoses(oldOrigin, newScene.worldOrigin());
+            this.world = newScene.world();
+            this.sharedSelfCollisionGroup = newScene.allocateSelfCollisionGroup();
+            this.sharedSelfCollisionsEnabled = profile == null;
+            for (Body body : bodies) {
+                body.wireWake(world::wake);
+                body.selfCollisionGroup = sharedSelfCollisionsEnabled ? 0 : sharedSelfCollisionGroup;
+            }
+            newScene.register(this);
+            if (!enabled) {
+                for (Body body : bodies) world.setBodyEnabled(body, false);
+            }
+        }
+        evaluateAnimationTarget();
+        this.world.wake();
+    }
+
+    private void rebaseBodyPoses(Vector3d oldOrigin, Vector3d newOrigin) {
+        Vector3f offset = new Vector3f(
+                (float) (oldOrigin.x - newOrigin.x),
+                (float) (oldOrigin.y - newOrigin.y),
+                (float) (oldOrigin.z - newOrigin.z));
+        if (offset.lengthSquared() == 0f) return;
+        for (Body body : bodies) {
+            body.pose.position.add(offset);
+            body.previousPose.position.add(offset);
+            body.interpolationPose.position.add(offset);
+            body.animationTargetCache.position.add(offset);
+        }
+    }
+
     /** Releases dragging and environment resources and restores the animated pose. */
     @Override
     public void close() {
-        world.close();
+        if (physicsScene == null) world.close();
+        else physicsScene.detach(this);
         setEnabled(false);
     }
 
@@ -499,17 +654,25 @@ public final class MmdRagdoll implements AutoCloseable {
         if (this.enabled == enabled) return;
         this.enabled = enabled;
         if (!enabled) {
-            world.endDrag();
+            if (bodySet.contains(world.draggedBody())) world.endDrag();
+            if (physicsScene != null) {
+                for (Body body : bodies) world.setBodyEnabled(body, false);
+            }
             skeleton.clearPhysicsTransforms();
             skeleton.updateTransform();
         } else {
             reset();
+            if (physicsScene != null) {
+                for (Body body : bodies) world.setBodyEnabled(body, true);
+                world.wake();
+            }
         }
     }
 
     /** Resets every body to the current animated/IK pose and clears velocity. */
     public void reset() {
-        world.resetState();
+        if (physicsScene == null) world.resetState();
+        else world.wake();
         evaluateAnimationTarget();
         for (Body body : bodies) {
             Frames.Pose target = body.animationTargetCache;
@@ -525,6 +688,9 @@ public final class MmdRagdoll implements AutoCloseable {
 
     /** Advances the ragdoll and writes the resulting dynamic body pose to bones. */
     public void step(float deltaSeconds) {
+        if (physicsScene != null) {
+            throw new IllegalStateException("shared ragdolls must be stepped through MmdPhysicsScene.step");
+        }
         if (!enabled || !(deltaSeconds > 0f) || !Float.isFinite(deltaSeconds)) return;
         long profileStart = ModelProfiler.start();
         evaluateAnimationTarget();
@@ -541,11 +707,34 @@ public final class MmdRagdoll implements AutoCloseable {
         }
     }
 
+    void prepareSharedStep() {
+        evaluateAnimationTarget();
+    }
+
+    Frames.Pose sharedKinematicTarget(SimBody body) {
+        if (!(body instanceof Body value) || !bodySet.contains(value)) {
+            return new Frames.Pose(body.positionRef(), body.rotationRef());
+        }
+        return value.animationTargetCache;
+    }
+
+    void finishSharedStep(float interpolationAlpha) {
+        applyToSkeleton(interpolationAlpha);
+        kinematicEvaluationFresh = false;
+    }
+
+    void onSharedSceneClosed() {
+        enabled = false;
+        skeleton.clearPhysicsTransforms();
+        skeleton.updateTransform();
+        kinematicEvaluationFresh = false;
+    }
+
     /**
      * Re-evaluates the kinematic (animation + IK) pose this ragdoll tracks and
      * refreshes every body's cached target. Skipped when no skeleton input has
      * changed since the last evaluation — controllers mounted before the
-     * physics stage and {@link #step()} then share one hierarchy solve.
+     * physics stage and {@link #step(float)} then share one hierarchy solve.
      */
     public void evaluateAnimationTarget() {
         long epoch = skeleton.getMutationEpoch();
@@ -555,7 +744,9 @@ public final class MmdRagdoll implements AutoCloseable {
         kinematicEvaluationEpoch = skeleton.getMutationEpoch();
         kinematicEvaluationFresh = true;
         for (Body body : bodies) {
-            Frames.Pose target = bodyTarget(body);
+            Frames.Pose target = body.kinematicFollowBody == null
+                    ? bodyTarget(body)
+                    : Frames.compose(body.kinematicFollowBody.pose, body.kinematicFollowOffset);
             body.animationTargetCache.set(target);
         }
     }
@@ -624,6 +815,15 @@ public final class MmdRagdoll implements AutoCloseable {
             if (desired.containsKey(bone) || bodyByBone.containsKey(bone)) continue;
             Bone physicalAncestor = nearestPhysicalAncestor(bone);
             if (physicalAncestor == null) continue;
+            Body ancestorBody = bodyByBone.get(physicalAncestor);
+            if (ancestorBody != null && ancestorBody.authoredSecondaryBody) {
+                // Terminal/helper bones below a skirt or hair body already
+                // inherit that body's rotation through the ordinary skeleton
+                // hierarchy. Giving them an independent world-space target
+                // would reintroduce the profile-root delta and stretch the
+                // final unbodied segment away from its parent.
+                continue;
+            }
             Frames.Pose physicalPose = desired.get(physicalAncestor);
             Transform animatedAncestor = skeleton.getAbsoluteTransforms().get(physicalAncestor);
             Transform animatedBone = skeleton.getAbsoluteTransforms().get(bone);
@@ -779,20 +979,41 @@ public final class MmdRagdoll implements AutoCloseable {
     }
 
     private Body buildBody(PmxRigidBody source) {
+        return buildBody(source, false);
+    }
+
+    private Body buildBody(PmxRigidBody source, boolean authoredSecondaryBody) {
+        if (authoredSecondaryBody) {
+            // Keep PMX's 16 authored collision layers, but move them away from
+            // the generated humanoid's layers. Secondary chains still collide
+            // with each other according to their original mask and with the
+            // environment, while they cannot feed contact impulses back into
+            // the primary capsules.
+            source = new PmxRigidBody(source.localName(), source.universalName(), source.boneIndex(),
+                    source.collisionGroup() + 16, source.nonCollisionMask() << 16,
+                    source.shape(), source.size(), source.position(), source.rotation(), source.mass(),
+                    Math.max(source.linearDamping(), 2f), Math.max(source.angularDamping(), 4f),
+                    source.restitution(),
+                    source.friction(), source.mode());
+        }
         Bone bone = pmxBone(source.boneIndex());
         Frames.Pose pose = modelPose(scaled(source.position()), Frames.quaternionFromEuler(source.rotation()));
         Frames.Pose boneToBody = bone == null
                 ? new Frames.Pose()
                 : Frames.relative(Frames.poseOf(skeleton.getAbsoluteTransforms().get(bone)), pose);
         return new Body(source, bone, pose, boneToBody,
-                source.mode() == 2 ? BoneWriteback.ROTATION_ONLY : BoneWriteback.FULL_POSE,
-                new Vector3f(source.size()).mul(modelScale), false);
+                source.mode() == 2 || authoredSecondaryBody
+                        ? BoneWriteback.ROTATION_ONLY : BoneWriteback.FULL_POSE,
+                new Vector3f(source.size()).mul(modelScale), false, false, authoredSecondaryBody);
     }
 
     private record RegisteredPhysics(List<Body> bodies, List<Joint> joints,
+                                     Map<Integer, Body> bodyByDefinition,
                                      Bone motionRoot, Body rootBody) {}
 
-    private RegisteredPhysics buildRegisteredPhysics(List<PmxRigidBody> definitions, Profile profile) {
+    private RegisteredPhysics buildRegisteredPhysics(List<PmxRigidBody> definitions,
+                                                      List<PmxJoint> authoredJoints,
+                                                      Profile profile) {
         List<Body> registeredBodies = new ArrayList<>(profile.bodies.size());
         Map<Integer, Body> bodyByDefinition = new HashMap<>();
         Map<Body, Registration> registrationByBody = new IdentityHashMap<>();
@@ -870,7 +1091,7 @@ public final class MmdRagdoll implements AutoCloseable {
             // mostly for secondary motion and are often poor human colliders.
             PmxRigidBody dynamic = new PmxRigidBody(
                     authored.localName(), authored.universalName(), authored.boneIndex(),
-                    authored.collisionGroup(), authored.nonCollisionMask(), 2,
+                    authored.collisionGroup(), authored.nonCollisionMask() | 0xffff0000, 2,
                     authored.size(), authored.position(), authored.rotation(),
                     mass, 0f, 0f,
                     authored.restitution(), authored.friction(), 1);
@@ -935,7 +1156,65 @@ public final class MmdRagdoll implements AutoCloseable {
         // an internal common ancestor ("腰" in the active PMX) visibly stretches
         // the edge from that ancestor to the model's center/root bones.
         Bone motionRoot = skeleton.getSkeleton().getRoot();
-        return new RegisteredPhysics(registeredBodies, registeredJoints, motionRoot, rootBody);
+
+        // A humanoid profile replaces only its explicitly registered primary
+        // bodies. PMX skirt/hair/accessory chains retain their authored shapes,
+        // damping and joints when secondary motion is requested. glTF has no
+        // PMX rigid-body table, so its generated node placeholders are never
+        // treated as authored secondary physics.
+        if (profile.includeSecondaryBodies && indexedBones == null) {
+            Set<Bone> primaryBones = Collections.newSetFromMap(new IdentityHashMap<>());
+            primaryBones.addAll(registrationByBone.keySet());
+            for (int index = 0; index < definitions.size(); index++) {
+                if (bodyByDefinition.containsKey(index)) continue;
+                PmxRigidBody definition = definitions.get(index);
+                Bone bone = pmxBone(definition.boneIndex());
+                if (bone != null && primaryBones.contains(bone)) continue;
+                Body secondary = buildBody(definition, true);
+                registeredBodies.add(secondary);
+                bodyByDefinition.put(index, secondary);
+            }
+            for (PmxJoint authoredJoint : authoredJoints) {
+                Body a = bodyByDefinition.get(authoredJoint.rigidBodyA());
+                Body b = bodyByDefinition.get(authoredJoint.rigidBodyB());
+                if (a == null || b == null) continue;
+                boolean bothPrimary = a.profiledRagdollBody && b.profiledRagdollBody;
+                if (bothPrimary) continue;
+                if (a.profiledRagdollBody) {
+                    a = secondaryAnchor(definitions.get(authoredJoint.rigidBodyA()), a,
+                            registeredBodies);
+                }
+                if (b.profiledRagdollBody) {
+                    b = secondaryAnchor(definitions.get(authoredJoint.rigidBodyB()), b,
+                            registeredBodies);
+                }
+                registeredJoints.add(buildJoint(authoredJoint, a, b));
+            }
+        }
+        return new RegisteredPhysics(registeredBodies, registeredJoints,
+                Map.copyOf(bodyByDefinition), motionRoot, rootBody);
+    }
+
+    private Body secondaryAnchor(PmxRigidBody authored, Body primary, List<Body> allBodies) {
+        for (Body candidate : allBodies) {
+            if (candidate.secondaryAnchorBody && candidate.kinematicFollowBody == primary) return candidate;
+        }
+        Frames.Pose pose = modelPose(scaled(authored.position()),
+                Frames.quaternionFromEuler(authored.rotation()));
+        PmxRigidBody source = new PmxRigidBody(
+                authored.localName() + "#secondary-anchor",
+                authored.universalName() + "#secondary-anchor", authored.boneIndex(),
+                63, -1, SimBody.SHAPE_SPHERE,
+                new Vector3f(1.0e-4f), authored.position(), authored.rotation(),
+                0f, 0f, 0f, 0f, 0f, 0);
+        Body anchor = new Body(source, null, pose, new Frames.Pose(), BoneWriteback.FULL_POSE,
+                new Vector3f(1.0e-4f), false, false, true);
+        anchor.secondaryAnchorBody = true;
+        anchor.kinematicFollowBody = primary;
+        anchor.kinematicFollowOffset = Frames.relative(primary.pose, pose);
+        primary.kinematicFollowers.add(anchor);
+        allBodies.add(anchor);
+        return anchor;
     }
 
     private Bone selectPrimaryPhysicalChild(Bone parent, BodyRole parentRole,
@@ -1032,16 +1311,20 @@ public final class MmdRagdoll implements AutoCloseable {
                     || source.rigidBodyB() < 0 || source.rigidBodyB() >= bodies.size()) continue;
             Body a = bodies.get(source.rigidBodyA());
             Body b = bodies.get(source.rigidBodyB());
-            Frames.Pose worldFrame = modelPose(scaled(source.position()),
-                    Frames.quaternionFromEuler(source.rotation()));
-            result.add(new Joint(source, a, b,
-                    Frames.relative(a.pose, worldFrame), Frames.relative(b.pose, worldFrame),
-                    scaled(source.positionMin()), scaled(source.positionMax()),
-                    new Vector3f(source.rotationMin()), new Vector3f(source.rotationMax()),
-                    new Vector3f(source.positionSpring()), new Vector3f(source.rotationSpring()),
-                    null, new Vector3f(0f, 1f, 0f)));
+            result.add(buildJoint(source, a, b));
         }
         return result;
+    }
+
+    private Joint buildJoint(PmxJoint source, Body a, Body b) {
+        Frames.Pose worldFrame = modelPose(scaled(source.position()),
+                Frames.quaternionFromEuler(source.rotation()));
+        return new Joint(source, a, b,
+                Frames.relative(a.pose, worldFrame), Frames.relative(b.pose, worldFrame),
+                scaled(source.positionMin()), scaled(source.positionMax()),
+                new Vector3f(source.rotationMin()), new Vector3f(source.rotationMax()),
+                new Vector3f(source.positionSpring()), new Vector3f(source.rotationSpring()),
+                null, new Vector3f(0f, 1f, 0f));
     }
 
     // ------------------------------------------------------------------
@@ -1172,17 +1455,27 @@ public final class MmdRagdoll implements AutoCloseable {
     }
 
     /**
-     * Explicit main-ragdoll selection. Asset names are never inspected by the
-     * Box3D world, so secondary PMX bodies only participate when registered here.
+     * Explicit main-ragdoll selection. PMX profiles may additionally retain
+     * every unregistered authored body/joint as secondary cloth, hair and
+     * accessory motion. glTF profiles ignore that flag because glTF itself
+     * does not define rigid-body physics.
      */
-    public record Profile(List<Registration> bodies) {
+    public record Profile(List<Registration> bodies, boolean includeSecondaryBodies) {
         public Profile {
             bodies = List.copyOf(Objects.requireNonNull(bodies, "bodies"));
             if (bodies.isEmpty()) throw new IllegalArgumentException("profile must register at least one body");
         }
 
+        public Profile(List<Registration> bodies) {
+            this(bodies, false);
+        }
+
         public static Profile of(Registration... bodies) {
             return new Profile(List.of(bodies));
+        }
+
+        public Profile withSecondaryBodies() {
+            return includeSecondaryBodies ? this : new Profile(bodies, true);
         }
     }
 
@@ -1207,6 +1500,12 @@ public final class MmdRagdoll implements AutoCloseable {
         private final Vector3f shapeSize;
         private final boolean profiledRagdollBody;
         private final boolean ragdollAlignmentSpring;
+        private final boolean authoredSecondaryBody;
+        private int selfCollisionGroup;
+        private boolean secondaryAnchorBody;
+        private Body kinematicFollowBody;
+        private Frames.Pose kinematicFollowOffset;
+        private final List<Body> kinematicFollowers = new ArrayList<>();
         private Runnable wake = () -> {};
         private final float inverseLinearMass;
         private final Vector3f linearVelocity = new Vector3f();
@@ -1216,12 +1515,20 @@ public final class MmdRagdoll implements AutoCloseable {
 
         private Body(PmxRigidBody source, Bone bone, Frames.Pose pose, Frames.Pose boneToBody,
                      BoneWriteback writeback, Vector3f shapeSize, boolean profiledRagdollBody) {
-            this(source, bone, pose, boneToBody, writeback, shapeSize, profiledRagdollBody, false);
+            this(source, bone, pose, boneToBody, writeback, shapeSize,
+                    profiledRagdollBody, false, false);
         }
 
         private Body(PmxRigidBody source, Bone bone, Frames.Pose pose, Frames.Pose boneToBody,
                      BoneWriteback writeback, Vector3f shapeSize, boolean profiledRagdollBody,
                      boolean ragdollAlignmentSpring) {
+            this(source, bone, pose, boneToBody, writeback, shapeSize,
+                    profiledRagdollBody, ragdollAlignmentSpring, false);
+        }
+
+        private Body(PmxRigidBody source, Bone bone, Frames.Pose pose, Frames.Pose boneToBody,
+                     BoneWriteback writeback, Vector3f shapeSize, boolean profiledRagdollBody,
+                     boolean ragdollAlignmentSpring, boolean authoredSecondaryBody) {
             this.source = source;
             this.bone = bone;
             this.pose = pose;
@@ -1232,6 +1539,7 @@ public final class MmdRagdoll implements AutoCloseable {
             this.shapeSize = shapeSize;
             this.profiledRagdollBody = profiledRagdollBody;
             this.ragdollAlignmentSpring = ragdollAlignmentSpring;
+            this.authoredSecondaryBody = authoredSecondaryBody;
             float mass = source.mass();
             float inverseMass = mass > 1e-7f ? 1f / mass : 0f;
             this.inverseLinearMass = source.mode() == 0 ? 0f : inverseMass;
@@ -1256,8 +1564,15 @@ public final class MmdRagdoll implements AutoCloseable {
 
         public void teleport(Vector3f position, Quaternionf rotation) {
             wake.run();
-            pose.position.set(Objects.requireNonNull(position, "position"));
-            pose.rotation.set(Objects.requireNonNull(rotation, "rotation")).normalize();
+            teleportPose(new Frames.Pose(Objects.requireNonNull(position, "position"),
+                    Objects.requireNonNull(rotation, "rotation")));
+            for (Body follower : kinematicFollowers) {
+                follower.teleportPose(Frames.compose(pose, follower.kinematicFollowOffset));
+            }
+        }
+
+        private void teleportPose(Frames.Pose target) {
+            pose.set(target);
             previousPose.set(pose);
             interpolationPose.set(pose);
             linearVelocity.zero();
@@ -1280,6 +1595,9 @@ public final class MmdRagdoll implements AutoCloseable {
         @Override public float restitution() { return source.restitution(); }
         @Override public float rollingResistance() { return profiledRagdollBody ? 0.2f : 0f; }
         @Override public boolean profiledRagdollBody() { return profiledRagdollBody; }
+        @Override public boolean authoredSecondaryBody() { return authoredSecondaryBody; }
+        @Override public int selfCollisionGroup() { return selfCollisionGroup; }
+        public boolean secondaryAnchorBody() { return secondaryAnchorBody; }
         @Override public boolean ragdollAlignmentSpring() { return ragdollAlignmentSpring; }
         @Override public int collisionGroup() { return source.collisionGroup(); }
         @Override public int nonCollisionMask() { return source.nonCollisionMask(); }
