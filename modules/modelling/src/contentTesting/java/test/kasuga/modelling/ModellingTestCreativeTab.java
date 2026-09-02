@@ -20,6 +20,10 @@ public class ModellingTestCreativeTab {
                 if (block != null) {
                     output.accept(block);
                 }
+                var fanFormulaBlock = ModellingContentTest.TEST_FAN_FORMULA_BLOCK.getEntry();
+                if (fanFormulaBlock != null) {
+                    output.accept(fanFormulaBlock);
+                }
             })
             .setParent(ModellingTestApplication.registry);
 }

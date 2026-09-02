@@ -29,6 +29,9 @@ public class Morph<IdType> {
     protected final Map<Bone, Set<MorphType<Bone, ?, IdType>>> boneMorphs;
     protected final Map<Material, Set<MorphType<Material, ?, IdType>>> materialMorphs;
 
+    /** Number of {@link MorphType} instances registered so far; their ordinals feed MorphInstance arrays. */
+    protected int morphTypeCounter;
+
     public Morph(Model model) {
         this.model = model;
         this.morphMap = new HashMap<>();
@@ -42,6 +45,9 @@ public class Morph<IdType> {
 
     @SuppressWarnings("unchecked")
     public void addMorph(IdType id, MorphType<?, ?, IdType> morph) {
+        if (morph.getMorphTypeIndex() < 0) {
+            morph.setMorphTypeIndex(morphTypeCounter++);
+        }
         morphMap.putIfAbsent(id, morph);
         morphsById.computeIfAbsent(id, ignored -> new ArrayList<>()).add(morph);
         Object original = morph instanceof FlipMorph<?> flip
@@ -67,6 +73,9 @@ public class Morph<IdType> {
     }
 
     public void addGroup(IdType id, GroupMorph<IdType> group) { groupMorphs.put(id, group); }
+
+    /** Total registered {@link MorphType} ordinals; sizes the MorphInstance factor/value arrays. */
+    public int morphTypeCount() { return morphTypeCounter; }
 
     @Nullable public MorphType<?, ?, IdType> getMorph(IdType id) { return morphMap.get(id); }
     public List<MorphType<?, ?, IdType>> getMorphs(IdType id) {

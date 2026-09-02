@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import lib.kasuga.rendering.models.mc.util.Direction;
+import org.jetbrains.annotations.Nullable;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 
@@ -19,7 +20,8 @@ public record BbModelDefinition(
         int textureHeight,
         List<Texture> textures,
         Map<String, Element> elements,
-        List<OutlineNode> outliner
+        List<OutlineNode> outliner,
+        List<BbModelAnimation> animations
 ) {
     public static BbModelDefinition parse(String input) {
         JsonObject root = JsonParser.parseString(input).getAsJsonObject();
@@ -53,13 +55,38 @@ public record BbModelDefinition(
             }
         }
 
+        // Blockbench v5 stores group metadata (name / origin / rotation / visibility / export) in the
+        // top-level "groups" array, keyed by uuid; the "outliner" tree references groups by uuid only.
+        Map<String, GroupMeta> groups = new HashMap<>();
+        if (root.has("groups")) {
+            for (JsonElement value : root.getAsJsonArray("groups")) {
+                JsonObject group = value.getAsJsonObject();
+                String uuid = getString(group, "uuid", "");
+                if (uuid.isEmpty()) continue;
+                groups.put(uuid, new GroupMeta(
+                        getString(group, "name", ""),
+                        group.has("origin") ? vector3(group, "origin", new Vector3f()) : null,
+                        vector3(group, "rotation", new Vector3f()),
+                        getBoolean(group, "visibility", true),
+                        getBoolean(group, "export", true)
+                ));
+            }
+        }
+
         List<OutlineNode> outliner = new ArrayList<>();
         if (root.has("outliner")) {
             for (JsonElement value : root.getAsJsonArray("outliner")) {
-                outliner.add(parseOutlineNode(value));
+                outliner.add(parseOutlineNode(value, groups));
             }
         }
-        return new BbModelDefinition(width, height, List.copyOf(textures), Map.copyOf(elements), List.copyOf(outliner));
+
+        List<BbModelAnimation> animations = new ArrayList<>();
+        if (root.has("animations")) {
+            for (JsonElement value : root.getAsJsonArray("animations")) {
+                animations.add(BbModelAnimation.parse(value.getAsJsonObject()));
+            }
+        }
+        return new BbModelDefinition(width, height, List.copyOf(textures), Map.copyOf(elements), List.copyOf(outliner), List.copyOf(animations));
     }
 
     private static Element parseElement(JsonObject element) {
@@ -119,25 +146,36 @@ public record BbModelDefinition(
         );
     }
 
-    private static OutlineNode parseOutlineNode(JsonElement value) {
+    private static OutlineNode parseOutlineNode(JsonElement value, Map<String, GroupMeta> groups) {
         if (value.isJsonPrimitive()) {
             return new ElementNode(value.getAsString());
         }
         JsonObject group = value.getAsJsonObject();
+        GroupMeta meta = group.has("uuid") ? groups.get(group.get("uuid").getAsString()) : null;
+        String name = meta != null ? meta.name() : getString(group, "name", "");
+        Vector3f origin = meta != null ? meta.origin()
+                : (group.has("origin") ? vector3(group, "origin", new Vector3f()) : null);
+        Vector3f rotation = meta != null ? meta.rotation() : vector3(group, "rotation", new Vector3f());
+        boolean visible = (meta != null ? meta.visible() : getBoolean(group, "visibility", true))
+                && (meta != null ? meta.export() : getBoolean(group, "export", true));
         List<OutlineNode> children = new ArrayList<>();
         if (group.has("children")) {
             for (JsonElement child : group.getAsJsonArray("children")) {
-                children.add(parseOutlineNode(child));
+                children.add(parseOutlineNode(child, groups));
             }
         }
         return new GroupNode(
-                getString(group, "name", "group"),
-                getBoolean(group, "visibility", true) && getBoolean(group, "export", true),
-                vector3(group, "origin", new Vector3f()),
-                vector3(group, "rotation", new Vector3f()),
+                name,
+                visible,
+                origin,
+                rotation,
                 List.copyOf(children)
         );
     }
+
+    /** Blockbench v5 group metadata looked up from the top-level {@code groups} array by uuid. */
+    private record GroupMeta(String name, @Nullable Vector3f origin, Vector3f rotation,
+                             boolean visible, boolean export) {}
 
     private static JsonObject getObject(JsonObject object, String key) {
         return object.has(key) && object.get(key).isJsonObject() ? object.getAsJsonObject(key) : new JsonObject();
@@ -192,6 +230,14 @@ public record BbModelDefinition(
 
     public record ElementNode(String elementId) implements OutlineNode {}
 
-    public record GroupNode(String name, boolean visible, Vector3f origin, Vector3f rotation,
+    /**
+     * @param name     the explicit outliner name, or {@code ""} when the group is unnamed (auto-exported
+     *                 models often omit it). Empty names FLATTEN the group into its nearest named ancestor —
+     *                 only explicitly named groups become skeleton bones. (The default was previously
+     *                 {@code "group"}, which silently collided every unnamed group into one bone name.)
+     * @param origin   the group pivot in Blockbench pixels; {@code null} when the model omits it. The loader
+     *                 falls back to the average of the subtree element origins for the bone pivot.
+     */
+    public record GroupNode(String name, boolean visible, @Nullable Vector3f origin, Vector3f rotation,
                             List<OutlineNode> children) implements OutlineNode {}
 }

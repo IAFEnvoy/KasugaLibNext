@@ -5,7 +5,9 @@ import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmMachineBuilder;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.FsmPoseDriver;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.VarProvider;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.StateMachineDefinition;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.ParameterSpec;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.FsmSyncKey;
 import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncClient;
 import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncServer;
@@ -62,6 +64,8 @@ public final class FsmAnimatedModel {
     private ModelInstance modelInstance;
     @Nullable
     private FsmPoseDriver driver;
+    @Nullable
+    private VarProvider varProvider;
     private boolean modelBound;
     private int lastLoggedVersion = -1;
 
@@ -107,6 +111,43 @@ public final class FsmAnimatedModel {
         StateMachine<?> m = machine;
         return m == null ? Map.of() : m.activeStates();
     }
+
+    //region parameter face (container facade — forwards to the machine; tolerates a not-yet-built machine)
+
+    /** Read a declared parameter; returns the spec's default when the machine is not built yet. */
+    public <T> T get(ParameterSpec<T> spec) {
+        StateMachine<?> m = machine;
+        return m == null ? spec.defaultValue() : m.get(spec);
+    }
+
+    /** External write — forwards to {@link StateMachine#set} (rejects derived parameters); no-op before build. */
+    public <T> T set(ParameterSpec<T> spec, T value) {
+        StateMachine<?> m = machine;
+        if (m != null) {
+            m.set(spec, value);
+        }
+        return value;
+    }
+
+    /** Machine-internal write (provider / action / sync landing) — no-op before build. */
+    public <T> T setInternal(ParameterSpec<T> spec, T value) {
+        StateMachine<?> m = machine;
+        if (m != null) {
+            m.setInternal(spec, value);
+        }
+        return value;
+    }
+
+    /**
+     * Attach (or swap) the per-entity rendering variable provider. The provider is driven on the main
+     * thread each tick by the {@link FsmPoseDriver} and derives the render projection for formula tracks;
+     * see {@link VarProvider}. Takes effect on the next driver (re)attachment — typically the next tick.
+     */
+    public void setVarProvider(@Nullable VarProvider provider) {
+        this.varProvider = provider;
+    }
+
+    //endregion
 
     //endregion
 
@@ -259,7 +300,7 @@ public final class FsmAnimatedModel {
             return;
         }
         if (driver == null || driver.machine() != m) {
-            driver = new FsmPoseDriver(m, modelInstance);
+            driver = new FsmPoseDriver(m, modelInstance, varProvider);
             modelInstance.setPoseDriver(driver);
             LOGGER.debug("[FsmAnimatedModel] driver attached for {} (version {})", owner, m.version());
         } else if (driver.model() != modelInstance) {
@@ -307,7 +348,7 @@ public final class FsmAnimatedModel {
     //region lifecycle
 
     public void onLoad(Level level) {
-        if (isClientSide(level) && modelLoc != null && modelName != null) {
+        if (isClientSide(level) && modelLoc != null) {
             ensureClientModel(level);
         }
     }
@@ -341,9 +382,11 @@ public final class FsmAnimatedModel {
      * {@link FsmPoseDriver} is rebound to the fresh instance on the next {@link #attachDriverIfReady()}.
      */
     private void ensureClientModel(Level level) {
-        if (modelLoc == null || modelName == null) {
+        if (modelLoc == null) {
             return;
         }
+        // modelName is MMD-only (KasugaModelPipelines.resolveLoc uses it solely for the PMX pipeline);
+        // non-MMD models legitimately pass null — the gate is modelLoc alone.
         ResourceLocation instance = instanceLoc();
         if (modelBound && modelInstance != null && KasugaModelPipelines.isRendering(modelLoc, modelName, instance)) {
             return; // healthy
@@ -374,7 +417,8 @@ public final class FsmAnimatedModel {
         if (!isClientSide(level)) {
             return;
         }
-        if (modelLoc != null && modelName != null && (modelBound || modelInstance != null)) {
+        if (modelLoc != null && (modelBound || modelInstance != null)) {
+            // modelName may be null for non-MMD models — KasugaModelPipelines.unbind is null-safe.
             KasugaModelPipelines.unbind(modelLoc, modelName, instanceLoc());
             LOGGER.debug("[FsmAnimatedModel] model unbound for {}", owner);
         }

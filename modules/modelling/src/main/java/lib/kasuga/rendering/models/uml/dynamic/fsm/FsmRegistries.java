@@ -4,10 +4,11 @@ import lib.kasuga.rendering.models.uml.dynamic.fsm.function.FsmFunctionLibrary;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarRegistry;
 
 /**
- * Composition root for the FSM registry layer: the four collaborators — {@link FsmDefinitions}
+ * Composition root for the FSM registry layer: the five collaborators — {@link FsmDefinitions}
  * (definition bucket), {@link FsmMachines} (scripting instance/handle bucket), {@link StateVarRegistry}
- * (typed state vars) and {@link FsmFunctionLibrary} (guards/actions) — created and wired together in
- * one place, replacing the former trio of independent {@code GLOBAL} singletons.
+ * (typed state vars), {@link FsmFunctionLibrary} (guards/actions) and {@link FsmAnimationClips}
+ * (animation clip bucket) — created and wired together in one place, replacing the former trio of
+ * independent {@code GLOBAL} singletons.
  *
  * <p>{@link #GLOBAL} is the single process-wide instance backing the resource loader, the sync layer
  * and the scripting API. The wiring done here: when a definition is invalidated (overwritten, removed
@@ -24,12 +25,14 @@ public final class FsmRegistries {
     private final FsmMachines machines;
     private final StateVarRegistry vars;
     private final FsmFunctionLibrary functions;
+    private final FsmAnimationClips clips;
 
-    private FsmRegistries(FsmDefinitions definitions, FsmMachines machines, StateVarRegistry vars, FsmFunctionLibrary functions) {
+    private FsmRegistries(FsmDefinitions definitions, FsmMachines machines, StateVarRegistry vars, FsmFunctionLibrary functions, FsmAnimationClips clips) {
         this.definitions = definitions;
         this.machines = machines;
         this.vars = vars;
         this.functions = functions;
+        this.clips = clips;
     }
 
     /**
@@ -40,7 +43,7 @@ public final class FsmRegistries {
         FsmDefinitions definitions = new FsmDefinitions();
         StateVarRegistry vars = new StateVarRegistry();
         definitions.addListener(vars::clearForMachine);
-        return new FsmRegistries(definitions, new FsmMachines(), vars, new FsmFunctionLibrary());
+        return new FsmRegistries(definitions, new FsmMachines(), vars, new FsmFunctionLibrary(), new FsmAnimationClips());
     }
 
     public FsmDefinitions definitions() {
@@ -57,5 +60,9 @@ public final class FsmRegistries {
 
     public FsmFunctionLibrary functions() {
         return functions;
+    }
+
+    public FsmAnimationClips clips() {
+        return clips;
     }
 }

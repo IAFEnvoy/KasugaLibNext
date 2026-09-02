@@ -205,9 +205,15 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
 
     public Texture getTexture(ZipResource s) {
         try {
-            ResourceLocation rl = ResourceLocation.tryBuild("kasuga_lib", "textures/pmx/" + s.name().toLowerCase(Locale.ROOT));
+            // 纹理图集路径必须对 (模型, 纹理) 二元组唯一：不同模型常有同名贴图（如 skin.bmp/hair.bmp），
+            // 若只按文件名哈希，PBR 变体路径会跨模型碰撞，图集按名去重后一个 sprite 被吞 → 崩溃。
+            // 中文字符无法进 ResourceLocation，故统一并入模型名哈希。
+            String modelKey = loadingModel == null ? "?" : loadingModel.name();
+            ResourceLocation rl = ResourceLocation.tryBuild("kasuga_lib",
+                    "textures/pmx/" + Integer.toUnsignedString((s.name() + "@" + modelKey).hashCode()));
             if (rl == null) {
-                rl = ResourceLocation.tryBuild("kasuga_lib", "textures/pmx/" + Integer.toUnsignedString(s.name().hashCode()));
+                rl = ResourceLocation.tryBuild("kasuga_lib",
+                        "textures/pmx/" + Integer.toUnsignedString(s.name().hashCode()));
             }
             if (loadedTextureMap.containsKey(s)) {
                 Texture texture = loadedTextureMap.get(s);

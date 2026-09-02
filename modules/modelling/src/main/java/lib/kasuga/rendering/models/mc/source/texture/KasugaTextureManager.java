@@ -1,6 +1,7 @@
 package lib.kasuga.rendering.models.mc.source.texture;
 
 import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.logging.LogUtils;
 import lib.kasuga.rendering.models.mc.compat.iris.KasugaTextureAtlas;
 import lib.kasuga.rendering.models.uml.loaders.sources.Source;
 import lib.kasuga.rendering.models.uml.loaders.sources.SourceManager;
@@ -20,6 +21,7 @@ import net.minecraft.server.packs.resources.ResourceMetadata;
 import net.minecraft.util.profiling.ProfilerFiller;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
 
 import java.io.InputStream;
 import java.util.*;
@@ -33,6 +35,7 @@ public class KasugaTextureManager extends SourceManager<InputStream> implements 
 
     @NotNull
     protected final KasugaTextureAtlas textureAtlas;
+    private static final Logger LOGGER = LogUtils.getLogger();
     private final Map<Object, SpriteUploader<?>> spriteUploaders;
     private final Map<Object, SpriteContents> caches;
     private final Map<Object, TextureAtlasSprite> loadedSprites;
@@ -72,10 +75,14 @@ public class KasugaTextureManager extends SourceManager<InputStream> implements 
                 .thenAcceptAsync(any -> this.spriteUploaders.clear(), gameExecutor)
                 .thenAcceptAsync(any -> this.caches.forEach((k, v) -> {
                     for (Map.Entry<ResourceLocation, TextureAtlasSprite> entry : this.textureAtlas.getTextures().entrySet()) {
-                        if (entry.getValue().contents() == v) {
+                        // 图集按内容名建 key：同名重复内容只能保留一个 sprite，故按名称匹配而非恒等。
+                        if (entry.getValue().contents().name().equals(v.name())) {
                             this.loadedSprites.put(k, entry.getValue());
                             break;
                         }
+                    }
+                    if (!this.loadedSprites.containsKey(k)) {
+                        LOGGER.warn("Texture atlas {} has no sprite for content {}", this.textureAtlas.location(), v.name());
                     }
                 }), gameExecutor)
                 .thenAcceptAsync(any -> this.caches.clear(), gameExecutor);

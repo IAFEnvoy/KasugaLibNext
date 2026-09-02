@@ -4,10 +4,14 @@ import lib.kasuga.rendering.models.uml.structure.basic.Mesh;
 import lib.kasuga.rendering.models.uml.structure.basic.Vertex;
 import lib.kasuga.rendering.models.uml.structure.material.Material;
 import lombok.Getter;
+import lombok.Setter;
 import org.joml.Vector2f;
 
 @Getter
 public class VertexUvMorph<IdType> implements MorphType<Vertex, Vector2f, IdType> {
+
+    @Setter
+    private int morphTypeIndex = -1;
 
     private final Vertex original;
     private final IdType identifier;

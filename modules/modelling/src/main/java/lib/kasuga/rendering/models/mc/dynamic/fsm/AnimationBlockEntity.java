@@ -3,6 +3,7 @@ package lib.kasuga.rendering.models.mc.dynamic.fsm;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.Id;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.VarProvider;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.sync.FsmSyncKey;
 import lib.kasuga.rendering.models.mc.dynamic.fsm.sync.FsmSyncServer;
 import lib.kasuga.rendering.models.uml.math.Transform;
@@ -58,9 +59,14 @@ public class AnimationBlockEntity extends BlockEntity implements AnimationHost {
         this.model.model(modelLoc, modelName, null);
     }
 
-    /** Root transform placing the model at this block's position. */
+    /**
+     * Root transform placing the model at this block's position. Centered on x/z (+0.5) to match the
+     * framework's block-anchoring convention ({@code BlockPipelineBinding} centers the same way) — models
+     * authored centered at the origin (Blockbench default) then sit at the block center, not the corner.
+     */
     private Transform rootTransform() {
-        return new Transform().translate(worldPosition.getX(), worldPosition.getY(), worldPosition.getZ());
+        return new Transform()
+                .translate(worldPosition.getX() + 0.5f, worldPosition.getY(), worldPosition.getZ() + 0.5f);
     }
 
     //region AnimationHost
@@ -82,6 +88,11 @@ public class AnimationBlockEntity extends BlockEntity implements AnimationHost {
     /** Programmatic model assignment; unbinds the previous binding, if any. */
     public void model(@Nullable ResourceLocation loc, @Nullable String name) {
         model.model(loc, name, level);
+    }
+
+    /** Attach the per-entity rendering variable provider — forwarded to the {@link FsmAnimatedModel}. */
+    public void setVarProvider(@Nullable VarProvider provider) {
+        model.setVarProvider(provider);
     }
 
     public @Nullable Id stateMachineId() {

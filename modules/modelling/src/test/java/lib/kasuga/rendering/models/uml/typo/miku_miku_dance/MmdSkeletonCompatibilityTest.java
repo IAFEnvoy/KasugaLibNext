@@ -121,6 +121,66 @@ class MmdSkeletonCompatibilityTest {
                 "pre-IK tick loop modules must feed the same-frame PMX IK solve");
     }
 
+    @Test
+    void ikSolverOverridesAuthoredRotationOnChainLinks() {
+        Bone root = bone("root", new Transform(), data("root", -1, plainFlags(), null, null, null));
+        Bone link = bone("link", new Transform(), data("link", 0, plainFlags(), null, null, null));
+        Bone effector = bone("effector", new Transform().translate(1, 0, 0),
+                data("effector", 1, plainFlags(), null, null, null));
+        PmxIKBone ik = new PmxIKBone(2, 8, (float) Math.PI,
+                new PmxIKChain[]{new PmxIKChain(1, false, null)});
+        Bone controller = bone("controller", new Transform().translate(0, 1, 0),
+                data("controller", 0, flags(true, new boolean[6]), null, null, ik));
+        connect(root, link, controller);
+        connect(link, effector);
+        ModelInstance instance = instance(root, link, effector, controller);
+
+        // MMD 语义：IK 启用时链上骨由解算器接管。给链上骨一个巨大的直接旋转
+        // （模拟 VMD 同时动画大腿 + IK 的双驱动）—— IK 必须无视它并正常收敛。
+        instance.getSkeletonInstance().transform(link,
+                new Transform().mul(new Quaternionf().rotateX((float) Math.PI / 2)));
+        instance.updateImmediate();
+        Vector3f solved = instance.getSkeletonInstance().getAbsoluteTransforms().get(effector).getPosition();
+        Vector3f goal = instance.getSkeletonInstance().getAbsoluteTransforms().get(controller).getPosition();
+        assertTrue(solved.distance(goal) < 1e-3f,
+                "authored link rotation must not fight the IK solve while IK is enabled");
+
+        instance.getSkeletonInstance().setIkEnabled("controller", false);
+        instance.updateImmediate();
+        Vector3f rest = instance.getSkeletonInstance().getAbsoluteTransforms().get(effector).getPosition();
+        assertTrue(rest.distance(goal) > 0.5f,
+                "authored link rotation must take effect again once IK is disabled");
+    }
+
+    @Test
+    void singleChainCoincidentIkUsesDirectionSemantics() {
+        // つま先ＩＫ 型：单链 IK + 控制器与 effector bind 重合。控制器被外部大幅移动时，
+        // 方向语义下 effector 只对齐方向、不被拖走（位置语义会把它拽向控制器 → 脚底板翻起）。
+        Bone root = bone("root", new Transform(), data("root", -1, plainFlags(), null, null, null));
+        Bone link = bone("link", new Transform(), data("link", 0, plainFlags(), null, null, null));
+        Bone effector = bone("effector", new Transform().translate(0, 0, -1),
+                data("effector", 1, plainFlags(), null, null, null));
+        PmxIKBone ik = new PmxIKBone(2, 8, (float) Math.PI,
+                new PmxIKChain[]{new PmxIKChain(1, false, null)});
+        // 控制器 bind 位置与 effector 重合（方向骨惯例）
+        Bone controller = bone("controller", new Transform().translate(0, 0, -1),
+                data("controller", 0, flags(true, new boolean[6]), null, null, ik));
+        connect(root, link, controller);
+        connect(link, effector);
+        ModelInstance instance = instance(root, link, effector, controller);
+
+        instance.updateImmediate();
+        Vector3f bindPos = instance.getSkeletonInstance().getAbsoluteTransforms().get(effector).getPosition();
+        assertEquals(0f, bindPos.distance(new Vector3f(0, 0, -1)), 1e-4f);
+
+        // 把控制器大幅上移 —— 位置语义会把 effector 拽上去，方向语义应保持 effector 原地。
+        instance.getSkeletonInstance().transform(controller, new Transform().translate(0, 5, -1));
+        instance.updateImmediate();
+        Vector3f solved = instance.getSkeletonInstance().getAbsoluteTransforms().get(effector).getPosition();
+        assertTrue(solved.distance(bindPos) < 0.1f,
+                "direction-type IK must not drag the effector toward a translated controller");
+    }
+
     private static ModelInstance instance(Bone... bones) {
         return instance(null, bones);
     }

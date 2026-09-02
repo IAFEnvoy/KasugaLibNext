@@ -75,7 +75,18 @@ public class SkeletonInstance {
     private final Quaternionf ikWorldRotationScratch = new Quaternionf();
     private final Quaternionf ikLocalDeltaScratch = new Quaternionf();
     private final Vector3f ikEulerScratch = new Vector3f();
+    private final Vector3f ikDirectionScratch = new Vector3f();
     private final Matrix4f ikMatrixScratch = new Matrix4f();
+
+    /**
+     * bone → IK controllers whose chain includes this bone. MMD semantics:
+     * while such a controller's IK is enabled, the link bones are driven by the
+     * IK solver alone — authored pose rotations (e.g. VMD thigh keyframes) are
+     * ignored, otherwise a motion that animates both the IK target and the thigh
+     * directly would double-drive the leg. Built lazily from PMX IK data.
+     */
+    private Map<Bone, List<Bone>> ikLinksByBone;
+    private boolean ikLinksBuilt;
 
     /**
      * Bumped by every pose-input mutation (bone locals, root, IK targets,
@@ -570,7 +581,10 @@ public class SkeletonInstance {
     private Transform evaluatedLocalTransform(Bone bone) {
         Transform result = reusableEvaluated(bone);
         Transform authored = transforms.get(bone);
-        result.set(authored == null ? IDENTITY_TRANSFORM : authored);
+        // MMD: 启用 IK 的链上骨由解算器接管 —— 忽略动画直接旋转（VMD 大腿关键帧等），
+        // 否则"大腿直接旋转 + IK 平移"的双驱动会把腿拧成怪异的姿态。
+        result.set(isIkDriven(bone) ? IDENTITY_TRANSFORM
+                : (authored == null ? IDENTITY_TRANSFORM : authored));
         if (bone.getBoneData() instanceof PmxBone pmx) {
             applyGrant(result, pmx);
             applyFixedAxis(result, pmx);
@@ -580,6 +594,36 @@ public class SkeletonInstance {
         Transform physics = physicsTransforms.get(bone);
         if (physics != null) result.set(physics);
         return result;
+    }
+
+    /**
+     * Whether this bone is a link of at least one IK controller whose IK is
+     * currently enabled. Chain membership is derived once from PMX data; the
+     * enable check is a per-frame map lookup (IK enable defaults to true, per
+     * MMD). Non-PMX skeletons and non-link bones always return false.
+     */
+    private boolean isIkDriven(Bone bone) {
+        if (!ikLinksBuilt) buildIkLinks();
+        List<Bone> controllers = ikLinksByBone.get(bone);
+        if (controllers == null || controllers.isEmpty()) return false;
+        for (Bone controller : controllers) {
+            if (isIkEnabled(controller.getName())) return true;
+        }
+        return false;
+    }
+
+    private void buildIkLinks() {
+        ikLinksByBone = new HashMap<>();
+        for (Bone controller : pmxBones) {
+            if (!(controller.getBoneData() instanceof PmxBone pmx) || pmx.ik == null) continue;
+            if (pmx.ik.chains == null) continue;
+            for (PmxIKChain chain : pmx.ik.chains) {
+                Bone link = pmxBone(chain.boneIndex.intValue());
+                if (link == null) continue;
+                ikLinksByBone.computeIfAbsent(link, ignored -> new ArrayList<>()).add(controller);
+            }
+        }
+        ikLinksBuilt = true;
     }
 
     /**
@@ -693,6 +737,22 @@ public class SkeletonInstance {
         }
     }
 
+    /**
+     * MMD 方向型 IK 判别：控制器骨与 effector 骨在 bind 姿态下重合（{@code つま先ＩＫ} 挂在
+     * {@code 足ＩＫ} 下而 つま先 挂在 足首 下，bind 时都在脚趾）且 IK 链只有一根 link。
+     * 普通位置型 IK（{@code 足ＩＫ}）链有两根（ひざ, 足），不会被误判。
+     */
+    private boolean isDirectionIk(Bone controller, PmxIKBone ik, Bone effector) {
+        if (ik.chains == null || ik.chains.length != 1) return false;
+        if (controller.getBoneData() instanceof PmxBone pmx
+                && pmx.tailObject instanceof Vector3f) {
+            Transform controllerBind = controller.getTransform();
+            Transform effectorBind = effector.getTransform();
+            return controllerBind.getPosition().distanceSquared(effectorBind.getPosition()) < 1e-4f;
+        }
+        return false;
+    }
+
     private void solveIk(Bone controller, PmxIKBone ik) {
         Bone effector = pmxBone(ik.boneIndex.intValue());
         if (effector == null || absoluteTransforms.get(controller) == null) return;
@@ -702,9 +762,23 @@ public class SkeletonInstance {
         Vector3f targetPosition = ikTargetPositionScratch.set(controllerAbsolute.m30(),
                 controllerAbsolute.m31(), controllerAbsolute.m32());
         if (override != null) targetPosition.lerp(override.position, override.weight);
+        // MMD 方向型 IK（つま先ＩＫ 等）：控制器骨与 effector 骨在 bind 姿态下重合、且链只有一根
+        // （足首）—— 目标不是"把 effector 拉向控制器位置"，而是"让 effector 骨的方向对齐控制器
+        // 的方向"。目标 = effector 的 bind 脚趾方向 × 控制器动画旋转偏移（VMD 只写 つま先ＩＫ 的
+        // 旋转来控制脚尖）：bind 时零修正，脚趾方向只跟随 VMD。用位置语义时，控制器挂 IK 骨下、
+        // effector 挂腿链下，父链移动差异会把目标甩离脚趾 → 踝关节猛转、脚底板翻起。
+        if (isDirectionIk(controller, ik, effector)) {
+            Transform effectorAbsolute = absoluteTransforms.get(effector);
+            if (effectorAbsolute != null) {
+                Vector3f dir = ikDirectionScratch.set(effector.getTransform().getPosition()).normalize();
+                Transform animRotation = transforms.get(controller);
+                if (animRotation != null) animRotation.getRotation().transform(dir);
+                targetPosition.set(effectorAbsolute.getPosition()).add(dir);
+            }
+        }
         int iterations = Math.min(Math.max(ik.CCD_Count, 0), 256);
         boolean corrected = false;
-        for (int iteration = 0; iteration < iterations; iteration++) {
+                for (int iteration = 0; iteration < iterations; iteration++) {
             boolean converged = false;
             for (PmxIKChain chain : ik.chains) {
                 Bone link = pmxBone(chain.boneIndex.intValue());

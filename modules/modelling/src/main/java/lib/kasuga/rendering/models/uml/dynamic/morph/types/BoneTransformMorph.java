@@ -3,11 +3,15 @@ package lib.kasuga.rendering.models.uml.dynamic.morph.types;
 import lib.kasuga.rendering.models.uml.math.Transform;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import lombok.Getter;
+import lombok.Setter;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 
 @Getter
 public class BoneTransformMorph<IdType> implements MorphType<Bone, Transform, IdType> {
+
+    @Setter
+    private int morphTypeIndex = -1;
 
     private final Bone original;
     private final IdType identifier;
