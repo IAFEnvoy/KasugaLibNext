@@ -2,11 +2,15 @@ package lib.kasuga.rendering.models.uml.dynamic.morph.types;
 
 import lib.kasuga.rendering.models.uml.structure.material.Material;
 import lombok.Getter;
+import lombok.Setter;
 import lib.kasuga.rendering.models.uml.dynamic.morph.BlendMode;
 import org.joml.Vector4f;
 
 @Getter
 public class MaterialColorMorph<IdType> implements MorphType<Material, Vector4f, IdType> {
+
+    @Setter
+    private int morphTypeIndex = -1;
 
     private final Material original;
     private final IdType identifier;

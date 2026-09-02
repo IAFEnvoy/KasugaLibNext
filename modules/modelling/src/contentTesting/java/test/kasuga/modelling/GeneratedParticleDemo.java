@@ -60,6 +60,9 @@ public final class GeneratedParticleDemo {
     private static int autoSpawnDelay;
     private static boolean autoSpawnHandled;
 
+    /** Auto-spawn on world join is DISABLED by default — trigger manually via {@code /kasuga_particles burst}. */
+    private static final boolean AUTO_SPAWN = false;
+
     private GeneratedParticleDemo() {
     }
 
@@ -136,6 +139,10 @@ public final class GeneratedParticleDemo {
             return;
         }
         if (level == null || minecraft.player == null || minecraft.isPaused() || autoSpawnHandled) return;
+        if (!AUTO_SPAWN) {
+            autoSpawnHandled = true;
+            return;
+        }
         if (autoSpawnDelay-- > 0 || shader == null || !shader.isReady() || pipeline == null) return;
         autoSpawnHandled = true;
         spawnBurst(minecraft.player);

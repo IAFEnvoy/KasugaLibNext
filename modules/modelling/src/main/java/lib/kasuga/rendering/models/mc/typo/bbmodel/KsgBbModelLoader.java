@@ -18,6 +18,7 @@ import lib.kasuga.rendering.models.uml.structure.basic.BoneBinding;
 import lib.kasuga.rendering.models.uml.structure.basic.Mesh;
 import lib.kasuga.rendering.models.uml.structure.basic.Vertex;
 import lib.kasuga.rendering.models.uml.structure.material.Material;
+import lib.kasuga.rendering.models.uml.structure.material.MaterialSet;
 import lib.kasuga.rendering.models.uml.structure.material.Texture;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Skeleton;
@@ -60,26 +61,103 @@ public final class KsgBbModelLoader implements ModelLoader<String, ResourceLocat
         }
 
         Map<Integer, Material> materials = buildMaterials(identifier, definition);
+        Model model = buildSkeletonAndGeometry(definition, materials, materialSetBuilder.endMaterialSet());
+        return Map.of(identifier, model);
+    }
+
+    /**
+     * Pure geometry + skeleton construction (no Minecraft runtime state): tests drive it directly with
+     * stub materials. Named outliner groups become skeleton bones (bind = pivot offset relative to the
+     * nearest named ancestor, translation-only — the group's own rotation stays baked into the vertices),
+     * so the bind pose is byte-identical to the flattened loader; runtime bone rotations pivot around the
+     * group origin via the BDEF conjugation. Unnamed groups flatten into their nearest named ancestor.
+     */
+    static Model buildSkeletonAndGeometry(BbModelDefinition definition, Map<Integer, Material> materials,
+                                          MaterialSet materialSet) {
         List<Vertex> vertices = new ArrayList<>();
         List<Mesh> meshes = new ArrayList<>();
         Bone root = new Bone("root", new Transform(), null);
+        List<Bone> bones = new ArrayList<>();
+        bones.add(root);
 
         if (definition.outliner().isEmpty()) {
             for (BbModelDefinition.Element element : definition.elements().values()) {
                 appendElement(element, BlockBenchTransform.IDENTITY, true, definition, materials, root, vertices, meshes);
             }
         } else {
+            // Pass 1: resolve each group's pivot in Blockbench pixels — explicit origin, else the average
+            // of the subtree element origins (auto-exported models often drop group origins).
+            Map<BbModelDefinition.GroupNode, Vector3f> pivots =
+                    computeGroupPivots(definition.outliner(), definition.elements());
+            // Pass 2: walk the outliner building bones + binding vertices to their nearest named ancestor.
             for (BbModelDefinition.OutlineNode node : definition.outliner()) {
-                appendOutline(node, BlockBenchTransform.IDENTITY, true, definition, materials, root, vertices, meshes);
+                appendOutline(node, BlockBenchTransform.IDENTITY, true, definition, materials, pivots,
+                        root, ZERO_PX, bones, vertices, meshes);
             }
+            wireChildren(bones);
         }
 
-        Skeleton skeleton = new Skeleton(new Bone[]{root}, root, new lib.kasuga.rendering.models.uml.structure.skeleton.Anchor[0], null, new Transform());
-        Model model = new Model(
-                vertices.toArray(new Vertex[0]), meshes.toArray(new Mesh[0]), new Bone[]{root}, skeleton,
-                materialSetBuilder.endMaterialSet(), MeshMode.QUADS, null, null
+        Skeleton skeleton = new Skeleton(bones.toArray(new Bone[0]), root, new lib.kasuga.rendering.models.uml.structure.skeleton.Anchor[0], null, new Transform());
+        return new Model(
+                vertices.toArray(new Vertex[0]), meshes.toArray(new Mesh[0]), bones.toArray(new Bone[0]), skeleton,
+                materialSet, MeshMode.QUADS, null, null
         );
-        return Map.of(identifier, model);
+    }
+
+    private static final Vector3f ZERO_PX = new Vector3f();
+
+
+    /**
+     * Resolves every outliner group's pivot (Blockbench pixels). Explicit {@code origin} wins; a group
+     * without one falls back to the mean of its subtree element origins — for uniformly-pivoted content
+     * (e.g. fan blades sharing one origin) that equals the intended rotation center.
+     */
+    static Map<BbModelDefinition.GroupNode, Vector3f> computeGroupPivots(
+            List<BbModelDefinition.OutlineNode> outliner, Map<String, BbModelDefinition.Element> elements) {
+        Map<BbModelDefinition.GroupNode, Vector3f> pivots = new HashMap<>();
+        for (BbModelDefinition.OutlineNode node : outliner) {
+            collectGroupPivots(node, elements, pivots);
+        }
+        return pivots;
+    }
+
+    private static Vector3f collectGroupPivots(BbModelDefinition.OutlineNode node,
+                                               Map<String, BbModelDefinition.Element> elements,
+                                               Map<BbModelDefinition.GroupNode, Vector3f> pivots) {
+        if (node instanceof BbModelDefinition.ElementNode elementNode) {
+            BbModelDefinition.Element element = elements.get(elementNode.elementId());
+            return element == null ? null : new Vector3f(element.origin());
+        }
+        BbModelDefinition.GroupNode group = (BbModelDefinition.GroupNode) node;
+        Vector3f explicit = group.origin();
+        if (explicit != null) {
+            pivots.put(group, new Vector3f(explicit));
+        }
+        Vector3f sum = new Vector3f();
+        int count = 0;
+        for (BbModelDefinition.OutlineNode child : group.children()) {
+            Vector3f childOrigin = collectGroupPivots(child, elements, pivots);
+            if (childOrigin != null) {
+                sum.add(childOrigin);
+                count++;
+            }
+        }
+        if (explicit == null) {
+            pivots.put(group, count == 0 ? new Vector3f() : sum.div(count));
+        }
+        return explicit == null ? pivots.get(group) : new Vector3f(explicit);
+    }
+
+    /** Wires each created bone's {@code children} array from the parent links established during the walk. */
+    private static void wireChildren(List<Bone> bones) {
+        Map<Bone, List<Bone>> childrenByParent = new HashMap<>();
+        for (Bone bone : bones) {
+            if (bone.getParent() != null) {
+                childrenByParent.computeIfAbsent(bone.getParent(), ignored -> new ArrayList<>()).add(bone);
+            }
+        }
+        childrenByParent.forEach((parent, children) ->
+                parent.setChildren(children.toArray(new Bone[0])));
     }
 
     private Map<Integer, Material> buildMaterials(ResourceLocation identifier, BbModelDefinition definition) {
@@ -125,37 +203,61 @@ public final class KsgBbModelLoader implements ModelLoader<String, ResourceLocat
                 new MCTextureData(sourceIdentifier, textureManager, true));
     }
 
-    private void appendOutline(BbModelDefinition.OutlineNode node, BlockBenchTransform parentTransform, boolean parentVisible,
-                               BbModelDefinition definition, Map<Integer, Material> materials, Bone root,
-                               List<Vertex> vertices, List<Mesh> meshes) {
+    /**
+     * Walks the outliner building both the baked geometry and the skeleton. {@code bindTarget} is the
+     * nearest named ancestor bone (or {@code root}) — unnamed groups keep it, named groups create a new
+     * bone whose children (elements and nested groups) bind to it. {@code parentBonePivotPx} is the
+     * nearest named ancestor's pivot in Blockbench pixels, used for the relative bind offset.
+     */
+    private static void appendOutline(BbModelDefinition.OutlineNode node, BlockBenchTransform parentTransform, boolean parentVisible,
+                               BbModelDefinition definition, Map<Integer, Material> materials,
+                               Map<BbModelDefinition.GroupNode, Vector3f> pivots, Bone bindTarget, Vector3f parentBonePivotPx,
+                               List<Bone> bones, List<Vertex> vertices, List<Mesh> meshes) {
         if (node instanceof BbModelDefinition.ElementNode elementNode) {
             BbModelDefinition.Element element = definition.elements().get(elementNode.elementId());
             if (element != null) {
-                appendElement(element, parentTransform, parentVisible, definition, materials, root, vertices, meshes);
+                appendElement(element, parentTransform, parentVisible, definition, materials, bindTarget, vertices, meshes);
             }
             return;
         }
         BbModelDefinition.GroupNode group = (BbModelDefinition.GroupNode) node;
-        BlockBenchTransform transform = parentTransform.child(group.origin(), group.rotation());
+        // The bake uses the RAW origin (null → zero, exactly the pre-bone behavior): the group's own
+        // rotation and pivot remain folded into the vertices, so the bind pose is byte-identical to the
+        // flattened loader. The bone pivot (explicit or fallback) only decides where runtime rotations
+        // rotate AROUND — it never affects the baked coordinates.
+        Vector3f rawOrigin = group.origin() == null ? ZERO_PX : group.origin();
+        BlockBenchTransform transform = parentTransform.child(rawOrigin, group.rotation());
+        Bone nextBind = bindTarget;
+        Vector3f nextParentPivotPx = parentBonePivotPx;
+        if (!group.name().isEmpty()) {
+            Vector3f pivotPx = pivots.get(group);
+            Vector3f offset = new Vector3f(pivotPx).sub(parentBonePivotPx).mul(1.0f / 16.0f);
+            Bone bone = new Bone(group.name(), new Transform().translate(offset.x, offset.y, offset.z), null);
+            bone.setParent(bindTarget);
+            bones.add(bone);
+            nextBind = bone;
+            nextParentPivotPx = pivotPx;
+        }
         for (BbModelDefinition.OutlineNode child : group.children()) {
-            appendOutline(child, transform, parentVisible && group.visible(), definition, materials, root, vertices, meshes);
+            appendOutline(child, transform, parentVisible && group.visible(), definition, materials, pivots,
+                    nextBind, nextParentPivotPx, bones, vertices, meshes);
         }
     }
 
-    private void appendElement(BbModelDefinition.Element element, BlockBenchTransform parentTransform, boolean parentVisible,
-                               BbModelDefinition definition, Map<Integer, Material> materials, Bone root,
+    private static void appendElement(BbModelDefinition.Element element, BlockBenchTransform parentTransform, boolean parentVisible,
+                               BbModelDefinition definition, Map<Integer, Material> materials, Bone bindTarget,
                                List<Vertex> vertices, List<Mesh> meshes) {
         if (!parentVisible || !element.visible()) return;
         BlockBenchTransform transform = parentTransform.child(element.origin(), element.rotation());
         if ("mesh".equals(element.type())) {
-            appendMeshElement(element, transform, definition, materials, root, vertices, meshes);
+            appendMeshElement(element, transform, definition, materials, bindTarget, vertices, meshes);
         } else {
-            appendCubeElement(element, transform, definition, materials, root, vertices, meshes);
+            appendCubeElement(element, transform, definition, materials, bindTarget, vertices, meshes);
         }
     }
 
-    private void appendCubeElement(BbModelDefinition.Element element, BlockBenchTransform transform, BbModelDefinition definition,
-                                   Map<Integer, Material> materials, Bone root, List<Vertex> vertices, List<Mesh> meshes) {
+    private static void appendCubeElement(BbModelDefinition.Element element, BlockBenchTransform transform, BbModelDefinition definition,
+                                   Map<Integer, Material> materials, Bone bindTarget, List<Vertex> vertices, List<Mesh> meshes) {
         Vector3f from = new Vector3f(element.from()).sub(element.origin()).mul(1.0f / 16.0f);
         Vector3f to = new Vector3f(element.to()).sub(element.origin()).mul(1.0f / 16.0f);
         for (Map.Entry<lib.kasuga.rendering.models.mc.util.Direction, BbModelDefinition.Face> entry : element.cubeFaces().entrySet()) {
@@ -163,31 +265,31 @@ public final class KsgBbModelLoader implements ModelLoader<String, ResourceLocat
             if (material == null) continue;
             Vector3f[] positions = cubeFacePositions(entry.getKey(), from, to);
             Vector2f[] uvs = rectangularUvs(entry.getValue().uv(), entry.getValue().rotation());
-            appendFace(positions, uvs, transform, material, root, vertices, meshes);
+            appendFace(positions, uvs, transform, material, bindTarget, vertices, meshes);
         }
     }
 
-    private void appendMeshElement(BbModelDefinition.Element element, BlockBenchTransform transform, BbModelDefinition definition,
-                                   Map<Integer, Material> materials, Bone root, List<Vertex> vertices, List<Mesh> meshes) {
+    private static void appendMeshElement(BbModelDefinition.Element element, BlockBenchTransform transform, BbModelDefinition definition,
+                                   Map<Integer, Material> materials, Bone bindTarget, List<Vertex> vertices, List<Mesh> meshes) {
         for (BbModelDefinition.MeshFace face : element.meshFaces()) {
             Material material = materials.get(face.texture());
             if (material == null || face.vertices().size() < 3) continue;
             List<String> names = face.vertices();
             if (names.size() <= 4) {
                 appendMeshFace(element, sortMeshFaceVertices(element.vertices(), names),
-                        transform, definition, face, material, root, vertices, meshes);
+                        transform, definition, face, material, bindTarget, vertices, meshes);
                 continue;
             }
             for (int index = 1; index < names.size() - 1; index++) {
                 appendMeshFace(element, List.of(names.get(0), names.get(index), names.get(index + 1)),
-                        transform, definition, face, material, root, vertices, meshes);
+                        transform, definition, face, material, bindTarget, vertices, meshes);
             }
         }
     }
 
-    private void appendMeshFace(BbModelDefinition.Element element, List<String> names,
+    private static void appendMeshFace(BbModelDefinition.Element element, List<String> names,
                                 BlockBenchTransform transform, BbModelDefinition definition,
-                                BbModelDefinition.MeshFace face, Material material, Bone root,
+                                BbModelDefinition.MeshFace face, Material material, Bone bindTarget,
                                 List<Vertex> vertices, List<Mesh> meshes) {
         Vector3f[] positions = new Vector3f[names.size()];
         Vector2f[] uvs = new Vector2f[names.size()];
@@ -200,7 +302,7 @@ public final class KsgBbModelLoader implements ModelLoader<String, ResourceLocat
             // MCTextureData divides these Blockbench pixel coordinates by the loaded image size.
             uvs[index] = new Vector2f(uv);
         }
-        appendFace(positions, uvs, transform, material, root, vertices, meshes);
+        appendFace(positions, uvs, transform, material, bindTarget, vertices, meshes);
     }
 
     static List<String> sortMeshFaceVertices(Map<String, Vector3f> vertices, List<String> names) {
@@ -231,7 +333,7 @@ public final class KsgBbModelLoader implements ModelLoader<String, ResourceLocat
         return normal.dot(new Vector3f(check).sub(baseSecond)) > 0.0f;
     }
 
-    private void appendFace(Vector3f[] positions, Vector2f[] uvs, BlockBenchTransform transform, Material material, Bone root,
+    private static void appendFace(Vector3f[] positions, Vector2f[] uvs, BlockBenchTransform transform, Material material, Bone bindTarget,
                             List<Vertex> vertices, List<Mesh> meshes) {
         Vector3f[] transformed = new Vector3f[positions.length];
         for (int index = 0; index < positions.length; index++) transformed[index] = transform.apply(positions[index]);
@@ -248,7 +350,9 @@ public final class KsgBbModelLoader implements ModelLoader<String, ResourceLocat
         for (int index = 0; index < transformed.length; index++) {
             Vertex vertex = new Vertex(transformed[index], null);
             vertex.addUV(mesh, material, normalizePixelUv(uvs[index], material));
-            vertex.setBinding(new BoneBinding(new Pair[]{Pair.of(root, 1.0f)}, BoneBindingFunc.BDEF, null));
+            // Bind to the nearest named ancestor bone (or root): BDEF skinning conjugates the pivot
+            // translation (W·B⁻¹), so runtime rotations of that bone pivot AROUND its bind origin.
+            vertex.setBinding(new BoneBinding(new Pair[]{Pair.of(bindTarget, 1.0f)}, BoneBindingFunc.BDEF, null));
             mesh.getVertices()[index] = vertex;
             vertices.add(vertex);
         }

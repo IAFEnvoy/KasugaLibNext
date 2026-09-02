@@ -1,6 +1,7 @@
 package lib.kasuga.rendering.models.uml.dynamic.fsm;
 
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.MutableStateMap;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.ParameterSpec;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateMap;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 import org.jetbrains.annotations.Nullable;
@@ -170,6 +171,55 @@ public final class StateMachine<Owner> {
             }
         }
         tickCount++;
+    }
+
+    //endregion
+
+    //region parameter face (parameter-store — typed get / role-checked set / internal set / declare)
+
+    /**
+     * Read a declared parameter — same value store as {@link #vars()}; returns the spec's default when
+     * unset. Any reader may call this on the main thread.
+     */
+    public <T> T get(ParameterSpec<T> spec) {
+        return vars.get(spec);
+    }
+
+    /**
+     * External write (interaction / controller / redstone / signal): validated against
+     * {@link ParameterSpec#externalWritable()} — derived parameters ({@code externalWritable=false})
+     * throw {@link IllegalStateException} here; machine-internal writers use {@link #setInternal}.
+     */
+    public <T> T set(ParameterSpec<T> spec, T value) {
+        if (!spec.externalWritable()) {
+            throw new IllegalStateException("parameter " + spec.id() + " is not externally writable "
+                    + "(externalWritable=false: derived, machine-internal writers only)");
+        }
+        return vars.set(spec, value);
+    }
+
+    /**
+     * Machine-internal write (var provider / action / FSM sync landing): bypasses the
+     * {@code externalWritable} check. Still type-safe and validator-checked via {@link MutableStateMap}.
+     */
+    public <T> T setInternal(ParameterSpec<T> spec, T value) {
+        return vars.set(spec, value);
+    }
+
+    /**
+     * Declare parameters on this machine (both sides must declare the same set — e.g. from a shared
+     * definition or a host's {@code onMachineBuilt} hook). Declared-but-unset parameters read their
+     * defaults via {@link #vars()}; the declaration also feeds the sync projection
+     * ({@link ParameterSpec#sync()}).
+     */
+    public void declare(ParameterSpec<?>... specs) {
+        if (specs != null) {
+            for (ParameterSpec<?> spec : specs) {
+                if (spec != null) {
+                    declaredVars.add(spec);
+                }
+            }
+        }
     }
 
     //endregion

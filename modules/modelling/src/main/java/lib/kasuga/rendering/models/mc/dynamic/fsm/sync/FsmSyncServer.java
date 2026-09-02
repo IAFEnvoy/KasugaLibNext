@@ -11,17 +11,22 @@ import lib.kasuga.rendering.models.uml.dynamic.fsm.Layer;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.State;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.StateMachine;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.Transition;
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.neoforged.neoforge.network.PacketDistributor;
+import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Server side of the FSM sync channel. Push is event-driven with a forced heartbeat: a payload is
@@ -32,6 +37,8 @@ import java.util.function.Function;
  * {@link #removePlayer} on player logout, {@link #clearAll} on resource reload.
  */
 public class FsmSyncServer {
+
+    private static final Logger LOGGER = LogUtils.getLogger();
 
     /**
      * Process-wide shared instance: dedup/heartbeat tables must be global or per-player cleanup
@@ -109,7 +116,11 @@ public class FsmSyncServer {
         dedup.clearAll();
     }
 
-    private FsmSyncPayload toPayload(FsmSyncKey key, StateMachine<?> machine, int version, boolean force) {
+    /**
+     * Build the wire payload for a push. {@code protected} (not private) so tests can capture the
+     * payload without constructing a {@link ServerPlayer}.
+     */
+    protected FsmSyncPayload toPayload(FsmSyncKey key, StateMachine<?> machine, int version, boolean force) {
         List<FsmSyncPayload.LayerEntry> layers = new ArrayList<>();
         int layerIndex = 0;
         for (Layer<?> layer : machine.layers()) {
@@ -124,6 +135,7 @@ public class FsmSyncServer {
             ));
             layerIndex++;
         }
+        List<FsmSyncPayload.VarEntry> vars = collectVars(key, machine, force);
         return new FsmSyncPayload(
                 key.machineId(),
                 key.dimension(),
@@ -131,7 +143,44 @@ public class FsmSyncServer {
                 version,
                 definitionHash.apply(key.machineId()),
                 force,
-                layers
+                layers,
+                vars
         );
+    }
+
+    /**
+     * Collect the {@code sync}-declared parameters whose value changed since the last push for this
+     * key (or all of them on a forced heartbeat). Values of an unknown runtime type (not in the
+     * built-in {@link StateVarType} catalog) are skipped with a warning.
+     */
+    private List<FsmSyncPayload.VarEntry> collectVars(FsmSyncKey key, StateMachine<?> machine, boolean force) {
+        List<FsmSyncPayload.VarEntry> vars = new ArrayList<>();
+        for (StateVar<?> declared : machine.declaredVars()) {
+            if (!(declared instanceof ParameterSpec<?> spec) || !spec.sync()) {
+                continue;
+            }
+            StateVarType<?> type = StateVarType.byClass(spec.type());
+            if (type == null) {
+                LOGGER.warn("FSM sync: declared sync parameter '{}' has no built-in value type for {}; skipping",
+                        spec.id(), spec.type().getSimpleName());
+                continue;
+            }
+            Object value = varValue(machine, spec);
+            Map<String, Object> last = dedup.lastVars(key);
+            if (force || !Objects.equals(last.get(spec.id().toString()), value)) {
+                vars.add(new FsmSyncPayload.VarEntry(spec.id().toString(), type.token(), value));
+            }
+        }
+        if (!vars.isEmpty()) {
+            dedup.recordVars(key, vars.stream().collect(Collectors.toMap(
+                    FsmSyncPayload.VarEntry::varId, FsmSyncPayload.VarEntry::value)));
+        }
+        return vars;
+    }
+
+    /** Read a declared var's value with the erasure-bridged {@code StateMap.get} signature. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object varValue(StateMachine<?> machine, StateVar<?> var) {
+        return machine.vars().get((StateVar) var);
     }
 }

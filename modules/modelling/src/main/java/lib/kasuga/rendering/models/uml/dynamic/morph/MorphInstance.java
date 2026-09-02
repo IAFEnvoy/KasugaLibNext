@@ -30,7 +30,13 @@ import java.util.*;
 public class MorphInstance<IdType> {
 
     protected final Morph<IdType> morph;
-    protected final Map<MorphType<?, ?, IdType>, Float[]> activeFactors;
+
+    /** Per-morph-type ordinals → activation value / factor, sized to {@link Morph#morphTypeCount()}. */
+    protected final float[] activeValues;
+    protected final float[] activeFactors;
+
+    /** Fallback for MorphTypes never registered via {@code Morph.addMorph} — keeps arbitrary-group compatibility. */
+    protected final Map<MorphType<?, ?, IdType>, Float[]> unindexedFactors;
 
     // ── Model element arrays (direct references, no copy) ──────────
     protected final Vertex[] vertices;
@@ -39,7 +45,6 @@ public class MorphInstance<IdType> {
     protected final Material[] materials;
 
     // ── Forward index (element → array index) ─────────────────────
-    protected final Map<Vertex, Integer> vertexIndex;
     protected final Map<Mesh, Integer> meshIndex;
     protected final Map<Material, Integer> materialIndex;
 
@@ -55,8 +60,9 @@ public class MorphInstance<IdType> {
     protected final BitSet lastUpdatedMeshes;
     protected final BitSet lastUpdatedMaterials;
 
-    // ── Morph results (lazy Map) ───────────────────────────────────
-    protected final Map<Vertex, VertexResult> vertexResults;
+    // ── Morph results (index arrays for the hot per-vertex render path) ──
+    protected final VertexResult[] vertexResults;
+    protected final Set<MorphType<Vertex, ?, IdType>>[] vertexMorphsByIndex;
     protected final Map<Bone, BoneResult> boneResults;
     protected final Map<Mesh, MeshResult> meshResults;
     protected final Map<Material, MaterialResult> materialResults;
@@ -67,7 +73,9 @@ public class MorphInstance<IdType> {
 
     public MorphInstance(Morph<IdType> morph) {
         this.morph = morph;
-        this.activeFactors = new HashMap<>();
+        this.activeValues = new float[morph.morphTypeCount()];
+        this.activeFactors = new float[morph.morphTypeCount()];
+        this.unindexedFactors = new HashMap<>();
         this.transformCache = new HashMap<>();
 
         Model model = morph.getModel();
@@ -81,8 +89,6 @@ public class MorphInstance<IdType> {
                 bc = bones.length,
                 mac = materials.length;
 
-        this.vertexIndex = new HashMap<>(vc);
-        for (int i = 0; i < vc; i++) vertexIndex.put(vertices[i], i);
         this.meshIndex = new HashMap<>(mc);
         for (int i = 0; i < mc; i++) meshIndex.put(meshes[i], i);
         this.materialIndex = new HashMap<>(mac);
@@ -98,42 +104,20 @@ public class MorphInstance<IdType> {
         this.lastUpdatedMeshes = new BitSet(mc);
         this.lastUpdatedMaterials = new BitSet(mac);
 
-        this.vertexResults = new HashMap<>();
+        this.vertexResults = new VertexResult[vc];
         this.boneResults = new HashMap<>();
         this.meshResults = new HashMap<>();
         this.materialResults = new HashMap<>();
 
-        this.resultMappingType = (byte) 0b1011;
-        initialInstance();
-    }
-
-    // ── Init ──────────────────────────────────────────────────────
-
-    @SuppressWarnings("unchecked")
-    private void innerInitGroup(GroupMorph<?> group, float parentFactor) {
-        for (IMorphHolder<?, ?> holder : group.getSubHolders()) {
-            Float f = group.getFactors().get(holder);
-            if (f == null) f = 0F;
-            if (holder.isGroup()) {
-                innerInitGroup((GroupMorph<?>) holder, f * parentFactor);
-            } else {
-                MorphType<?, ?, IdType> proto = (MorphType<?, ?, IdType>) holder.getMorphPrototype();
-                if (proto != null) activeFactors.putIfAbsent(proto, new Float[]{0F, f * parentFactor});
-            }
+        @SuppressWarnings("unchecked")
+        Set<MorphType<Vertex, ?, IdType>>[] vmb = new Set[vc];
+        for (int i = 0; i < vc; i++) {
+            vertices[i].setIndex(i);
+            vmb[i] = morph.getVertexMorphs().get(vertices[i]);
         }
-    }
+        this.vertexMorphsByIndex = vmb;
 
-    protected void initialInstance() {
-        for (GroupMorph<IdType> gm : morph.getGroupMorphs().values())
-            innerInitGroup(gm, 1F);
-        for (Set<MorphType<Vertex, ?, IdType>> s : morph.getVertexMorphs().values())
-            for (MorphType<Vertex, ?, IdType> mt : s) activeFactors.putIfAbsent(mt, new Float[]{0F, 1F});
-        for (Set<MorphType<Mesh, ?, IdType>> s : morph.getMeshMorphs().values())
-            for (MorphType<Mesh, ?, IdType> mt : s) activeFactors.putIfAbsent(mt, new Float[]{0F, 1F});
-        for (Set<MorphType<Bone, ?, IdType>> s : morph.getBoneMorphs().values())
-            for (MorphType<Bone, ?, IdType> mt : s) activeFactors.putIfAbsent(mt, new Float[]{0F, 1F});
-        for (Set<MorphType<Material, ?, IdType>> s : morph.getMaterialMorphs().values())
-            for (MorphType<Material, ?, IdType> mt : s) activeFactors.putIfAbsent(mt, new Float[]{0F, 1F});
+        this.resultMappingType = (byte) 0b1011;
     }
 
     // ── Activation ────────────────────────────────────────────────
@@ -177,16 +161,55 @@ public class MorphInstance<IdType> {
     public void deactivateMorph(IdType id) { activateMorph(id, 0F, 1F); }
     public void deactivateMorph(IdType id, float factor) { activateMorph(id, 0F, factor); }
 
+    private static final float MORPH_EPSILON = 1e-4f;
+
+    /**
+     * Writes one MorphType's activation value/factor, skipping the dirty-marking (and thus the whole
+     * per-vertex recompute) when nothing changed since the last frame — the dominant cost for looping
+     * clips whose morph values plateau. Registered types go through flat arrays; unregistered ones
+     * (arbitrary group prototypes) fall back to a small map with identical semantics.
+     */
     private boolean applySingle(MorphType<?, ?, IdType> mt, float value, float factor) {
-        activeFactors.put(mt, new Float[]{value, factor});
+        int idx = mt.getMorphTypeIndex();
+        if (idx >= 0 && idx < activeValues.length) {
+            if (Math.abs(activeValues[idx] - value) < MORPH_EPSILON
+                    && Math.abs(activeFactors[idx] - factor) < MORPH_EPSILON) {
+                return true;
+            }
+            activeValues[idx] = value;
+            activeFactors[idx] = factor;
+        } else {
+            Float[] cur = unindexedFactors.get(mt);
+            if (cur != null && Math.abs(cur[0] - value) < MORPH_EPSILON
+                    && Math.abs(cur[1] - factor) < MORPH_EPSILON) {
+                return true;
+            }
+            unindexedFactors.put(mt, new Float[]{value, factor});
+        }
         markDirty(mt.getOriginal());
         return true;
     }
 
+    /** Activation value for a MorphType (0 = inactive), array-backed on the hot path. */
+    private float factorValue(MorphType<?, ?, IdType> mt) {
+        int idx = mt.getMorphTypeIndex();
+        if (idx >= 0 && idx < activeValues.length) return activeValues[idx];
+        Float[] fallback = unindexedFactors.get(mt);
+        return fallback == null ? 0f : fallback[0];
+    }
+
+    /** Activation factor for a MorphType (multiplier on the value). */
+    private float factorFactor(MorphType<?, ?, IdType> mt) {
+        int idx = mt.getMorphTypeIndex();
+        if (idx >= 0 && idx < activeFactors.length) return activeFactors[idx];
+        Float[] fallback = unindexedFactors.get(mt);
+        return fallback == null ? 1f : fallback[1];
+    }
+
     private void markDirty(Object original) {
         if (original instanceof Vertex v) {
-            Integer idx = vertexIndex.get(v);
-            if (idx != null) dirtyVertices.set(idx);
+            int idx = v.getIndex();
+            if (idx >= 0) dirtyVertices.set(idx);
         } else if (original instanceof Mesh m) {
             Integer idx = meshIndex.get(m);
             if (idx != null) dirtyMeshes.set(idx);
@@ -200,7 +223,7 @@ public class MorphInstance<IdType> {
 
     // ── Result accessors ──────────────────────────────────────────
 
-    @Nullable public VertexResult getVertexResult(Vertex v) { return vertexResults.get(v); }
+    @Nullable public VertexResult getVertexResult(Vertex v) { return resultAt(v); }
     @Nullable public BoneResult getBoneResult(Bone b) { return boneResults.get(b); }
     @Nullable public MeshResult getMeshResult(Mesh m) { return meshResults.get(m); }
     @Nullable public MaterialResult getMaterialResult(Material m) { return materialResults.get(m); }
@@ -245,7 +268,7 @@ public class MorphInstance<IdType> {
         if (!isDirty()) return;
 
         // Reset all accumulated deltas before this update cycle
-        vertexResults.values().forEach(VertexResult::reset);
+        for (VertexResult r : vertexResults) if (r != null) r.reset();
         boneResults.values().forEach(BoneResult::reset);
         meshResults.values().forEach(MeshResult::reset);
         materialResults.values().forEach(MaterialResult::reset);
@@ -253,9 +276,13 @@ public class MorphInstance<IdType> {
         if (isVerticesDirty()) {
             for (int i = dirtyVertices.nextSetBit(0); i >= 0; i = dirtyVertices.nextSetBit(i + 1)) {
                 Vertex v = vertices[i];
-                Set<MorphType<Vertex, ?, IdType>> set = morph.getVertexMorphs().get(v);
+                Set<MorphType<Vertex, ?, IdType>> set = vertexMorphsByIndex[i];
                 if (set == null || set.isEmpty()) continue;
-                VertexResult r = vertexResults.computeIfAbsent(v, VertexResult::new);
+                VertexResult r = vertexResults[i];
+                if (r == null) {
+                    r = new VertexResult(v);
+                    vertexResults[i] = r;
+                }
                 morphVertex(v, set, r);
                 lastUpdatedVertices.set(i);
             }
@@ -296,17 +323,18 @@ public class MorphInstance<IdType> {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void morphVertex(Vertex v, Set<MorphType<Vertex, ?, IdType>> set, VertexResult r) {
         for (MorphType<Vertex, ?, IdType> mt : set) {
-            Float[] val = activeFactors.get(mt);
-            if (val == null || val[0] <= 0f) continue;
+            float value = factorValue(mt);
+            if (value <= 0f) continue;
+            float factor = factorFactor(mt);
 
             if (mt instanceof VertexPosMorph) {
-                r.addPosition((Vector3f) mt.morph(v, val[0], val[1]));
+                r.addPosition((Vector3f) mt.morph(v, value, factor));
             } else if (mt instanceof VertexNormalMorph<?> vnm) {
-                r.addNormal(vnm.getMesh(), (Vector3f) mt.morph(v, val[0], val[1]));
+                r.addNormal(vnm.getMesh(), (Vector3f) mt.morph(v, value, factor));
             } else if (mt instanceof VertexUvMorph<?> uvm) {
-                r.addUv(uvm.getMesh(), uvm.getMaterial(), (Vector2f) mt.morph(v, val[0], val[1]));
+                r.addUv(uvm.getMesh(), uvm.getMaterial(), (Vector2f) mt.morph(v, value, factor));
             } else if (mt instanceof VertexTangentMorph) {
-                r.addTangent((Vector4f) mt.morph(v, val[0], val[1]));
+                r.addTangent((Vector4f) mt.morph(v, value, factor));
             }
         }
     }
@@ -314,10 +342,11 @@ public class MorphInstance<IdType> {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void morphBone(Bone b, Set<MorphType<Bone, ?, IdType>> set, BoneResult r) {
         for (MorphType<Bone, ?, IdType> mt : set) {
-            Float[] val = activeFactors.get(mt);
-            if (val == null || val[0] <= 0f) continue;
+            float value = factorValue(mt);
+            if (value <= 0f) continue;
+            float factor = factorFactor(mt);
             if (mt instanceof BoneTransformMorph) {
-                r.setTransform((Transform) mt.morph(b, val[0], val[1]));
+                r.setTransform((Transform) mt.morph(b, value, factor));
             }
         }
         transformCache.put(b, r.getTransform());
@@ -326,21 +355,22 @@ public class MorphInstance<IdType> {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void morphMaterial(Material m, Set<MorphType<Material, ?, IdType>> set, MaterialResult r) {
         for (MorphType<Material, ?, IdType> mt : set) {
-            Float[] val = activeFactors.get(mt);
-            if (val == null || val[0] <= 0f) continue;
+            float value = factorValue(mt);
+            if (value <= 0f) continue;
+            float factor = factorFactor(mt);
 
             if (mt instanceof MaterialColorMorph<?> colorMorph) {
-                r.addColor((Vector4f) mt.morph(m, val[0], val[1]), colorMorph.getBlendMode());
+                r.addColor((Vector4f) mt.morph(m, value, factor), colorMorph.getBlendMode());
             } else if (mt instanceof MaterialSpecularMorph) {
-                r.addSpecular((Vector4f) mt.morph(m, val[0], val[1]), BlendMode.ADD);
+                r.addSpecular((Vector4f) mt.morph(m, value, factor), BlendMode.ADD);
             } else if (mt instanceof MaterialAmbientMorph) {
-                r.addAmbient((Vector4f) mt.morph(m, val[0], val[1]), BlendMode.ADD);
+                r.addAmbient((Vector4f) mt.morph(m, value, factor), BlendMode.ADD);
             } else if (mt instanceof MaterialEdgeColorMorph) {
-                r.addEdgeColor((Vector4f) mt.morph(m, val[0], val[1]), BlendMode.ADD);
+                r.addEdgeColor((Vector4f) mt.morph(m, value, factor), BlendMode.ADD);
             } else if (mt instanceof SpriteFrameMorph<?> sm) {
-                r.setSpriteFrame(sm.getSpriteSetIndex(), (Integer) mt.morph(m, val[0], val[1]));
+                r.setSpriteFrame(sm.getSpriteSetIndex(), (Integer) mt.morph(m, value, factor));
             } else if (mt instanceof MaterialFrameMorph) {
-                r.setMaterialFrame((Integer) mt.morph(m, val[0], val[1]));
+                r.setMaterialFrame((Integer) mt.morph(m, value, factor));
             }
         }
     }
@@ -353,7 +383,7 @@ public class MorphInstance<IdType> {
     }
 
     public void clearResults() {
-        vertexResults.values().forEach(VertexResult::reset);
+        for (VertexResult r : vertexResults) if (r != null) r.reset();
         boneResults.values().forEach(BoneResult::reset);
         meshResults.values().forEach(MeshResult::reset);
         materialResults.values().forEach(MaterialResult::reset);
@@ -367,9 +397,16 @@ public class MorphInstance<IdType> {
 
     // ── Blend-on-read output ports ────────────────────────────────
 
+    /** Result for a model vertex, or null. Array-backed (no hashing) on the per-frame render path. */
+    @Nullable
+    private VertexResult resultAt(Vertex vertex) {
+        int idx = vertex.getIndex();
+        return idx >= 0 && idx < vertexResults.length ? vertexResults[idx] : null;
+    }
+
     /** Morphed position = original + delta; returns dest for chaining. */
     public Vector3f getVertexPos(Vertex vertex, Vector3f dest) {
-        VertexResult r = vertexResults.get(vertex);
+        VertexResult r = resultAt(vertex);
         return (r != null && r.getPosition() != null)
                 ? dest.set(vertex.getPosition()).add(r.getPosition())
                 : dest.set(vertex.getPosition());
@@ -377,7 +414,7 @@ public class MorphInstance<IdType> {
 
     /** Morphed normal per mesh = normalize(original + delta). */
     public Vector3f getVertexNormal(Vertex vertex, Mesh mesh, Vector3f dest) {
-        VertexResult r = vertexResults.get(vertex);
+        VertexResult r = resultAt(vertex);
         if (r != null) {
             Vector3f delta = r.getNormals().get(mesh);
             if (delta != null) {
@@ -391,7 +428,7 @@ public class MorphInstance<IdType> {
 
     /** Morphed UV per mesh+material = original + delta. */
     public Vector2f getVertexUv(Vertex vertex, Mesh mesh, Material material, Vector2f dest) {
-        VertexResult r = vertexResults.get(vertex);
+        VertexResult r = resultAt(vertex);
         if (r != null) {
             Map<Material, Vector2f> matMap = r.getUvs().get(mesh);
             if (matMap != null) {
@@ -409,7 +446,7 @@ public class MorphInstance<IdType> {
     /** Tangent delta, or null. */
     @Nullable
     public void getVertexTangent(Vertex vertex, Vector4f dest) {
-        VertexResult r = vertexResults.get(vertex);
+        VertexResult r = resultAt(vertex);
         if (r == null || r.getTangent() == null) return;
         dest.set(r.getTangent());
     }

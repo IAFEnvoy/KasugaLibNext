@@ -9,6 +9,7 @@ import lib.kasuga.rendering.models.uml.dynamic.fsm.codec.*;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.function.FsmAction;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.function.FsmCondition;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.function.FsmFunctionLibrary;
+import lib.kasuga.rendering.models.uml.dynamic.fsm.state.ParameterSpec;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVar;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarRegistry;
 import lib.kasuga.rendering.models.uml.dynamic.fsm.state.StateVarType;
@@ -47,14 +48,20 @@ public final class DefinitionStateMachineFactory<O> {
 
     private final FsmFunctionLibrary library;
     private final StateVarRegistry stateVars;
+    private final FsmAnimationClips clips;
 
     public DefinitionStateMachineFactory(FsmFunctionLibrary library) {
-        this(library, FsmRegistries.GLOBAL.vars());
+        this(library, FsmRegistries.GLOBAL.vars(), FsmRegistries.GLOBAL.clips());
     }
 
     public DefinitionStateMachineFactory(FsmFunctionLibrary library, StateVarRegistry stateVars) {
+        this(library, stateVars, FsmRegistries.GLOBAL.clips());
+    }
+
+    public DefinitionStateMachineFactory(FsmFunctionLibrary library, StateVarRegistry stateVars, FsmAnimationClips clips) {
         this.library = library;
         this.stateVars = stateVars;
+        this.clips = clips;
     }
 
     /**
@@ -106,8 +113,11 @@ public final class DefinitionStateMachineFactory<O> {
         StateVar<?> var = stateVars.resolve(reference);
         if (var == null) {
             LOGGER.warn("State machine '{}' references unknown state var '{}'", machineId, reference);
+            return null;
         }
-        return var;
+        // keep an already-registered spec's attributes; wrap a plain var with the default attributes
+        // (external-writable, non-sync = the pre-parameter-store behavior)
+        return var instanceof ParameterSpec<?> ps ? ps : ParameterSpec.of(var);
     }
 
     @SuppressWarnings("unchecked")
@@ -116,8 +126,10 @@ public final class DefinitionStateMachineFactory<O> {
         T defaultValue = def.defaultValue().isPresent()
                 ? decodeOrDefault(type.codec(), def.defaultValue().get(), type.zeroDefault(), def.name())
                 : type.zeroDefault();
-        StateVar.Builder<T> builder = StateVar.builder(idFor(machineId, def.name()), type.type(), type.codec())
-                .defaultValue(defaultValue);
+        ParameterSpec.Builder<T> builder = ParameterSpec.<T>parameter(idFor(machineId, def.name()), type.type(), type.codec())
+                .defaultValue(defaultValue)
+                .externalWritable(def.externalWritable())
+                .sync(def.sync());
         if (def.ephemeral()) {
             builder.ephemeral();
         }
@@ -151,7 +163,7 @@ public final class DefinitionStateMachineFactory<O> {
 
         Map<String, State<O>> stateById = new HashMap<>();
         for (StateDefinition stateDef : layerDef.states()) {
-            State<O> state = layer.state(stateDef.id(), s -> configureState(s, stateDef));
+            State<O> state = layer.state(stateDef.id(), s -> configureState(s, stateDef, machineId));
             stateById.put(stateDef.id(), state);
         }
 
@@ -169,9 +181,18 @@ public final class DefinitionStateMachineFactory<O> {
         return layer;
     }
 
-    private void configureState(State<O> state, StateDefinition def) {
+    private void configureState(State<O> state, StateDefinition def, Id machineId) {
         def.durationTicks().ifPresent(state::durationTicks);
         applyPose(state, def.pose());
+        def.clip().ifPresent(clipDef -> {
+            FsmAnimationClips.Entry entry = clips.get(clipDef.id());
+            if (entry != null) {
+                state.clip(entry.sampler(), entry.data(), clipDef.loop());
+            } else {
+                LOGGER.warn("State machine '{}' state '{}' references unknown clip '{}'; degrading to static pose",
+                        machineId, def.id(), clipDef.id());
+            }
+        });
         for (Id id : def.onEnter()) {
             state.onEnter(action(id));
         }
@@ -275,6 +296,11 @@ public final class DefinitionStateMachineFactory<O> {
             Set<String> stateIds = new HashSet<>();
             for (StateDefinition stateDef : layerDef.states()) {
                 stateIds.add(stateDef.id());
+                stateDef.clip().ifPresent(clipDef -> {
+                    if (clips.get(clipDef.id()) == null) {
+                        missing.add(layerDef.id() + ": state '" + stateDef.id() + "' references unknown clip '" + clipDef.id() + "'");
+                    }
+                });
                 for (Id id : stateDef.onEnter()) {
                     if (!library.hasAction(id)) missing.add(id.toString());
                 }

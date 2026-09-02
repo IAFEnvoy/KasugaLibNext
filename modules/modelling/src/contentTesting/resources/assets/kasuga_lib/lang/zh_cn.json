@@ -1,3 +1,7 @@
 {
-  "itemGroup.kasuga_lib.modelling_test": "KasugaLib 模型测试"
+  "itemGroup.kasuga_lib.modelling_test": "KasugaLib 模型测试",
+  "msg.kasuga_lib.fan_gear_0": "风扇：已关闭",
+  "msg.kasuga_lib.fan_gear_1": "风扇：档位 1",
+  "msg.kasuga_lib.fan_gear_2": "风扇：档位 2",
+  "msg.kasuga_lib.fan_gear_3": "风扇：档位 3"
 }
