@@ -92,8 +92,20 @@ jobs:
           set -euo pipefail
           jar_file=$(find build/modelling-base -name 'kasuga-modelling-*.jar' | head -n1)
           echo "Merging native libraries into ${jar_file}"
-          jar uf "${jar_file}" -C build/box3d-universal/native .
+          # Native artifacts are downloaded under build/box3d-universal/native/<classifier>/,
+          # and the runtime looks them up at /native/<os>-<arch>/<lib>, so the "native"
+          # directory itself must be kept as the top-level entry inside the jar.
+          jar uf "${jar_file}" -C build/box3d-universal .
           mv "${jar_file}" build/kasuga-modelling-universal.jar
+
+      - name: Verify native libraries are inside the universal jar
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=$(jar tf build/kasuga-modelling-universal.jar | grep -cE '^native/.+\.(dll|so|dylib)$')
+          echo "Native libraries bundled: ${found}"
+          test "${found}" -ge 3
+          jar tf build/kasuga-modelling-universal.jar | grep -E '^native/.+\.(dll|so|dylib)$' | sort
 
       - name: Upload universal modelling jar
         uses: actions/upload-artifact@v4
