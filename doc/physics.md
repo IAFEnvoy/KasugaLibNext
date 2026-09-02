@@ -268,9 +268,16 @@ environment 控制。`Body` 另提供 `position()`、`rotation()`、`shapeSize()
 - PMX mode 1：dynamic，完整物理写回。
 - PMX mode 2：dynamic，保留动画平移并写回物理旋转。
 - profile ragdoll：PMX 与 glTF 都可按公共 UML 骨骼段生成胶囊和语义质量；默认关闭内部
-  self-collision。glTF 必须提供显式 profile，不会从骨骼名猜测人体拓扑。
+  self-collision。PMX 可通过 `include_secondary_bodies` 保留作者制作的裙摆/头发刚体链；这些
+  次级刚体在独立的 collision group/mask 命名空间中保留 PMX 内部过滤关系，并通过 kinematic
+  proxy 单向挂到主体，不继承主体的负 group 过滤，也不会反向拖动主体。glTF 必须提供显式 profile，
+  不会从骨骼名猜测人体拓扑。
 
 配置格式、profile role 与 Minecraft 部署详见 [mmd-ragdoll.md](mmd-ragdoll.md)。
+
+MMD/glTF ragdoll 使用每实例的 double 世界锚点和 origin-local float 物理坐标。Minecraft 方块网格、
+射线、鼠标拖拽和实体挂点都会先减去该锚点；渲染也使用 double 的相机相对位移。这避免在十万格到
+世界边界范围内把小型碰撞体、骨骼段和关节误差放大到厘米甚至整格。
 
 ## 4. IK API
 

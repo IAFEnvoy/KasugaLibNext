@@ -488,6 +488,29 @@ JNIEXPORT void JNICALL JNI_METHOD(setBodyAwake)(JNIEnv* env, jclass type, jlong 
     b3Body_SetAwake(body_id(packed), awake == JNI_TRUE);
 }
 
+JNIEXPORT void JNICALL JNI_METHOD(setBodyEnabled)(JNIEnv* env, jclass type, jlong packed,
+                                                   jboolean enabled)
+{
+    (void)env;
+    (void)type;
+    b3BodyId id = body_id(packed);
+    if (enabled == JNI_TRUE)
+    {
+        b3Body_Enable(id);
+    }
+    else
+    {
+        b3Body_Disable(id);
+    }
+}
+
+JNIEXPORT jboolean JNICALL JNI_METHOD(bodyEnabled)(JNIEnv* env, jclass type, jlong packed)
+{
+    (void)env;
+    (void)type;
+    return b3Body_IsEnabled(body_id(packed)) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL JNI_METHOD(wakeBody)(JNIEnv* env, jclass type, jlong packed)
 {
     (void)env;

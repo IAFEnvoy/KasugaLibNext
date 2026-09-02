@@ -53,6 +53,29 @@ class GltfLoaderTest {
     }
 
     @Test
+    void canonicalizesOutOfRangeDuplicateAndInvalidGltfWeights() throws Exception {
+        Path file = minimalSkinnedGltf(new float[]{
+                2f, 3f, Float.NaN, -1f,
+                Float.NaN, -2f, 0f, Float.NEGATIVE_INFINITY,
+                0.25f, 0.75f, 0f, 0f
+        });
+
+        Model model = GltfModelConverter.convert(GltfLoader.load(file));
+        var joint = ((GltfModelData) model.getModelData()).boneByNode().get(1);
+        var meshNode = ((GltfModelData) model.getModelData()).boneByNode().get(0);
+
+        var merged = model.getVertices()[0].getBinding().getWeights();
+        assertEquals(1, merged.length);
+        assertEquals(joint, merged[0].getFirst());
+        assertEquals(1f, merged[0].getSecond(), 1e-6f);
+
+        var fallback = model.getVertices()[1].getBinding().getWeights();
+        assertEquals(1, fallback.length);
+        assertEquals(meshNode, fallback[0].getFirst());
+        assertEquals(1f, fallback[0].getSecond(), 1e-6f);
+    }
+
+    @Test
     void parsesAndConvertsOptionalMaribelAndRenkoFixtures() throws Exception {
         for (String name : new String[]{"maribel", "renko"}) {
             GltfAsset asset;
@@ -290,12 +313,21 @@ class GltfLoaderTest {
     }
 
     private Path minimalSkinnedGltf() throws Exception {
+        return minimalSkinnedGltf(new float[]{
+                1f, 0f, 0f, 0f,
+                1f, 0f, 0f, 0f,
+                1f, 0f, 0f, 0f
+        });
+    }
+
+    private Path minimalSkinnedGltf(float[] weights) throws Exception {
+        assertEquals(12, weights.length);
         ByteBuffer data = ByteBuffer.allocate(260).order(ByteOrder.LITTLE_ENDIAN);
         put(data, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 0f); // positions
         put(data, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 0f, 1f); // normals
         put(data, 0f, 0f, 1f, 0f, 0f, 1f);             // UVs
         data.put(new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
-        put(data, 1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f); // weights
+        put(data, weights);                                      // weights
         data.putShort((short)0).putShort((short)1).putShort((short)2).putShort((short)0);
         put(data, 1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f,
                 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f);       // inverse bind

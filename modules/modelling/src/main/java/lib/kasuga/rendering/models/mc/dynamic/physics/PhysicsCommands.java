@@ -12,6 +12,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3d;
 import lib.kasuga.rendering.models.uml.dynamic.physics.box3d.NativeBox3D;
 
 import java.util.List;
@@ -136,7 +137,8 @@ public final class PhysicsCommands {
                 configResource,
                 new lib.kasuga.rendering.models.uml.math.Transform()
                         .translate((float) position.x, (float) position.y + 2f, (float) position.z),
-                true);
+                true,
+                new Vector3d(position.x, position.y + 2.0, position.z));
         try {
             var deployment = MinecraftRagdollDeployments.deploy(request);
             if (deployment.isEmpty()) {

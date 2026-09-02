@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import lib.kasuga.rendering.models.uml.dynamic.ModelInstance;
 import lib.kasuga.rendering.models.uml.dynamic.physics.MmdRagdoll;
+import lib.kasuga.rendering.models.uml.dynamic.physics.MmdPhysicsScene;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.DragSettings;
 import lib.kasuga.rendering.models.uml.dynamic.physics.core.RigidBodyWorld;
 import net.minecraft.resources.ResourceLocation;
@@ -120,7 +121,8 @@ public record MinecraftRagdollConfig(
         JsonObject dragging = object(root, "dragging");
         JsonObject sleeping = object(root, "sleeping");
         return new MinecraftRagdollConfig(
-                new MmdRagdoll.Profile(registrations),
+                new MmdRagdoll.Profile(registrations,
+                        bool(root, "include_secondary_bodies", false)),
                 new Simulation(
                         decimal(simulation, "hertz", 120f),
                         integer(simulation, "substeps", RigidBodyWorld.PROFILE_SUBSTEP_COUNT),
@@ -206,6 +208,27 @@ public record MinecraftRagdollConfig(
                              boolean applyInitialState) {
         MmdRagdoll ragdoll = instance.enablePhysics(profile);
         if (ragdoll == null) return null;
+        configure(instance, ragdoll, levelSupplier, applyInitialState);
+        MinecraftRagdollRuntime.register(instance, updateMode);
+        return ragdoll;
+    }
+
+    /** Attaches one model to a shared scene; scene settings are owned collectively. */
+    @Nullable
+    public MmdRagdoll attach(ModelInstance instance, MmdPhysicsScene scene,
+                             Supplier<? extends Level> levelSupplier,
+                             boolean applyInitialState) {
+        MmdRagdoll ragdoll = scene.attach(instance, profile);
+        if (ragdoll == null) return null;
+        configure(instance, ragdoll, levelSupplier, applyInitialState);
+        MinecraftRagdollRuntime.unregister(instance);
+        MinecraftRagdollRuntime.register(scene, updateMode);
+        return ragdoll;
+    }
+
+    private void configure(ModelInstance instance, MmdRagdoll ragdoll,
+                           Supplier<? extends Level> levelSupplier,
+                           boolean applyInitialState) {
         ragdoll.setSimulationHertz(simulation.hertz);
         ragdoll.setSubstepCount(simulation.substeps);
         ragdoll.setSolverIterations(simulation.solverIterations);
@@ -230,8 +253,6 @@ public record MinecraftRagdollConfig(
         if (applyInitialState) applyInitialState(ragdoll);
         if (dragging.enabled) MinecraftRagdollDragger.register(instance, dragging);
         else MinecraftRagdollDragger.unregister(instance);
-        MinecraftRagdollRuntime.register(instance, updateMode);
-        return ragdoll;
     }
 
     private void applyInitialState(MmdRagdoll ragdoll) {

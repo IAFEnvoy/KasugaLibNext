@@ -65,11 +65,10 @@ public final class KasugaModelPipelines {
             }
             return existing;
         }
-        ModelInstance instance = pipeline.createInstance(loc, instanceLoc, null, null, null);
+        ModelInstance instance = pipeline.createInstance(loc, instanceLoc, rootTransform, null, null);
         if (instance == null) {
             return null; // model not published yet (resource loading); retry lazily
         }
-        instance.getSkeletonInstance().transformRoot(rootTransform);
         pipeline.addToRenderer(loc, instanceLoc, BRIDGE, BACKEND);
         LOGGER.info("[KasugaModelPipelines] bound '{}' instance '{}' to mc_backend", loc, instanceLoc);
         return instance;

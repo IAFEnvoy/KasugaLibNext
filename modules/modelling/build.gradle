@@ -214,6 +214,9 @@ dependencies {
 
     implementation project(":modules:inject")
 
+    implementation project(":modules:formula")
+    additionalRuntimeClasspath project(":modules:formula")
+
     implementation project(":modules:utils")
 
     implementation project(":modules:annotations")
@@ -224,6 +227,8 @@ dependencies {
     annotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
 
     gameTestAnnotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
+
+    contentTestingAnnotationProcessor 'io.micronaut:micronaut-inject-java:4.9.10'
 
     additionalRuntimeClasspath 'org.jgrapht:jgrapht-core:1.5.2'
     additionalRuntimeClasspath 'com.google.zxing:core:3.5.3'

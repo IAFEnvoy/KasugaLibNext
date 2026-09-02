@@ -194,7 +194,10 @@ public class Constants {
                         .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
                         .setOutputState(RenderStateShard.MAIN_TARGET)
                         .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
-                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
+                        // This pass uses translucent blending and runs before vanilla's
+                        // translucent blocks. Writing model fragments into the depth
+                        // buffer here makes later water fragments fail their depth test.
+                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
                         .setLineState(RenderStateShard.DEFAULT_LINE)
                         .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
                         .createCompositeState(false)
@@ -219,7 +222,7 @@ public class Constants {
                         .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
                         .setOutputState(RenderStateShard.MAIN_TARGET)
                         .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
-                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
+                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
                         .setLineState(RenderStateShard.DEFAULT_LINE)
                         .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
                         .createCompositeState(false)
@@ -244,7 +247,7 @@ public class Constants {
                         .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
                         .setOutputState(RenderStateShard.MAIN_TARGET)
                         .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
-                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
+                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
                         .setLineState(RenderStateShard.DEFAULT_LINE)
                         .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
                         .createCompositeState(false)
@@ -382,8 +385,6 @@ public class Constants {
                 pipelineContext.projectionMatrix(), pipelineContext.renderTick(), pipelineContext.partialTick(),
                 pipelineContext.level()
         );
-        Vec3 pos = pipelineContext.camera().getPosition();
-        poseStack.translate(- pos.x(), - pos.y(), - pos.z());
         try {
             mcBackend.renderAllObjects(context);
         } finally {

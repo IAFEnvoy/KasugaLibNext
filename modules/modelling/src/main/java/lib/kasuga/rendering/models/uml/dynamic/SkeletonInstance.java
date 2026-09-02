@@ -21,6 +21,8 @@ import lombok.NonNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
+import org.joml.Vector3d;
+import org.joml.Vector3dc;
 import org.joml.Vector3f;
 
 import java.util.*;
@@ -85,6 +87,15 @@ public class SkeletonInstance {
 
     @NonNull
     private Transform transform;
+
+    /**
+     * High-precision world anchor used when bone matrices are evaluated in a
+     * nearby local coordinate system. Keeping this separate from the float
+     * root matrix prevents large Minecraft coordinates from quantizing short
+     * bones before skinning or physics sees them.
+     */
+    private final Vector3d worldOrigin = new Vector3d();
+    private boolean floatingOriginEnabled;
 
     private SkeletonInstanceData data;
 
@@ -279,6 +290,120 @@ public class SkeletonInstance {
     public void transformRoot(@NonNull Transform transform) {
         this.transform = transform;
         requestFullUpdate();
+    }
+
+    /**
+     * Moves the current float root translation into a double world anchor and
+     * immediately rebuilds the hierarchy around the local origin.
+     */
+    public void enableFloatingOrigin() {
+        if (floatingOriginEnabled) return;
+        Vector3f rootPosition = transform.getPosition();
+        worldOrigin.set(rootPosition.x, rootPosition.y, rootPosition.z);
+        transform = transform.copy().setPosition(new Vector3f());
+        floatingOriginEnabled = true;
+        requestFullUpdate();
+        updateTransform();
+    }
+
+    /**
+     * Enables local-coordinate evaluation with an exact external world
+     * anchor. The current root transform is treated as origin-relative.
+     */
+    public void enableFloatingOrigin(@NonNull Vector3dc origin) {
+        if (floatingOriginEnabled) {
+            if (!worldOrigin.equals(origin, 0.0)) {
+                throw new IllegalStateException("floating origin is already enabled");
+            }
+            return;
+        }
+        if (!Double.isFinite(origin.x()) || !Double.isFinite(origin.y()) || !Double.isFinite(origin.z())) {
+            throw new IllegalArgumentException("floating origin must be finite");
+        }
+        worldOrigin.set(origin);
+        floatingOriginEnabled = true;
+        requestFullUpdate();
+        updateTransform();
+    }
+
+    /**
+     * Changes the high-precision anchor while preserving the root's world
+     * position. Used when several models join one shared physics scene.
+     */
+    public void rebaseFloatingOrigin(@NonNull Vector3dc origin) {
+        if (!Double.isFinite(origin.x()) || !Double.isFinite(origin.y()) || !Double.isFinite(origin.z())) {
+            throw new IllegalArgumentException("floating origin must be finite");
+        }
+        Vector3f localRoot = transform.getPosition();
+        double worldX = (floatingOriginEnabled ? worldOrigin.x : 0.0) + localRoot.x;
+        double worldY = (floatingOriginEnabled ? worldOrigin.y : 0.0) + localRoot.y;
+        double worldZ = (floatingOriginEnabled ? worldOrigin.z : 0.0) + localRoot.z;
+        transform = transform.copy().setPosition(new Vector3f(
+                (float) (worldX - origin.x()),
+                (float) (worldY - origin.y()),
+                (float) (worldZ - origin.z())));
+        worldOrigin.set(origin);
+        floatingOriginEnabled = true;
+        requestFullUpdate();
+        updateTransform();
+    }
+
+    /** Returns a defensive copy of the high-precision world anchor. */
+    public Vector3d getWorldOrigin() {
+        return new Vector3d(worldOrigin);
+    }
+
+    /** Exact world-space position of the skeleton root. */
+    public Vector3d getWorldRootPosition() {
+        Vector3f local = transform.getPosition();
+        return new Vector3d(floatingOriginEnabled ? worldOrigin : new Vector3d())
+                .add(local.x, local.y, local.z);
+    }
+
+    /**
+     * Returns the root transform using the legacy world-space translation.
+     * Rotation and scale are unchanged; callers that require exact translation
+     * should pair this with {@link #getWorldRootPosition()}.
+     */
+    public Transform getWorldTransform() {
+        Vector3d position = getWorldRootPosition();
+        return transform.copy().setPosition(new Vector3f(
+                (float) position.x, (float) position.y, (float) position.z));
+    }
+
+    /** Replaces the root using a world-space translation. */
+    public void transformRootWorld(@NonNull Transform worldTransform) {
+        Transform local = worldTransform.copy();
+        if (floatingOriginEnabled) {
+            Vector3f position = worldTransform.getPosition();
+            local.setPosition(new Vector3f(
+                    (float) (position.x - worldOrigin.x),
+                    (float) (position.y - worldOrigin.y),
+                    (float) (position.z - worldOrigin.z)));
+        }
+        transformRoot(local);
+    }
+
+    /** Changes only the root's exact world-space position. */
+    public void setWorldRootPosition(@NonNull Vector3dc position) {
+        if (!Double.isFinite(position.x()) || !Double.isFinite(position.y()) || !Double.isFinite(position.z())) {
+            throw new IllegalArgumentException("root position must be finite");
+        }
+        transform = transform.copy().setPosition(new Vector3f(
+                (float) (position.x() - (floatingOriginEnabled ? worldOrigin.x : 0.0)),
+                (float) (position.y() - (floatingOriginEnabled ? worldOrigin.y : 0.0)),
+                (float) (position.z() - (floatingOriginEnabled ? worldOrigin.z : 0.0))));
+        requestFullUpdate();
+    }
+
+    public Vector3f worldToLocal(double x, double y, double z) {
+        return new Vector3f((float) (x - worldOrigin.x),
+                (float) (y - worldOrigin.y), (float) (z - worldOrigin.z));
+    }
+
+    public Vector3d localToWorld(Vector3f local) {
+        Objects.requireNonNull(local, "local");
+        return new Vector3d(worldOrigin).add(local.x, local.y, local.z);
     }
 
     public void mulTransformRoot(@NonNull Transform transform) {
@@ -505,6 +630,15 @@ public class SkeletonInstance {
         Matrix4f blended = anchorBlendScratch.set(m00, m01, m02, m03,
                 m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33);
         blended.mul(anchor.getTransform().transform());
+        if (floatingOriginEnabled) {
+            // The legacy attachment API returns a float world transform. Keep
+            // it spatially compatible; precision-sensitive consumers should
+            // pair origin-local bone data with getWorldOrigin() instead.
+            blended.setTranslation(
+                    blended.m30() + (float) worldOrigin.x,
+                    blended.m31() + (float) worldOrigin.y,
+                    blended.m32() + (float) worldOrigin.z);
+        }
         return new Transform().set(blended);
     }
 

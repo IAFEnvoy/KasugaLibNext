@@ -31,6 +31,7 @@ import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 
 import java.util.Map;
@@ -72,6 +73,13 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
         PoseStack poseStack = context.getPoseStack();
         poseStack.pushPose();
+        Vec3 cameraPosition = context.getCamera() == null ? Vec3.ZERO : context.getCamera().getPosition();
+        var worldOrigin = model.getSkeletonInstance().getWorldOrigin();
+        // Compose camera-relative translation in double before it enters the
+        // float pose matrix. Origin-local skeletons therefore never subtract
+        // two huge float values during rendering.
+        Vector3f cameraRelativeOrigin = cameraRelativeOrigin(worldOrigin, cameraPosition);
+        poseStack.translate(cameraRelativeOrigin.x, cameraRelativeOrigin.y, cameraRelativeOrigin.z);
 
         // Animation is sampled once per rendered frame. Configured ragdoll
         // physics is advanced by MinecraftRagdollRuntime independently of
@@ -98,21 +106,29 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         }
 
         BackendInstance instance = renderable.apply();
+        float ambientLightEnhancement = effectiveAmbientLightEnhancement(
+                model, BackendInstance.isIrisEnabled());
         instance.updateLightData(lightData.packedLight(), overlay, lightData.brightness());
         if (!globalBatcher.isCollecting()
-                || !globalBatcher.submit(instance, poseStack.last().pose(), poseStack.last().normal(), emissive)) {
+                || !globalBatcher.submit(instance, poseStack.last().pose(), poseStack.last().normal(),
+                emissive, ambientLightEnhancement)) {
             instance.drawBuffer(poseStack.last(), RenderState.getRenderType(),
-                    context.getModelViewMatrix(), context.getProjectionMatrix(), emissive);
+                    context.getModelViewMatrix(), context.getProjectionMatrix(), emissive,
+                    ambientLightEnhancement);
         }
 
         poseStack.popPose();
+    }
+
+    static float effectiveAmbientLightEnhancement(ModelInstance model, boolean irisEnabled) {
+        return irisEnabled ? 1f : model.getAmbientLightEnhancement();
     }
 
     /**
      * Per-frame visibility decision for one instance: scheduler mode first
      * (ALWAYS / MANUAL / VANILLA_RENDERER marks), then view distance, then
      * frustum. The bounds are taken from the LIVE evaluated skeleton — bone
-     * absolutes include root, IK and physics writeback — because a ragdoll's
+     * origin-local absolutes include root, IK and physics writeback — because a ragdoll's
      * rendered geometry wanders far from its root transform; testing against
      * static bind-pose bounds culled on-screen ragdolls (they flickered
      * invisible whenever physics dragged the pose outside the authored box).
@@ -137,9 +153,13 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
             visibleBoundsScratchMax.set(position.x + radius, position.y + radius, position.z + radius);
         }
 
-        double centerX = (visibleBoundsScratchMin.x + visibleBoundsScratchMax.x) * 0.5;
-        double centerY = (visibleBoundsScratchMin.y + visibleBoundsScratchMax.y) * 0.5;
-        double centerZ = (visibleBoundsScratchMin.z + visibleBoundsScratchMax.z) * 0.5;
+        var worldOrigin = model.getSkeletonInstance().getWorldOrigin();
+        double centerX = worldOrigin.x
+                + (visibleBoundsScratchMin.x + visibleBoundsScratchMax.x) * 0.5;
+        double centerY = worldOrigin.y
+                + (visibleBoundsScratchMin.y + visibleBoundsScratchMax.y) * 0.5;
+        double centerZ = worldOrigin.z
+                + (visibleBoundsScratchMin.z + visibleBoundsScratchMax.z) * 0.5;
 
         Vec3 camera = context.getCamera() != null ? context.getCamera().getPosition() : null;
         if (camera != null && !ModelRenderScheduler.withinRenderDistance(model,
@@ -151,18 +171,26 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         if (frustum == null) return true;
         float margin = boundsRadius(model);
         return frustum.isVisible(new AABB(
-                visibleBoundsScratchMin.x - margin, visibleBoundsScratchMin.y - margin,
-                visibleBoundsScratchMin.z - margin,
-                visibleBoundsScratchMax.x + margin, visibleBoundsScratchMax.y + margin,
-                visibleBoundsScratchMax.z + margin));
+                worldOrigin.x + visibleBoundsScratchMin.x - margin,
+                worldOrigin.y + visibleBoundsScratchMin.y - margin,
+                worldOrigin.z + visibleBoundsScratchMin.z - margin,
+                worldOrigin.x + visibleBoundsScratchMax.x + margin,
+                worldOrigin.y + visibleBoundsScratchMax.y + margin,
+                worldOrigin.z + visibleBoundsScratchMax.z + margin));
     }
 
     private static boolean hasEvaluatedBones(ModelInstance model) {
         return !model.getSkeletonInstance().getAbsoluteTransforms().isEmpty();
     }
 
+    static Vector3f cameraRelativeOrigin(org.joml.Vector3dc worldOrigin, Vec3 cameraPosition) {
+        return new Vector3f((float) (worldOrigin.x() - cameraPosition.x),
+                (float) (worldOrigin.y() - cameraPosition.y),
+                (float) (worldOrigin.z() - cameraPosition.z));
+    }
+
     /**
-     * Scans every evaluated bone's world position into {@code min}/{@code max}.
+     * Scans every evaluated bone's origin-local position into {@code min}/{@code max}.
      * Returns false when nothing has been evaluated yet. Package-private so
      * the extent math stays unit-testable without Minecraft types.
      */
@@ -256,6 +284,8 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
         @Nullable
         private final Vector3f position, rotation, scale;
+        @Nullable
+        private final Vector3d preciseWorldPosition;
         private final boolean isHurt, isGlowing, enableWorldLightAndBrightness, enableAutoOverlay;
         private final float emissiveStrength, brightness;
         private final int directlyGivenPackedLight, directlyGivenPackedOverlay;
@@ -269,7 +299,7 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
                                 int directlyGivenPackedLight, int directlyGivenPackedOverlay) {
             this(position, rotation, scale, isHurt, isGlowing, enableWorldLightAndBrightness,
                     enableAutoOverlay, emissiveStrength, brightness,
-                    directlyGivenPackedLight, directlyGivenPackedOverlay, true);
+                    directlyGivenPackedLight, directlyGivenPackedOverlay, true, null);
         }
 
         public BackendTransform(Vector3f position, Vector3f rotation, Vector3f scale,
@@ -278,9 +308,23 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
                                 float emissiveStrength, float brightness,
                                 int directlyGivenPackedLight, int directlyGivenPackedOverlay,
                                 boolean appliesTransform) {
+            this(position, rotation, scale, isHurt, isGlowing, enableWorldLightAndBrightness,
+                    enableAutoOverlay, emissiveStrength, brightness,
+                    directlyGivenPackedLight, directlyGivenPackedOverlay,
+                    appliesTransform, null);
+        }
+
+        public BackendTransform(Vector3f position, Vector3f rotation, Vector3f scale,
+                                boolean isHurt, boolean isGlowing, boolean enableWorldLightAndBrightness,
+                                boolean enableAutoOverlay,
+                                float emissiveStrength, float brightness,
+                                int directlyGivenPackedLight, int directlyGivenPackedOverlay,
+                                boolean appliesTransform, @Nullable Vector3d preciseWorldPosition) {
             this.position = position;
             this.rotation = rotation;
             this.scale = scale;
+            this.preciseWorldPosition = preciseWorldPosition == null
+                    ? null : new Vector3d(preciseWorldPosition);
             this.isHurt = isHurt;
             this.isGlowing = isGlowing;
             this.enableWorldLightAndBrightness = enableWorldLightAndBrightness;
@@ -319,12 +363,14 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
                         0, 0, directlyGivenPackedLight, brightness
                 );
             }
-            boolean isPositionGiven = position != null;
-            BlockPos pos = new BlockPos(
-                    isPositionGiven ? Math.round(position.x()) : 0,
-                    isPositionGiven ? Math.round(position.y()) : 0,
-                    isPositionGiven ? Math.round(position.z()) : 0
-            );
+            boolean isPositionGiven = preciseWorldPosition != null || position != null;
+            double x = preciseWorldPosition != null ? preciseWorldPosition.x
+                    : isPositionGiven ? position.x() : 0.0;
+            double y = preciseWorldPosition != null ? preciseWorldPosition.y
+                    : isPositionGiven ? position.y() : 0.0;
+            double z = preciseWorldPosition != null ? preciseWorldPosition.z
+                    : isPositionGiven ? position.z() : 0.0;
+            BlockPos pos = BlockPos.containing(x, y, z);
             return getLightData(level, pos);
         }
     }

@@ -120,7 +120,11 @@ public class MCMeshBuilder {
     public static Vector3f getNormal(Vector3f pos1, Vector3f pos2, Vector3f pos3) {
         Vector3f edge1 = new Vector3f(pos2).sub(pos1);
         Vector3f edge2 = new Vector3f(pos3).sub(pos1);
-        return edge1.cross(edge2).normalize();
+        Vector3f cross = edge1.cross(edge2);
+        // Zero-area (degenerate) faces — zero-thickness panels in Bedrock/Blockbench models — cross to a
+        // zero vector; normalize() would yield NaN normals that poison the shader's lighting (black).
+        // The face itself is invisible; fall back to a valid direction so no NaN reaches the buffer.
+        return cross.lengthSquared() <= 1e-12f ? new Vector3f(0f, 1f, 0f) : cross.normalize();
     }
 
     public static HashMap<Direction, FaceUVInfo> getFaceInfo() {

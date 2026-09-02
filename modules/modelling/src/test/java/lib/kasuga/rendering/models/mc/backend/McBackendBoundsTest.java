@@ -10,16 +10,38 @@ import lib.kasuga.rendering.models.uml.structure.skeleton.Anchor;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Bone;
 import lib.kasuga.rendering.models.uml.structure.skeleton.Skeleton;
 import lib.kasuga.rendering.models.uml.util.MeshMode;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class McBackendBoundsTest {
+
+    @Test
+    void ambientEnhancementIsNeutralizedForIris() {
+        ModelInstance instance = fixture();
+        instance.setAmbientLightEnhancement(2.25f);
+
+        assertEquals(2.25f, MCBackend.effectiveAmbientLightEnhancement(instance, false));
+        assertEquals(1f, MCBackend.effectiveAmbientLightEnhancement(instance, true));
+    }
+
+    @Test
+    void cameraRelativeOriginRetainsSubBlockPrecisionAtTheWorldBorder() {
+        Vector3f relative = MCBackend.cameraRelativeOrigin(
+                new Vector3d(30_000_000.375, 96.125, -29_999_999.625),
+                new Vec3(30_000_000.125, 95.875, -29_999_999.875));
+
+        assertTrue(relative.equals(new Vector3f(0.25f), 0f),
+                "double subtraction must happen before conversion to the float pose matrix");
+    }
 
     @Test
     void freshlyConstructedInstanceEvaluatesAtTheBindPose() {

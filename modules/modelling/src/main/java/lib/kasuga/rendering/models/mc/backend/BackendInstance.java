@@ -162,7 +162,7 @@ public class BackendInstance {
 
     protected void drawBuffer(PoseStack.Pose pose, RenderType renderType,
                               Matrix4f modelViewMatrix, Matrix4f projectionMatrix,
-                              float emissiveStrength) {
+                              float emissiveStrength, float ambientLightEnhancement) {
         GLContext context = getContext();
         IVertexBuffer buffer = getBuffer();
         currentBuffer = buffer;
@@ -181,7 +181,7 @@ public class BackendInstance {
             }
             shader = context.enter(renderType, meshMode,
                     modelViewMatrix, projectionMatrix,
-                    s -> setupShader(s, pose, emissiveStrength)
+                    s -> setupShader(s, pose, emissiveStrength, ambientLightEnhancement)
             ).get();
             buffer.draw(modelViewMatrix, projectionMatrix, shader);
         } finally {
@@ -211,9 +211,15 @@ public class BackendInstance {
     }
 
     public void setupShader(ShaderInstance s, PoseStack.Pose pose, float emissiveStrength) {
+        setupShader(s, pose, emissiveStrength, model.getAmbientLightEnhancement());
+    }
+
+    public void setupShader(ShaderInstance s, PoseStack.Pose pose, float emissiveStrength,
+                            float ambientLightEnhancement) {
         if (!(s instanceof KasugaShaderInstance shader)) return;
         shader.setCurrentPose(pose);
         shader.setEmissiveStrength(emissiveStrength);
+        shader.setAmbientLightEnhancement(ambientLightEnhancement);
         shader.setLightData(data.getBrightness(), data.getLightmap(), data.getOverlay());
         shader.setGpuSkinningState(!cpuSkinning, tbo != null ? tbo.getTextureId() : 0);
     }

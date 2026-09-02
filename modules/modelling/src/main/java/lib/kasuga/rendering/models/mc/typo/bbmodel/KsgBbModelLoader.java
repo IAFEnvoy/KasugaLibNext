@@ -235,8 +235,15 @@ public final class KsgBbModelLoader implements ModelLoader<String, ResourceLocat
                             List<Vertex> vertices, List<Mesh> meshes) {
         Vector3f[] transformed = new Vector3f[positions.length];
         for (int index = 0; index < positions.length; index++) transformed[index] = transform.apply(positions[index]);
-        Vector3f normal = new Vector3f(transformed[1]).sub(transformed[0])
-                .cross(new Vector3f(transformed[2]).sub(transformed[0])).normalize();
+        Vector3f cross = new Vector3f(transformed[1]).sub(transformed[0])
+                .cross(new Vector3f(transformed[2]).sub(transformed[0]));
+        // Zero-area faces (zero-thickness panels exported by Blockbench) have a zero-length cross product;
+        // normalize() would yield NaN normal components that poison the shader's lighting (black geometry).
+        // The face is invisible anyway — skip it.
+        if (cross.lengthSquared() <= 1e-12f) {
+            return;
+        }
+        Vector3f normal = cross.normalize();
         Mesh mesh = new Mesh(new Vertex[transformed.length], normal, new Transform(), new Material[]{material}, null);
         for (int index = 0; index < transformed.length; index++) {
             Vertex vertex = new Vertex(transformed[index], null);
