@@ -2,10 +2,14 @@ package lib.kasuga.rendering.models.uml.dynamic.morph.types;
 
 import lib.kasuga.rendering.models.uml.structure.basic.Vertex;
 import lombok.Getter;
+import lombok.Setter;
 import org.joml.Vector3f;
 
 @Getter
 public class VertexPosMorph<IdType> implements MorphType<Vertex, Vector3f, IdType> {
+
+    @Setter
+    private int morphTypeIndex = -1;
 
     private final Vertex original;
     private final IdType identifier;

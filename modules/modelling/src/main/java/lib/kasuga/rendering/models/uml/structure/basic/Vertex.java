@@ -29,6 +29,13 @@ public class Vertex {
     @NonNull
     private BoneBinding binding;
 
+    /**
+     * Position of this vertex inside its model's {@code Vertex[]} array, set by {@code MorphInstance}
+     * construction. -1 until then. Backs the index-based morph result arrays (no per-vertex hashing).
+     */
+    @Setter
+    private int index = -1;
+
     public Vertex(Vector3f position, @Nullable VertexData data) {
         this.position = position;
         this.uvs = new HashMap<>();

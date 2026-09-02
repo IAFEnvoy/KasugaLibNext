@@ -10,4 +10,13 @@ public interface MorphType<MorphedElement, MorphOutput, Identifier> {
     MorphedElement getOriginal();
 
     Identifier getIdentifier();
+
+    /**
+     * Model-scoped ordinal assigned at registration time by {@code Morph.addMorph}; -1 until then.
+     * Backs the {@code MorphInstance} factor/value arrays so the hot per-vertex morph loops avoid hashing.
+     */
+    int getMorphTypeIndex();
+
+    /** Set once by {@code Morph.addMorph} at registration. */
+    void setMorphTypeIndex(int index);
 }

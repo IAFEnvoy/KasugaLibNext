@@ -31,7 +31,8 @@ public record AnimationClip(
         float durationSeconds,
         List<BoneTrack> bones,
         List<MorphTrack> morphs,
-        List<FrameTrack> frames
+        List<FrameTrack> frames,
+        List<FunctionTrack> functions
 ) {
 
     /** Easing name {@code ↔} built-in instance; unknown names decode to {@link Easing#linear()}. */
@@ -48,7 +49,8 @@ public record AnimationClip(
             Codec.FLOAT.optionalFieldOf("duration_seconds", 1f).forGetter(AnimationClip::durationSeconds),
             BoneTrack.CODEC.listOf().optionalFieldOf("bones", List.of()).forGetter(AnimationClip::bones),
             MorphTrack.CODEC.listOf().optionalFieldOf("morphs", List.of()).forGetter(AnimationClip::morphs),
-            FrameTrack.CODEC.listOf().optionalFieldOf("frames", List.of()).forGetter(AnimationClip::frames)
+            FrameTrack.CODEC.listOf().optionalFieldOf("frames", List.of()).forGetter(AnimationClip::frames),
+            FunctionTrack.CODEC.listOf().optionalFieldOf("functions", List.of()).forGetter(AnimationClip::functions)
     ).apply(instance, AnimationClip::new));
 
     /** One bone's keyframe track: {@code time → transform}, interpolated with the segment's easing. */
@@ -110,5 +112,44 @@ public record AnimationClip(
                 Codec.FLOAT.fieldOf("time").forGetter(FrameKeyframe::time),
                 Codec.INT.fieldOf("frame").forGetter(FrameKeyframe::frame)
         ).apply(instance, FrameKeyframe::new));
+    }
+
+    /** Which {@link TransformDefinition} channel a function track drives. */
+    public enum FunctionChannel { ROTATE, TRANSLATE, SCALE }
+
+    /**
+     * One bone's formula-driven track: each axis of the chosen channel is a formula
+     * expression string evaluated per-frame against a {@code lib.kasuga.formula} namespace.
+     * A blank axis string means "leave that component at its identity value"
+     * (rotate 0 / translate 0 / scale 1).
+     */
+    public record FunctionTrack(
+            String bone,
+            FunctionChannel channel,
+            String x,
+            String y,
+            String z
+    ) {
+        public static final Codec<FunctionChannel> CHANNEL_CODEC = Codec.STRING.xmap(
+                name -> switch (name) {
+                    case "rotate" -> FunctionChannel.ROTATE;
+                    case "translate" -> FunctionChannel.TRANSLATE;
+                    case "scale" -> FunctionChannel.SCALE;
+                    default -> FunctionChannel.ROTATE;
+                },
+                channel -> switch (channel) {
+                    case ROTATE -> "rotate";
+                    case TRANSLATE -> "translate";
+                    case SCALE -> "scale";
+                }
+        );
+
+        public static final Codec<FunctionTrack> CODEC = RecordCodecBuilder.create(instance -> instance.group(
+                Codec.STRING.fieldOf("bone").forGetter(FunctionTrack::bone),
+                CHANNEL_CODEC.fieldOf("channel").forGetter(FunctionTrack::channel),
+                Codec.STRING.optionalFieldOf("x", "").forGetter(FunctionTrack::x),
+                Codec.STRING.optionalFieldOf("y", "").forGetter(FunctionTrack::y),
+                Codec.STRING.optionalFieldOf("z", "").forGetter(FunctionTrack::z)
+        ).apply(instance, FunctionTrack::new));
     }
 }

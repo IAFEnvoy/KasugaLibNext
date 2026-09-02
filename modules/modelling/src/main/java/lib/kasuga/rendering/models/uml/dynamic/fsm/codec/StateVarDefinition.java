@@ -21,14 +21,18 @@ import java.util.Optional;
  *   <li><b>inline</b> (default): declare a new var — {@code type} selects a built-in codec token
  *       (bool/int/float/string/resource/vec3) and {@code default} is decoded against it.</li>
  * </ul>
- * {@code ephemeral: true} marks a tick-scoped trigger var (cleared at the end of every tick).
+*  {@code ephemeral: true} marks a tick-scoped trigger var (cleared at the end of every tick).
+ *  {@code external_writable: false} marks a derived parameter (machine-internal writers only) and
+ *  {@code sync: true} marks a parameter pushed over the FSM sync channel (server-authoritative).
  */
 public record StateVarDefinition(
         String name,
         String type,
         Optional<JsonElement> defaultValue,
         Optional<String> reference,
-        boolean ephemeral
+        boolean ephemeral,
+        boolean externalWritable,
+        boolean sync
 ) {
 
     /** A passthrough codec that keeps a raw {@link JsonElement} so the factory can decode it per-type. */
@@ -49,6 +53,8 @@ public record StateVarDefinition(
             Codec.STRING.optionalFieldOf("type", "float").forGetter(StateVarDefinition::type),
             JSON_ELEMENT.optionalFieldOf("default").forGetter(StateVarDefinition::defaultValue),
             Codec.STRING.optionalFieldOf("reference").forGetter(StateVarDefinition::reference),
-            Codec.BOOL.optionalFieldOf("ephemeral", false).forGetter(StateVarDefinition::ephemeral)
+            Codec.BOOL.optionalFieldOf("ephemeral", false).forGetter(StateVarDefinition::ephemeral),
+            Codec.BOOL.optionalFieldOf("external_writable", true).forGetter(StateVarDefinition::externalWritable),
+            Codec.BOOL.optionalFieldOf("sync", false).forGetter(StateVarDefinition::sync)
     ).apply(instance, StateVarDefinition::new));
 }

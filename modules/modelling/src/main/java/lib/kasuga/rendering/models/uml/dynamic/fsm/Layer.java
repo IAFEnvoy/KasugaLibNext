@@ -35,6 +35,11 @@ public final class Layer<Owner> {
     State<Owner> pendingGoTo;
     boolean activeChanged;
 
+    // clip clock: the active state's clip playback position (prev/current for partialTick interpolation).
+    // Reset to 0 on every state entry; advanced every tick while the active state references a clip.
+    float clipPrevTime;
+    float clipTime;
+
     // blend props
     BlendMode mode = BlendMode.BASE;
     float weight = 1f;
@@ -200,6 +205,8 @@ public final class Layer<Owner> {
         active = target;
         activeTransition = null;
         stateElapsedTicks = Math.max(0, elapsedTicks);
+        clipPrevTime = 0f;
+        clipTime = 0f;
         return true;
     }
 
@@ -252,7 +259,7 @@ public final class Layer<Owner> {
     }
 
     /**
-     * Advance one server tick. <b>Clock discipline</b> (intentional split — see doc/fsm-design-review.md block 1.2):
+     * Advance one server tick. <b>Clock discipline</b> (intentional split):
      * {@code dt} is <em>real seconds</em> since the last tick and feeds cross-fade progress
      * ({@code transitionElapsed += dt}); {@code stateElapsedTicks} is a <em>call count</em> compared against
      * {@link State#durationTicks(int)} (which {@link State#durationSeconds(float)} rounds as {@code s*20}).
@@ -270,6 +277,7 @@ public final class Layer<Owner> {
         if (active != null) {
             runActions(active.onUpdate, ctx);
         }
+        advanceClipClock(dt);
 
         if (pendingGoTo != null && states.contains(pendingGoTo)) {
             forceEnter(pendingGoTo, ctx);
@@ -312,6 +320,7 @@ public final class Layer<Owner> {
      * without locally evaluating guards on vars it does not sync.
      */
     void advancePuppet(float dt) {
+        advanceClipClock(dt);
         if (activeTransition != null) {
             transitionElapsed += dt;
             if (transitionElapsed >= activeTransition.crossFadeSeconds) {
@@ -319,6 +328,8 @@ public final class Layer<Owner> {
                 active = activeTransition.to;
                 activeTransition = null;
                 stateElapsedTicks = 0;
+                clipPrevTime = 0f;
+                clipTime = 0f;
             }
         }
     }
@@ -331,6 +342,8 @@ public final class Layer<Owner> {
             }
             active = transition.to;
             stateElapsedTicks = 0;
+            clipPrevTime = 0f;
+            clipTime = 0f;
             if (active != null) {
                 runActions(active.onEnter, ctx);
             }
@@ -349,6 +362,8 @@ public final class Layer<Owner> {
         active = target;
         activeTransition = null;
         stateElapsedTicks = 0;
+        clipPrevTime = 0f;
+        clipTime = 0f;
         if (active != null) {
             runActions(active.onEnter, ctx);
         }
@@ -363,6 +378,8 @@ public final class Layer<Owner> {
         active = transition.to;
         activeTransition = null;
         stateElapsedTicks = 0;
+        clipPrevTime = 0f;
+        clipTime = 0f;
         if (active != null) {
             runActions(active.onEnter, ctx);
         }
@@ -378,6 +395,57 @@ public final class Layer<Owner> {
         }
     }
 
+    /**
+     * Advance the active state's clip clock by {@code dt} real seconds. The clock is <b>monotonic</b>
+     * (loop wrap is applied at sample time, mirroring {@code AnimationPlayer}) so the render
+     * thread's {@code prevTime → time} partialTick lerp never interpolates backward across a loop seam.
+     * Non-loop clips clamp at their duration (state transitions / duration handle completion). No-ops
+     * (and re-zeroes) when the active state has no clip.
+     */
+    private void advanceClipClock(float dt) {
+        if (active == null || !active.hasClip()) {
+            clipPrevTime = 0f;
+            clipTime = 0f;
+            return;
+        }
+        clipPrevTime = clipTime;
+        float next = clipTime + dt;
+        float duration = PoseTarget.ClipTarget.duration(active.clipSampler(), active.clipData());
+        clipTime = active.clipLoop() ? next : Math.min(next, duration);
+    }
+
+    /**
+     * The active state's clip clock as a {@link PoseTarget.ClipTarget} (thread handoff), or null when the
+     * active state references no clip.
+     */
+    @Nullable PoseTarget.ClipTarget clipTarget() {
+        if (active == null || !active.hasClip()) {
+            return null;
+        }
+        return new PoseTarget.ClipTarget(active.clipSampler(), active.clipData(), active.clipLoop(), clipPrevTime, clipTime);
+    }
+
+    /**
+     * The pose of {@code state} at clip time {@code clipTime} seconds (monotonic; loop-wrap / end-clamp
+     * normalization applied here): static pose merged first, then the clip sample (clip bone entries win
+     * for same-named bones). States without a clip resolve to their static pose only; a null state yields
+     * an empty pose.
+     */
+    Pose poseForState(State<Owner> state, float clipTime) {
+        if (state == null) {
+            return Pose.empty();
+        }
+        if (state.hasClip()) {
+            float duration = PoseTarget.ClipTarget.duration(state.clipSampler(), state.clipData());
+            float time = duration > 0f && state.clipLoop() ? clipTime % duration : Math.min(clipTime, duration);
+            return new Pose.Builder()
+                    .merge(state.buildPose())
+                    .merge(PoseTarget.ClipTarget.sample(state.clipSampler(), state.clipData(), time))
+                    .build();
+        }
+        return state.buildPose();
+    }
+
     /** The pose this layer contributes this tick (cross-faded if a transition is in progress). */
     Pose activePose() {
         if (active == null) {
@@ -387,9 +455,9 @@ public final class Layer<Owner> {
             float alpha = activeTransition.crossFadeSeconds <= 0f
                     ? 1f
                     : Math.min(1f, transitionElapsed / activeTransition.crossFadeSeconds);
-            return PoseBlend.blend(active.buildPose(), activeTransition.to.buildPose(), alpha);
+            return PoseBlend.blend(poseForState(active, clipTime), poseForState(activeTransition.to, 0f), alpha);
         }
-        return active.buildPose();
+        return poseForState(active, clipTime);
     }
 
     //endregion

@@ -33,6 +33,9 @@ public final class BlackHoleDemo {
     private static int autoSpawnDelay;
     private static boolean autoSpawnHandled;
 
+    /** Auto-spawn on world join is DISABLED by default — trigger manually via {@code /kasuga_black_hole demo|orbit|massive}. */
+    private static final boolean AUTO_SPAWN = false;
+
     private BlackHoleDemo() {
     }
 
@@ -103,6 +106,10 @@ public final class BlackHoleDemo {
         if (level == null || minecraft.player == null || minecraft.isPaused()) return;
 
         if (!autoSpawnHandled) {
+            if (!AUTO_SPAWN) {
+                autoSpawnHandled = true;
+                return;
+            }
             if (autoSpawnDelay-- > 0 || !BlackHoleEffects.shader().isReady()) return;
             autoSpawnHandled = true;
             spawnSingle(minecraft.player);

@@ -20,9 +20,11 @@ import java.util.function.Predicate;
  * is type-safe.
  *
  * <p>Build with {@link #builder(Id, Class, Codec)} (mirrors {@code DataComponentType.Builder}) or the
- * {@link #of} shortcut.
+ * {@link #of} shortcut. Extensible: {@link ParameterSpec} (same package) adds the two orthogonal
+ * parameter-store attributes {@code externalWritable} / {@code sync} on top of the base var; identity
+ * (by {@link Id} alone) and the typed store semantics are inherited unchanged.
  */
-public final class StateVar<T> {
+public class StateVar<T> {
 
     private final Id id;
     private final Class<T> type;
@@ -31,7 +33,8 @@ public final class StateVar<T> {
     private final Predicate<? super T> validator;
     private final boolean ephemeral;
 
-    private StateVar(
+    /** Package-private so {@link ParameterSpec} (same package) can chain a super() call. */
+    StateVar(
             Id id,
             Class<T> type,
             Codec<T> codec,
@@ -61,6 +64,10 @@ public final class StateVar<T> {
 
     public Codec<T> codec() {
         return codec;
+    }
+
+    public Predicate<? super T> validator() {
+        return validator;
     }
 
     public T defaultValue() {

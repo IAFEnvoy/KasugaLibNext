@@ -2,10 +2,14 @@ package lib.kasuga.rendering.models.uml.dynamic.morph.types;
 
 import lib.kasuga.rendering.models.uml.structure.basic.Vertex;
 import lombok.Getter;
+import lombok.Setter;
 import org.joml.Vector4f;
 
 @Getter
 public class VertexTangentMorph<IdType> implements MorphType<Vertex, Vector4f, IdType> {
+
+    @Setter
+    private int morphTypeIndex = -1;
 
     private final Vertex original;
     private final IdType identifier;

@@ -33,6 +33,7 @@ public final class ModelInstancePoseSink implements PoseSink {
     private final MaterialResolver materials;
     private final Set<Object> lastMorphs = new HashSet<>();
     private final Set<String> lastBones = new HashSet<>();
+    private final Blender poseBlender = new Blender();
 
     public ModelInstancePoseSink(ModelInstance model, MaterialResolver materials) {
         this.model = Objects.requireNonNull(model, "model");
@@ -52,8 +53,33 @@ public final class ModelInstancePoseSink implements PoseSink {
     }
 
     @Override
-    @SuppressWarnings({"rawtypes", "unchecked"})
     public void apply(Blender blender) {
+        flush(blender);
+    }
+
+    /**
+     * Flush a single {@link Pose} as a BASE layer (weight 1, full bone mask) through the shared
+     * write path. The unified animation write end — every animation {@code PoseDriver} (e.g.
+     * {@code AnimationPlayer}) converges here instead of writing the skeleton directly.
+     *
+     * <p>Even an empty (or null) pose reaches the sink so the channel-reset can neutralize channels
+     * posed last frame but absent this frame (the same contract {@link #apply(Blender)} has).
+     */
+    public void applyPose(Pose pose) {
+        if (pose == null) {
+            pose = Pose.empty();
+        }
+        poseBlender.reset();
+        poseBlender.applyLayer(BlendMode.BASE, pose, 1f, BoneMask.all());
+        flush(poseBlender);
+    }
+
+    /**
+     * Shared write core: resolve the {@link Blender}'s accumulators into skeleton / morph / material
+     * writes, with channel reset (channels posed last frame but absent this frame are neutralized).
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private void flush(Blender blender) {
         MorphInstance morph = model.getMorph();
         SkeletonInstance skeleton = model.getSkeletonInstance();
         MaterialSetInstance materialSet = model.getMaterialInstance();

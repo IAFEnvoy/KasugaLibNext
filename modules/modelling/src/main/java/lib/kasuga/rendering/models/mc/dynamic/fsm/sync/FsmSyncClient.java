@@ -102,6 +102,42 @@ public final class FsmSyncClient {
         if (machine.conform(toSnapshot(payload, machine))) {
             syncState.recordApplied(key, payload.version());
         }
+        // vars land independently of the layer conform — a payload may carry a parameter change
+        // while every layer is unchanged (conform returns false, version not bumped)
+        applyVars(payload, machine);
+    }
+
+    /** Land the payload's synchronized parameters into the machine's value store (setInternal semantics). */
+    private static void applyVars(FsmSyncPayload payload, StateMachine<?> machine) {
+        for (FsmSyncPayload.VarEntry entry : payload.vars()) {
+            ParameterSpec<?> spec = findSyncSpec(machine, entry.varId());
+            if (spec == null) {
+                LOGGER.warn("FSM sync: payload carries unknown or non-sync parameter '{}'; skipping", entry.varId());
+                continue;
+            }
+            StateVarType<?> type = StateVarType.byClass(spec.type());
+            if (type == null || !type.token().equals(entry.type())) {
+                LOGGER.warn("FSM sync: parameter '{}' type mismatch (wire {}, local {}); skipping",
+                        entry.varId(), entry.type(), type == null ? "<none>" : type.token());
+                continue;
+            }
+            machine.mutableVars().set(rawSpec(spec), entry.value());
+        }
+    }
+
+    /** A declared {@code sync} parameter whose id matches {@code varId}, or {@code null}. */
+    private static ParameterSpec<?> findSyncSpec(StateMachine<?> machine, String varId) {
+        for (StateVar<?> declared : machine.declaredVars()) {
+            if (declared instanceof ParameterSpec<?> spec && spec.sync() && spec.id().toString().equals(varId)) {
+                return spec;
+            }
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> StateVar<T> rawSpec(StateVar<?> spec) {
+        return (StateVar<T>) spec;
     }
 
     /** Index → id conversion against the bound machine's layers; out-of-bounds entries are skipped. */

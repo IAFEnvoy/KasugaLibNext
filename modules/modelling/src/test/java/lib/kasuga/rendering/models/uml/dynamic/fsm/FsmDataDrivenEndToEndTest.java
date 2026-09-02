@@ -92,7 +92,7 @@ class FsmDataDrivenEndToEndTest {
         }
         return new FsmSyncPayload(
                 KEY.machineId(), KEY.dimension(), KEY.ownerDiscriminator(),
-                machine.version(), DEFINITION_HASH, force, layers);
+                machine.version(), DEFINITION_HASH, force, layers, List.of());
     }
 
     @Test

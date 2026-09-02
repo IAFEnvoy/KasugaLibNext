@@ -20,6 +20,8 @@ public final class FsmSyncDedup {
 
     private final Map<FsmSyncKey, Map<UUID, Integer>> sentVersions = new ConcurrentHashMap<>();
     private final Map<FsmSyncKey, Integer> tickCounters = new ConcurrentHashMap<>();
+    /** Per-key last-sent values of {@code sync}-declared parameters, keyed by var id string. */
+    private final Map<FsmSyncKey, Map<String, Object>> lastVarValues = new ConcurrentHashMap<>();
 
     /** @return true on every {@link #HEARTBEAT_INTERVAL_TICKS}-th push for this key (forced replay). */
     public boolean isHeartbeatTick(FsmSyncKey key) {
@@ -41,10 +43,21 @@ public final class FsmSyncDedup {
         sentVersions.computeIfAbsent(key, k -> new ConcurrentHashMap<>()).put(playerId, version);
     }
 
-    /** Forget a machine: drop its dedup and heartbeat state (machine destroyed / reloaded). */
+    /** The last values sent for this key's {@code sync}-declared parameters; lazily created per key. */
+    public Map<String, Object> lastVars(FsmSyncKey key) {
+        return lastVarValues.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
+    }
+
+    /** Record the values just sent for this key's {@code sync}-declared parameters (incremental baseline). */
+    public void recordVars(FsmSyncKey key, Map<String, Object> sent) {
+        lastVarValues.computeIfAbsent(key, k -> new ConcurrentHashMap<>()).putAll(sent);
+    }
+
+    /** Forget a machine: drop its dedup, heartbeat and var-value state (machine destroyed / reloaded). */
     public void unbind(FsmSyncKey key) {
         sentVersions.remove(key);
         tickCounters.remove(key);
+        lastVarValues.remove(key);
     }
 
     /** Drop every dedup entry belonging to a player (logout — keeps the per-player table bounded). */
@@ -56,5 +69,6 @@ public final class FsmSyncDedup {
     public void clearAll() {
         sentVersions.clear();
         tickCounters.clear();
+        lastVarValues.clear();
     }
 }

@@ -97,12 +97,21 @@ public class CombinedTextureManager extends KasugaTextureManager {
                         SpriteContents content = v[i];
                         Objects.requireNonNull(content);
                         for (TextureAtlasSprite sprite : getAtlas(i).getTextures().values()) {
-                            if (sprite.contents().equals(content)) {
+                            // 图集按内容名（ResourceLocation）建 key；同名内容只能保留一个 sprite。
+                            // 因此按名称匹配（而非对象恒等）：同名的重复标识符共享同一个 sprite。
+                            if (sprite.contents().name().equals(content.name())) {
                                 sprites[i] = sprite;
                                 break;
                             }
                         }
-                        Objects.requireNonNull(sprites[i], "Failed to find sprite for content: " + content.name());
+                        if (sprites[i] == null) {
+                            LOGGER.warn("Combined texture atlas {} has no sprite for content {} ({}x{}); "
+                                            + "{} sprites stitched, name present={}",
+                                    getAtlas(i).location(), content.name(), content.width(), content.height(),
+                                    getAtlas(i).getTextures().size(),
+                                    getAtlas(i).getTextures().containsKey(content.name()));
+                            sprites[i] = getAtlas(i).getTextures().get(MissingTextureAtlasSprite.getLocation());
+                        }
                     }
                     loadedSprites.put(k, sprites);
                 })).thenAcceptAsync(any -> this.caches.clear(), gameExecutor)
