@@ -12,6 +12,7 @@ import lib.kasuga.rendering.models.uml.loaders.ModelLoader;
 import lib.kasuga.rendering.models.uml.loaders.sources.SourceManager;
 import lib.kasuga.rendering.models.uml.loaders.sources.SourceType;
 import lib.kasuga.rendering.models.uml.math.Transform;
+import lib.kasuga.rendering.models.mc.util.RotHelper;
 import lib.kasuga.rendering.models.uml.math.binding.BoneBindingFunc;
 import lib.kasuga.rendering.models.uml.structure.Model;
 import lib.kasuga.rendering.models.uml.structure.basic.BoneBinding;
@@ -36,7 +37,6 @@ import java.util.*;
 
 /** Loader for FMT archive files: MTB (Model.txt) and FMTB (model.jtmt). */
 public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLocation, Integer> {
-    private static final float NORMAL_OFFSET = 0.0001f;
     private final String name;
     private final MaterialSetBuilder<Integer> materials;
     private final HashMap<SourceType, HashMap<String, SourceManager<?>>> sidedSources = new HashMap<>();
@@ -51,9 +51,7 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
         Material material = buildMaterial();
         List<Vertex> vertices = new ArrayList<>(); List<Mesh> meshes = new ArrayList<>();
         Bone root = new Bone("root", new Transform(), null);
-        for (int boxIndex = 0; boxIndex < boxes.size(); boxIndex++) {
-            appendBox(boxes.get(boxIndex), boxIndex, material, root, vertices, meshes);
-        }
+        for (BoxDef box : boxes) appendBox(box, material, root, vertices, meshes);
         Skeleton skeleton = new Skeleton(new Bone[]{root}, root, new lib.kasuga.rendering.models.uml.structure.skeleton.Anchor[0], null, new Transform());
         Model model = new Model(vertices.toArray(Vertex[]::new), meshes.toArray(Mesh[]::new), new Bone[]{root}, skeleton,
                 materials.endMaterialSet(), MeshMode.QUADS, null, null);
@@ -108,6 +106,7 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
                 Vector3f position = new Vector3f(f(p[6]), f(p[7]), f(p[8]));
                 Vector3f size = new Vector3f(f(p[9]), f(p[10]), f(p[11]));
                 Vector3f offset = new Vector3f(f(p[15]), f(p[16]), f(p[17]));
+                Vector3f rotation = new Vector3f(f(p[12]), f(p[13]), -f(p[14]));
                 Vector2i uv = new Vector2i(i(p[18]), i(p[19]));
                 Vector3f[] corners = null;
                 if (p[5].equalsIgnoreCase("ShapeBox") && p.length >= 44) {
@@ -116,7 +115,7 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
                         corners[n] = new Vector3f(f(p[20 + n]), f(p[28 + n]), f(p[36 + n]));
                     }
                 }
-                result.add(new BoxDef(position, size, offset, uv, corners));
+                result.add(new BoxDef(position, size, offset, rotation, new Vector3f(1, 1, 1), uv, corners));
             }
             catch (RuntimeException ignored) { }
         }
@@ -130,7 +129,7 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
         for (JsonElement group : groups.entrySet().stream().map(Map.Entry::getValue).toList()) {
             JsonArray polys = group.getAsJsonObject().getAsJsonArray("polygons"); if (polys == null) continue;
             for (JsonElement element : polys) { JsonObject p = element.getAsJsonObject(); if (!"box".equalsIgnoreCase(p.has("type") ? p.get("type").getAsString() : "")) continue;
-                result.add(new BoxDef(new Vector3f(num(p,"pos_x"),num(p,"pos_y"),num(p,"pos_z")), new Vector3f(num(p,"width",1),num(p,"height",1),num(p,"depth",1)), new Vector3f(num(p,"off_x"),num(p,"off_y"),num(p,"off_z")), new Vector2i((int)num(p,"texture_x",0),(int)num(p,"texture_y",0)), null)); }
+                result.add(new BoxDef(new Vector3f(num(p,"pos_x"),num(p,"pos_y"),num(p,"pos_z")), new Vector3f(num(p,"width",1),num(p,"height",1),num(p,"depth",1)), new Vector3f(num(p,"off_x"),num(p,"off_y"),num(p,"off_z")), new Vector3f(), new Vector3f(num(p,"scale_x",1),num(p,"scale_y",1),num(p,"scale_z",1)), new Vector2i((int)num(p,"texture_x",0),(int)num(p,"texture_y",0)), null)); }
         }
         return result;
     }
@@ -140,47 +139,42 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
     private static float num(JsonObject o, String key) { return num(o,key,0); }
     private static float num(JsonObject o, String key, double def) { return o.has(key) ? o.get(key).getAsFloat() : (float)def; }
 
-    private void appendBox(BoxDef box, int boxIndex, Material material, Bone root, List<Vertex> vertices, List<Mesh> meshes) {
-        // MTB uses a screen/model coordinate system where positive Y points
-        // down. Minecraft's world coordinates point up, so mirror the Y
-        // interval while keeping the X/Z extents unchanged.
-        Vector3f sourceMin = new Vector3f(box.position).add(box.offset);
-        // Some MTB ShapeBox records intentionally use a zero dimension (the
-        // actual primitive is described by additional columns).  Emitting a
-        // zero-volume cuboid creates degenerate triangles and severe depth
-        // artifacts, so keep a one-pixel thickness for this fallback box
-        // representation.
-        Vector3f extent = new Vector3f(Math.max(1f, Math.abs(box.size.x)),
-                Math.max(1f, Math.abs(box.size.y)), Math.max(1f, Math.abs(box.size.z)));
-        Vector3f min = new Vector3f(sourceMin.x, -(sourceMin.y + extent.y), sourceMin.z).mul(1f / 16f);
-        Vector3f max = new Vector3f(sourceMin.x + extent.x, -sourceMin.y, sourceMin.z + extent.z).mul(1f / 16f);
-        // ShapeBox corner ordering differs between MTB exporters. Until that
-        // ordering is explicitly decoded, use the stable bounding cuboid
-        // rather than connecting corners heuristically (which creates
-        // self-intersecting triangles and floating shards).
-        Vector3f[][] faces = {
-                {new Vector3f(min.x,min.y,max.z),new Vector3f(max.x,min.y,max.z),new Vector3f(max.x,min.y,min.z),new Vector3f(min.x,min.y,min.z)},
-                {new Vector3f(min.x,max.y,min.z),new Vector3f(max.x,max.y,min.z),new Vector3f(max.x,max.y,max.z),new Vector3f(min.x,max.y,max.z)},
-                {new Vector3f(max.x,min.y,min.z),new Vector3f(min.x,min.y,min.z),new Vector3f(min.x,max.y,min.z),new Vector3f(max.x,max.y,min.z)},
-                {new Vector3f(min.x,min.y,max.z),new Vector3f(max.x,min.y,max.z),new Vector3f(max.x,max.y,max.z),new Vector3f(min.x,max.y,max.z)},
-                {new Vector3f(min.x,min.y,min.z),new Vector3f(min.x,min.y,max.z),new Vector3f(min.x,max.y,max.z),new Vector3f(min.x,max.y,min.z)},
-                {new Vector3f(max.x,min.y,max.z),new Vector3f(max.x,min.y,min.z),new Vector3f(max.x,max.y,min.z),new Vector3f(max.x,max.y,max.z)}};
+    private void appendBox(BoxDef box, Material material, Bone root, List<Vertex> vertices, List<Mesh> meshes) {
+        Vector3f dimensions = new Vector3f(box.size.x == 0f ? 0.01f : box.size.x,
+                box.size.y == 0f ? 0.01f : box.size.y,
+                box.size.z == 0f ? 0.01f : box.size.z);
+        Vector3f localMin = new Vector3f(box.offset).mul(1f / 16f);
+        Vector3f localMax = new Vector3f(box.offset).add(dimensions).mul(1f / 16f);
+        Vector3f[][] faces = box.corners == null ? standardFaces(localMin, localMax) : shapeFaces(box);
+        Transform transform = new Transform().translate(new Vector3f(box.position).mul(1f / 16f));
+        RotHelper.rotation(transform, box.rotation);
+        transform.scale(box.scale.x, box.scale.y, box.scale.z);
         for (int faceIndex = 0; faceIndex < faces.length; faceIndex++) {
-            Vector3f[] face = faces[faceIndex];
-            Vector3f normal = new Vector3f(face[1]).sub(face[0]).cross(new Vector3f(face[2]).sub(face[0])).normalize();
+            Vector3f[] face = new Vector3f[4];
+            for (int n = 0; n < 4; n++) face[n] = new Vector3f(faces[faceIndex][n]);
+            for (Vector3f point : face) {
+                transform.apply(point);
+                // FMT/MTB coordinates use the opposite vertical handedness
+                // from Minecraft: positive Y points down in the source model.
+                // Convert each already-transformed block vertex exactly once.
+                point.y = -point.y;
+            }
+            // Mirroring one coordinate reverses the polygon winding. Restore
+            // the outward-facing order so back-face culling and normals remain
+            // correct after the coordinate-system conversion.
+            Vector3f windingVertex = face[1];
+            face[1] = face[3];
+            face[3] = windingVertex;
+            Vector3f normal = new Vector3f(face[1]).sub(face[0]).cross(new Vector3f(face[2]).sub(face[0]));
+            if (normal.lengthSquared() < 1e-10f) continue;
+            normal.normalize();
             Mesh mesh = new Mesh(new Vertex[4], normal, new Transform(), new Material[]{material}, null);
             Vector2f[] faceUvs = atlasUvs(box, faceIndex, (int) material.getTextures()[0].getWidth(), (int) material.getTextures()[0].getHeight());
+            Vector2f windingUv = faceUvs[1];
+            faceUvs[1] = faceUvs[3];
+            faceUvs[3] = windingUv;
             for (int n = 0; n < 4; n++) {
-                // Push each polygon very slightly outwards.  MTB contains
-                // many coplanar/adjacent faces; this epsilon prevents depth
-                // precision oscillation (z-fighting) without visible gaps.
-                // Equal offsets would still leave two same-facing coplanar
-                // polygons at exactly the same depth. Add a stable,
-                // sub-pixel layer per source box so overlapping MTB faces
-                // receive distinct depth values while remaining invisible.
-                float faceOffset = NORMAL_OFFSET * (1f + (boxIndex & 7) + faceIndex * 0.125f);
-                Vector3f vertexPosition = new Vector3f(face[n]).fma(faceOffset, normal);
-                Vertex v = new Vertex(vertexPosition, null);
+                Vertex v = new Vertex(new Vector3f(face[n]), null);
                 v.addUV(mesh, material, faceUvs[n]);
                 v.setBinding(new BoneBinding(new Pair[]{Pair.of(root, 1f)}, BoneBindingFunc.BDEF, null));
                 mesh.getVertices()[n] = v;
@@ -188,6 +182,26 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
             }
             meshes.add(mesh);
         }
+    }
+
+    private static Vector3f[][] standardFaces(Vector3f min, Vector3f max) {
+        Vector3f v0 = new Vector3f(min.x,min.y,min.z), v1 = new Vector3f(max.x,min.y,min.z),
+                v2 = new Vector3f(max.x,max.y,min.z), v3 = new Vector3f(min.x,max.y,min.z),
+                v4 = new Vector3f(min.x,min.y,max.z), v5 = new Vector3f(max.x,min.y,max.z),
+                v6 = new Vector3f(max.x,max.y,max.z), v7 = new Vector3f(min.x,max.y,max.z);
+        return new Vector3f[][]{{v5,v1,v2,v6},{v0,v4,v7,v3},{v5,v4,v0,v1},{v2,v3,v7,v6},{v1,v0,v3,v2},{v4,v5,v6,v7}};
+    }
+
+    private static Vector3f[][] shapeFaces(BoxDef box) {
+        float x = box.offset.x, y = box.offset.y, z = box.offset.z;
+        float xw = x + box.size.x, yh = y + box.size.y, zd = z + box.size.z;
+        Vector3f[] c = box.corners;
+        Vector3f[] v = {new Vector3f(x-c[0].x,y-c[0].y,z-c[0].z),new Vector3f(xw+c[1].x,y-c[1].y,z-c[1].z),
+                new Vector3f(xw+c[5].x,yh+c[5].y,z-c[5].z),new Vector3f(x-c[4].x,yh+c[4].y,z-c[4].z),
+                new Vector3f(x-c[3].x,y-c[3].y,zd+c[3].z),new Vector3f(xw+c[2].x,y-c[2].y,zd+c[2].z),
+                new Vector3f(xw+c[6].x,yh+c[6].y,zd+c[6].z),new Vector3f(x-c[7].x,yh+c[7].y,zd+c[7].z)};
+        for (Vector3f p : v) p.mul(1f/16f);
+        return new Vector3f[][]{{v[5],v[1],v[2],v[6]},{v[0],v[4],v[7],v[3]},{v[5],v[4],v[0],v[1]},{v[2],v[3],v[7],v[6]},{v[1],v[0],v[3],v[2]},{v[4],v[5],v[6],v[7]}};
     }
 
     /** MTB stores the origin of the standard six-face cuboid UV net. */
@@ -208,7 +222,7 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
                 new Vector2f(x1 * sx, y1 * sy), new Vector2f(x0 * sx, y1 * sy)};
     }
 
-    private record BoxDef(Vector3f position, Vector3f size, Vector3f offset, Vector2i uv, Vector3f[] corners) {}
+    private record BoxDef(Vector3f position, Vector3f size, Vector3f offset, Vector3f rotation, Vector3f scale, Vector2i uv, Vector3f[] corners) {}
     @Override public MaterialSetBuilder<Integer> materialSetBuilder(){return materials;} @Override public String getName(){return name;}
     @Override public boolean isValidInput(Object input){return input instanceof ZipHelper;} @Override public HashMap<SourceType,HashMap<String,SourceManager<?>>> getSidedSources(){return sidedSources;}
     @Override public Texture loadTexture(Object id){return materials.getTexture((Integer)id);}
