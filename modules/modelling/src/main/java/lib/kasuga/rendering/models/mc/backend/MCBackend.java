@@ -38,6 +38,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Set;
 import java.util.Vector;
 import java.util.concurrent.ExecutorService;
@@ -51,6 +54,7 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
     private float t = 0;
     private final GlobalModelBatcher globalBatcher = new GlobalModelBatcher();
+    private final OitRenderer oitRenderer = new OitRenderer();
     private final Set<ModelInstance> sampledThisFrame = Collections.newSetFromMap(new IdentityHashMap<>());
     /** Static bounding radius per instance, computed on first frustum test. */
     private final Map<ModelInstance, Float> boundsCache = new IdentityHashMap<>();
@@ -64,6 +68,17 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
     @Override
     public void render(BackendContext<MCBridge, BackendInstance, MCBackendContext, BackendTransform> renderable, MCBackendContext context) {
+        render(renderable, context, ModelRenderPass.OPAQUE);
+    }
+
+    private void render(BackendContext<MCBridge, BackendInstance, MCBackendContext, BackendTransform> renderable,
+                        MCBackendContext context, ModelRenderPass pass) {
+        render(renderable, context, pass, RenderState.getRenderType(pass), OitRenderer.NORMAL);
+    }
+
+    private void render(BackendContext<MCBridge, BackendInstance, MCBackendContext, BackendTransform> renderable,
+                        MCBackendContext context, ModelRenderPass pass, RenderType renderType,
+                        int oitMode) {
         // Scheduling gate, mirroring vanilla's "renderer not called" semantics:
         // schedule mode → view distance → frustum. Culled instances neither
         // sample animation nor touch GPU buffers this frame.
@@ -109,12 +124,16 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         float ambientLightEnhancement = effectiveAmbientLightEnhancement(
                 model, BackendInstance.isIrisEnabled());
         instance.updateLightData(lightData.packedLight(), overlay, lightData.brightness());
-        if (!globalBatcher.isCollecting()
-                || !globalBatcher.submit(instance, poseStack.last().pose(), poseStack.last().normal(),
+        if (pass != ModelRenderPass.TRANSLUCENT && globalBatcher.isCollecting()
+                && globalBatcher.submit(instance, pass, poseStack.last().pose(), poseStack.last().normal(),
                 emissive, ambientLightEnhancement)) {
-            instance.drawBuffer(poseStack.last(), RenderState.getRenderType(),
+            // The opaque/mask batch is flushed before any translucent pass.
+            // This preserves pass order even though both paths share a global
+            // batching implementation.
+        } else {
+            instance.drawBuffer(pass, poseStack.last(), renderType,
                     context.getModelViewMatrix(), context.getProjectionMatrix(), emissive,
-                    ambientLightEnhancement);
+                    ambientLightEnhancement, oitMode);
         }
 
         poseStack.popPose();
@@ -223,24 +242,84 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
     @Override
     public void renderAllObjects(MCBackendContext context) {
-        sampledThisFrame.clear();
-        // Vanilla entities/block entities rendered earlier in this frame have
-        // deposited their decisions; flip them in before evaluating schedules.
-        ModelRenderScheduler.flipFrame();
+        renderAllObjects(context, ModelRenderPass.OPAQUE, true, false);
+        renderAllObjects(context, ModelRenderPass.MASK, false, false);
+        renderAllObjects(context, ModelRenderPass.TRANSLUCENT, false, true);
+    }
+
+    /**
+     * Renders one material pass. The frame is flipped once before OPAQUE and
+     * the sampled-instance cache is cleared after the final BLEND pass, so a
+     * model mounted through a vanilla renderer is sampled at most once even
+     * though its geometry can participate in multiple passes. Native BLEND
+     * rendering selects WBOIT; unsupported paths use the sorted fallback.
+     */
+    public void renderAllObjects(MCBackendContext context, ModelRenderPass pass,
+                                 boolean frameStart, boolean frameEnd) {
+        if (frameStart) {
+            sampledThisFrame.clear();
+            ModelRenderScheduler.flipFrame();
+        }
+
         try {
-            if (BackendInstance.isIrisEnabled() || RenderState.GLOBAL_BATCH_RENDER_TYPE == null) {
-                super.renderAllObjects(context);
+            if (pass == ModelRenderPass.TRANSLUCENT && oitRenderer.render(this, context)) {
                 return;
             }
-            globalBatcher.begin(context.getModelViewMatrix(), context.getProjectionMatrix());
-            try {
-                super.renderAllObjects(context);
-            } finally {
-                globalBatcher.flush();
+
+            renderObjectsInternal(context, pass, RenderState.getRenderType(pass),
+                    OitRenderer.NORMAL, pass != ModelRenderPass.TRANSLUCENT);
+        } finally {
+            if (frameEnd) sampledThisFrame.clear();
+        }
+    }
+
+    /**
+     * Draws a pass without touching the frame scheduler. OitRenderer invokes
+     * this twice for the same BLEND queue, once for each accumulation target.
+     */
+    void renderObjectsInternal(MCBackendContext context, ModelRenderPass pass,
+                               RenderType renderType, int oitMode, boolean sortTranslucent) {
+
+        boolean batch = pass != ModelRenderPass.TRANSLUCENT
+                && !BackendInstance.isIrisEnabled()
+                && RenderState.GLOBAL_BATCH_RENDER_TYPE != null;
+        try {
+            if (batch) {
+                globalBatcher.begin(context.getModelViewMatrix(), context.getProjectionMatrix());
+            }
+
+            List<BackendContext<MCBridge, BackendInstance, MCBackendContext, BackendTransform>> renderables =
+                    new ArrayList<>(getRenderingObjects().values());
+            renderables.removeIf(renderable -> !renderable.isRender());
+            if (pass == ModelRenderPass.TRANSLUCENT && sortTranslucent) {
+                Vec3 camera = context.getCamera() == null ? null : context.getCamera().getPosition();
+                if (camera != null) {
+                    renderables.sort(Comparator.comparingDouble(
+                            renderable -> -renderDistanceSquared(renderable.getModelInstance(), camera)));
+                }
+            }
+            for (BackendContext<MCBridge, BackendInstance, MCBackendContext, BackendTransform> renderable
+                    : renderables) {
+                render(renderable, context, pass, renderType, oitMode);
             }
         } finally {
-            sampledThisFrame.clear();
+            if (batch) {
+                globalBatcher.flush();
+            }
         }
+    }
+
+    private static double renderDistanceSquared(ModelInstance model, Vec3 camera) {
+        Vector3d origin = new Vector3d(model.getSkeletonInstance().getWorldOrigin());
+        var rootTransform = model.getSkeletonInstance().getTransform();
+        if (rootTransform != null && !rootTransform.isIdentity()) {
+            Vector3f position = rootTransform.getPosition();
+            origin.add(position.x, position.y, position.z);
+        }
+        double dx = origin.x - camera.x;
+        double dy = origin.y - camera.y;
+        double dz = origin.z - camera.z;
+        return dx * dx + dy * dy + dz * dz;
     }
 
     @Override
@@ -255,6 +334,7 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
     @Override
     public void close() throws Exception {
+        oitRenderer.close();
         globalBatcher.close();
         boundsCache.clear();
         executor.shutdown();

@@ -68,19 +68,23 @@ final class GlobalModelBatcher implements AutoCloseable {
         return collecting;
     }
 
-    boolean submit(BackendInstance instance, Matrix4f pose, Matrix3f normal,
+    boolean submit(BackendInstance instance, ModelRenderPass pass, Matrix4f pose, Matrix3f normal,
                    float emissiveStrength, float ambientLightEnhancement) {
-        if (!canBatch(instance)) return false;
-        BatchKey key = new BatchKey(instance.getMeshMode(), Float.floatToIntBits(emissiveStrength),
+        if (!canBatch(instance, pass)) return false;
+        BatchKey key = new BatchKey(pass, instance.getMeshMode(pass),
+                Float.floatToIntBits(emissiveStrength),
                 Float.floatToIntBits(ambientLightEnhancement));
         submissions.computeIfAbsent(key, ignored -> new ArrayList<>())
                 .add(new BatchItem(instance, new Matrix4f(pose), new Matrix3f(normal)));
         return true;
     }
 
-    private boolean canBatch(BackendInstance instance) {
+    private boolean canBatch(BackendInstance instance, ModelRenderPass pass) {
+        // Conventional source-over transparency must retain its sorted draw
+        // boundaries; merging it into this VBO would make order unrecoverable.
+        if (pass == ModelRenderPass.TRANSLUCENT) return false;
         if (!collecting || textureBufferLimitTexels < OBJECT_TEXELS) return false;
-        return requiredBoneTexels(instance) <= textureBufferLimitTexels;
+        return instance.hasPass(pass) && requiredBoneTexels(instance) <= textureBufferLimitTexels;
     }
 
     private static int requiredBoneTexels(BackendInstance instance) {
@@ -110,7 +114,8 @@ final class GlobalModelBatcher implements AutoCloseable {
                     drawCount++;
                     objectCount += to - from;
                     for (int i = from; i < to; i++) {
-                        submittedVertices += items.get(i).instance().getData().getVertexCount();
+                        FlatModelData data = items.get(i).instance().getData(entry.getKey().pass());
+                        if (data != null) submittedVertices += data.getVertexCount();
                     }
                     from = to;
                 }
@@ -161,7 +166,8 @@ final class GlobalModelBatcher implements AutoCloseable {
         submissions.clear();
     }
 
-    private record BatchKey(VertexFormat.Mode mode, int emissiveBits, int ambientLightEnhancementBits) {
+    static record BatchKey(ModelRenderPass pass, VertexFormat.Mode mode,
+                            int emissiveBits, int ambientLightEnhancementBits) {
         float emissiveStrength() {
             return Float.intBitsToFloat(emissiveBits);
         }
@@ -195,7 +201,8 @@ final class GlobalModelBatcher implements AutoCloseable {
         void draw(List<BatchItem> items, BatchKey key,
                   Matrix4f modelViewMatrix, Matrix4f projectionMatrix) {
             RenderSystem.assertOnRenderThread();
-            for (BatchItem item : items) item.instance().prepareForGlobalBatch();
+            this.entryPass = key.pass();
+            for (BatchItem item : items) item.instance().prepareForGlobalBatch(key.pass());
 
             boolean rebuilt = !matchesLayout(items);
             if (rebuilt) rebuild(items, key.mode());
@@ -210,10 +217,13 @@ final class GlobalModelBatcher implements AutoCloseable {
             if (layout.size() != items.size()) return false;
             for (int i = 0; i < layout.size(); i++) {
                 BackendInstance instance = items.get(i).instance();
-                if (layout.get(i) != instance || instance.getData().getVertexCount() <= 0) return false;
+                FlatModelData data = instance.getData(entryPass);
+                if (layout.get(i) != instance || data == null || data.getVertexCount() <= 0) return false;
             }
             return true;
         }
+
+        private ModelRenderPass entryPass;
 
         private void rebuild(List<BatchItem> items, VertexFormat.Mode mode) {
             layout.clear();
@@ -227,7 +237,7 @@ final class GlobalModelBatcher implements AutoCloseable {
                 layout.add(instance);
                 vertexOffsets.add(vertexCount);
                 boneOffsets.add(boneCount);
-                vertexCount += instance.getData().getVertexCount();
+                vertexCount += instance.getData(entryPass).getVertexCount();
                 BoneTransformTBO tbo = instance.getBoneTransformTBO();
                 if (!instance.usesCpuSkinning() && tbo != null) boneCount += tbo.getBoneCount();
             }
@@ -245,7 +255,7 @@ final class GlobalModelBatcher implements AutoCloseable {
         }
 
         private void copyWholeInstance(BackendInstance instance, int objectIndex, int globalVertex) {
-            FlatModelData data = instance.getData();
+            FlatModelData data = instance.getData(entryPass);
             int vertexSize = data.getVertexSize();
             int byteCount = data.getVertexCount() * vertexSize;
             MemoryUtil.memCopy(MemoryUtil.memAddress(data.getBuffer()),
@@ -258,7 +268,7 @@ final class GlobalModelBatcher implements AutoCloseable {
             BitSet mergedDirty = new BitSet(vertexCount);
             for (int objectIndex = 0; objectIndex < items.size(); objectIndex++) {
                 BackendInstance instance = items.get(objectIndex).instance();
-                FlatModelData data = instance.getData();
+                FlatModelData data = instance.getData(entryPass);
                 BitSet dirty = data.getDirtyVertices();
                 int globalOffset = vertexOffsets.get(objectIndex);
                 for (int start = dirty.nextSetBit(0); start >= 0;) {
@@ -282,7 +292,7 @@ final class GlobalModelBatcher implements AutoCloseable {
         private void clearDirtyVertices(List<BatchItem> items) {
             Set<BackendInstance> cleared = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
             for (BatchItem item : items) {
-                if (cleared.add(item.instance())) item.instance().clearBatchDirtyVertices();
+                if (cleared.add(item.instance())) item.instance().clearBatchDirtyVertices(entryPass);
             }
         }
 
@@ -407,12 +417,13 @@ final class GlobalModelBatcher implements AutoCloseable {
                     }
                     BoneTransformTBO tbo = instance.getBoneTransformTBO();
                     boolean gpuSkinning = !instance.usesCpuSkinning() && tbo != null && tbo.isValid();
-                    data.put(instance.getData().getBrightness())
+                    FlatModelData modelData = instance.getData(entryPass);
+                    data.put(modelData.getBrightness())
                             .put(boneOffsets.get(itemIndex))
                             .put(gpuSkinning ? 1f : 0f)
                             .put(0f);
-                    int light = instance.getData().getLightmap();
-                    int overlay = instance.getData().getOverlay();
+                    int light = modelData.getLightmap();
+                    int overlay = modelData.getOverlay();
                     data.put(light & 0xffff).put((light >>> 16) & 0xffff)
                             .put(overlay & 0xffff).put((overlay >>> 16) & 0xffff);
                 }
@@ -429,7 +440,7 @@ final class GlobalModelBatcher implements AutoCloseable {
 
         private void drawBuffer(BatchKey key, Matrix4f modelViewMatrix, Matrix4f projectionMatrix) {
             if (vertexBuffer == null || vertexCount == 0) return;
-            RenderType renderType = RenderState.GLOBAL_BATCH_RENDER_TYPE;
+            RenderType renderType = RenderState.getGlobalBatchRenderType(key.pass());
             ShaderInstance shader = null;
             boolean rasterizerDiscard = GL11.glGetBoolean(GL30.GL_RASTERIZER_DISCARD);
             try {
@@ -439,6 +450,8 @@ final class GlobalModelBatcher implements AutoCloseable {
                 batchShader.setBatchTextures(instanceTextureId, boneTextureId);
                 batchShader.setEmissiveStrength(key.emissiveStrength());
                 batchShader.setAmbientLightEnhancement(key.ambientLightEnhancement());
+                batchShader.setAlphaMode(key.pass().shaderAlphaMode());
+                batchShader.setOitMode(0);
                 shader.setDefaultUniforms(key.mode(), modelViewMatrix, projectionMatrix,
                         Minecraft.getInstance().getWindow());
                 shader.apply();

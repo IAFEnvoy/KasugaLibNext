@@ -47,6 +47,9 @@ public class KasugaShaderInstance extends ShaderInstance {
     private int packedOverlay = 0;
     private boolean gpuSkinningEnabled = false;
     private int boneTransformTextureId = 0;
+    private int alphaMode = 0;
+    /** 0 = normal output, 1 = weighted accumulation, 2 = revealage. */
+    private int oitMode = 0;
 
     @Setter
     private @Nullable PoseStack.Pose currentPose;
@@ -128,6 +131,23 @@ public class KasugaShaderInstance extends ShaderInstance {
         this.boneTransformTextureId = boneTransformTextureId;
     }
 
+    /** 0 = opaque, 1 = alpha mask, 2 = conventional translucent blend. */
+    public void setAlphaMode(int alphaMode) {
+        this.alphaMode = Math.clamp(alphaMode, 0, 2);
+    }
+
+    public int getAlphaMode() {
+        return alphaMode;
+    }
+
+    public void setOitMode(int oitMode) {
+        this.oitMode = Math.clamp(oitMode, 0, 2);
+    }
+
+    public int getOitMode() {
+        return oitMode;
+    }
+
     protected void applyAdditionalData() {
         // TODO: 记得同步修改着色器的相关系数
         this.safeGetUniform("ksg_EmissiveStrength").set(this.emissiveStrength);
@@ -139,6 +159,8 @@ public class KasugaShaderInstance extends ShaderInstance {
         this.safeGetUniform("ksg_PackedLight").set(this.packedLight & 0xffff, (this.packedLight >>> 16) & 0xffff);
         this.safeGetUniform("ksg_PackedOverlay").set(this.packedOverlay & 0xffff, (this.packedOverlay >>> 16) & 0xffff);
         this.safeGetUniform("ksg_GpuSkinningEnabled").set(this.gpuSkinningEnabled ? 1 : 0);
+        this.safeGetUniform("ksg_AlphaMode").set(this.alphaMode);
+        this.safeGetUniform("ksg_OitMode").set(this.oitMode);
         if (currentPose != null) {
             this.safeGetUniform("ksg_ModelPoseMat").set(this.currentPose.pose());
             this.safeGetUniform("ksg_ModelNormalMat").set(this.currentPose.normal());

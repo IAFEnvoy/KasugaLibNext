@@ -1,6 +1,6 @@
 # 模型渲染调度（Render Scheduling）
 
-UML 模型挂载到 `mc_backend` 之后由全局 AFTER_ENTITIES 管线绘制。本文回答
+UML 模型挂载到 `mc_backend` 之后由分阶段 world pipeline 绘制。本文回答
 "模型什么时候该渲染、什么时候不该渲染"，以及如何与 Minecraft 原版的
 渲染器（renderer）调度机制对接。
 
@@ -147,13 +147,17 @@ BlockEntityRenderers.register(MY_BE_TYPE,
 vanilla pass: entities + block entities
   └─ EntityRenderer.render / BER.render
        └─ ModelRenderScheduler.markRenderedThisFrame(instance)
-kasuga pipeline (AFTER_ENTITIES):
-  └─ MCBackend.renderAllObjects
-       ├─ flipFrame()                     // 固化本帧标记
-       └─ per instance:
-            schedule mode? → view distance? → frustum?
-            ├─ 通过 → sample(partialTick) → light/overlay → draw/batch
-            └─ 剔除 → 本帧零工作（不采样、不提交）
+kasuga pipelines:
+  └─ AFTER_ENTITIES (priority 0 → 1)
+       ├─ OPAQUE: no blend + depth write
+       └─ MASK: alpha discard + depth write
+  └─ AFTER_TRANSLUCENT_BLOCKS
+       └─ BLEND: low alpha discard + no depth write + weighted-blended OIT
+          (Iris/unsupported-target fallback: far-to-near sort)
+
+  The first pass calls flipFrame() to 固化本帧标记. The sampled-instance
+  cache remains alive until BLEND, so a mixed model is sampled once even
+  though its three material classes are submitted independently.
 ```
 
 标记缓冲采用双 buffer 交换：vanilla pass 写入的标记在管线开始时被固化，

@@ -1,7 +1,9 @@
 package lib.kasuga.rendering.models.mc.backend;
 
 import com.google.common.collect.ImmutableList;
+import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormatElement;
 import lib.kasuga.KasugaLib;
@@ -26,13 +28,58 @@ import java.util.function.Supplier;
 public class RenderState {
 
     public static final VertexFormat UML_VERTEX_FORMAT;
+    /** Compatibility aliases retained for callers that used the old single pass. */
     public static RenderType RENDER_TYPE;
     public static RenderType IRIS_COMPAT_RENDER_TYPE;
     public static RenderType GLOBAL_BATCH_RENDER_TYPE;
+    public static RenderType OPAQUE_RENDER_TYPE;
+    public static RenderType CUTOUT_RENDER_TYPE;
+    public static RenderType TRANSLUCENT_RENDER_TYPE;
+    public static RenderType IRIS_OPAQUE_RENDER_TYPE;
+    public static RenderType IRIS_CUTOUT_RENDER_TYPE;
+    public static RenderType IRIS_TRANSLUCENT_RENDER_TYPE;
+    public static RenderType GLOBAL_OPAQUE_RENDER_TYPE;
+    public static RenderType GLOBAL_CUTOUT_RENDER_TYPE;
+    public static RenderType GLOBAL_TRANSLUCENT_RENDER_TYPE;
+    /** Geometry states used by the two-pass weighted-blended OIT path. */
+    public static RenderType OIT_ACCUMULATION_RENDER_TYPE;
+    public static RenderType OIT_REVEALAGE_RENDER_TYPE;
     public static final RenderStateShard.EmptyTextureStateShard UML_TEXTURE_STATE;
+    /** The OIT target is bound by OitTarget; this state must not rebind MAIN_TARGET. */
+    public static final RenderStateShard.OutputStateShard OIT_TARGET =
+            new RenderStateShard.OutputStateShard("kasuga_oit_target", () -> {}, () -> {});
+    /** Accumulation receives premultiplied color and weight, so both terms add directly. */
+    public static final RenderStateShard.TransparencyStateShard OIT_ACCUMULATION_TRANSPARENCY =
+            new RenderStateShard.TransparencyStateShard(
+                    "kasuga_oit_accumulation",
+                    () -> {
+                        RenderSystem.enableBlend();
+                        RenderSystem.blendFunc(GlStateManager.SourceFactor.ONE,
+                                GlStateManager.DestFactor.ONE);
+                    },
+                    () -> {
+                        RenderSystem.disableBlend();
+                        RenderSystem.defaultBlendFunc();
+                    }
+            );
+    /** Destination transmittance: R_dst *= (1 - alpha_src). */
+    public static final RenderStateShard.TransparencyStateShard OIT_REVEALAGE_TRANSPARENCY =
+            new RenderStateShard.TransparencyStateShard(
+                    "kasuga_oit_revealage",
+                    () -> {
+                        RenderSystem.enableBlend();
+                        RenderSystem.blendFunc(GlStateManager.SourceFactor.ZERO,
+                                GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA);
+                    },
+                    () -> {
+                        RenderSystem.disableBlend();
+                        RenderSystem.defaultBlendFunc();
+                    }
+            );
     public static final ResourceLocation DEFAULT_TRANSPARENCY = ResourceLocation.tryBuild(KasugaLib.MODID, "textures/atlas/default_transparency.png");
 
     public static final VertexFormatElement TANGENT;
+    public static final VertexFormatElement ALPHA_CUTOFF;
     public static final VertexFormatElement BONE_INDICES;
     public static final VertexFormatElement BONE_WEIGHTS;
     public static final VertexFormatElement BONE_BINDING_TYPE;
@@ -53,6 +100,7 @@ public class RenderState {
     public static RenderStateShard.ShaderStateShard GLOBAL_BATCH_SHADER;
     public static ShaderInstance UML_SHADER_INSTANCE;
     public static ShaderInstance GLOBAL_BATCH_SHADER_INSTANCE;
+    public static ShaderInstance OIT_COMPOSITE_SHADER_INSTANCE;
     private static final ResourceMetadata SPRITE_METADATA;
 
 
@@ -78,6 +126,12 @@ public class RenderState {
                 VertexFormatElement.Type.FLOAT,
                 VertexFormatElement.Usage.GENERIC,
                 4
+        );
+        ALPHA_CUTOFF = VertexFormatElement.register(
+                VertexFormatElement.findNextId(), 0,
+                VertexFormatElement.Type.FLOAT,
+                VertexFormatElement.Usage.GENERIC,
+                1
         );
         BONE_INDICES = VertexFormatElement.register(
                 VertexFormatElement.findNextId(), 0,
@@ -148,6 +202,7 @@ public class RenderState {
                 .add("sdefC", SDEF_C)
                 .add("TextureUV", TEXTURE_UV)
                 .add("TextureBounds", TEXTURE_BOUNDS)
+                .add("AlphaCutoff", ALPHA_CUTOFF)
                 .build();
 
         UML_TEXTURE_STATE = new KasugaTextureStateShard(() -> Constants.TEXTURE_BASIC);
@@ -196,10 +251,45 @@ public class RenderState {
     }
 
     public static RenderType getRenderType() {
-        return IrisCompat.isUsingShaderPack() ? IRIS_COMPAT_RENDER_TYPE : RENDER_TYPE;
+        return getRenderType(ModelRenderPass.TRANSLUCENT);
     }
 
     public static RenderType getRenderType(boolean iris) {
-        return iris ? IRIS_COMPAT_RENDER_TYPE : RENDER_TYPE;
+        return getRenderType(iris, ModelRenderPass.TRANSLUCENT);
+    }
+
+    public static RenderType getRenderType(ModelRenderPass pass) {
+        return getRenderType(IrisCompat.isUsingShaderPack(), pass);
+    }
+
+    public static RenderType getRenderType(boolean iris, ModelRenderPass pass) {
+        if (iris) {
+            return switch (pass) {
+                case OPAQUE -> IRIS_OPAQUE_RENDER_TYPE;
+                case MASK -> IRIS_CUTOUT_RENDER_TYPE;
+                case TRANSLUCENT -> IRIS_TRANSLUCENT_RENDER_TYPE;
+            };
+        }
+        return switch (pass) {
+            case OPAQUE -> OPAQUE_RENDER_TYPE;
+            case MASK -> CUTOUT_RENDER_TYPE;
+            case TRANSLUCENT -> TRANSLUCENT_RENDER_TYPE;
+        };
+    }
+
+    public static RenderType getGlobalBatchRenderType(ModelRenderPass pass) {
+        return switch (pass) {
+            case OPAQUE -> GLOBAL_OPAQUE_RENDER_TYPE;
+            case MASK -> GLOBAL_CUTOUT_RENDER_TYPE;
+            case TRANSLUCENT -> GLOBAL_TRANSLUCENT_RENDER_TYPE;
+        };
+    }
+
+    public static RenderType getOitRenderType(int oitMode) {
+        return switch (oitMode) {
+            case 1 -> OIT_ACCUMULATION_RENDER_TYPE;
+            case 2 -> OIT_REVEALAGE_RENDER_TYPE;
+            default -> throw new IllegalArgumentException("Unknown OIT geometry mode: " + oitMode);
+        };
     }
 }

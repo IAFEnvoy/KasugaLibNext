@@ -18,6 +18,7 @@ in vec3 sdefR1;
 in vec3 sdefC;
 in vec2 TextureUV;
 in vec4 TextureBounds;
+in float AlphaCutoff;
 
 uniform mat4 ModelViewMat;
 uniform mat4 ProjMat;
@@ -36,6 +37,7 @@ out vec4 overlayColor;
 out vec2 texCoord0;
 out vec2 textureUV;
 flat out vec4 textureBounds;
+flat out float alphaCutoff;
 out vec3 viewPos;
 out vec3 viewNormal;
 out mat3 TBN;
@@ -79,6 +81,7 @@ void main() {
     texCoord0 = UV0;
     textureUV = TextureUV;
     textureBounds = TextureBounds;
+    alphaCutoff = AlphaCutoff;
 
     vec4 viewPos4 = ModelViewMat * posWorld;
     viewPos = viewPos4.xyz;

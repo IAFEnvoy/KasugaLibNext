@@ -22,6 +22,8 @@ uniform float ksg_ParallaxScale;
 uniform int ksg_ParallaxSamples;
 uniform float ksg_AmbientLightEnhancement;
 uniform float ksg_StylizedShadingStrength;
+uniform int ksg_AlphaMode;
+uniform int ksg_OitMode;
 
 in float vertexDistance;
 in vec4 vertexColor;
@@ -30,6 +32,7 @@ in vec4 overlayColor;
 in vec2 texCoord0;
 in vec2 textureUV;
 flat in vec4 textureBounds;
+flat in float alphaCutoff;
 in vec3 viewPos;
 in vec3 viewNormal;
 in mat3 TBN;
@@ -168,6 +171,21 @@ void main() {
     vec2 texCoord = steepParallaxMapping(depth, originalTexCoord, viewDir);
 
     vec4 albedo = texture(Sampler0, texCoord);
+    // Alpha classification is supplied by the material pass. MASK fragments
+    // are depth-writing only after rejection; BLEND keeps its effective alpha
+    // for conventional source-over blending and only removes invisible texels.
+    float effectiveAlpha = albedo.a * vertexColor.a * ColorModulator.a;
+    if (ksg_AlphaMode == 1) {
+        if (effectiveAlpha < alphaCutoff) discard;
+        effectiveAlpha = 1.0;
+    } else if (ksg_AlphaMode == 2) {
+        // BLEND's work-saving cutoff is intentionally independent from the
+        // material MASK cutoff. A translucent material must retain alpha
+        // values such as 0.25 rather than inheriting the usual 0.5 mask rule.
+        if (effectiveAlpha <= (1.0 / 255.0)) discard;
+    } else {
+        effectiveAlpha = 1.0;
+    }
     vec3 normalTexture = texture(ksg_NormalMap, texCoord).rgb;
     vec4 specularTexture = texture(ksg_SpecularMap, texCoord);
 
@@ -264,8 +282,23 @@ void main() {
     color *= ColorModulator.rgb;
 
     color += albedo.rgb * emission;
-    float alpha = albedo.a * ColorModulator.a;
+    float alpha = effectiveAlpha;
     vec4 finalColor = vec4(color, alpha);
 
-    fragColor = linear_fog(finalColor, vertexDistance, FogStart, FogEnd, FogColor);
+    vec4 shadedColor = linear_fog(finalColor, vertexDistance, FogStart, FogEnd, FogColor);
+    if (ksg_OitMode == 1) {
+        // Bounded depth-aware weighting favors fragments nearer the camera
+        // without making the aggregate depend on draw order.
+        float oitWeight = clamp(
+                pow(max(0.0, 1.0 - gl_FragCoord.z), 3.0) * 8.0 + 0.01,
+                0.01, 8.0);
+        fragColor = vec4(shadedColor.rgb * shadedColor.a * oitWeight,
+                shadedColor.a * oitWeight);
+    } else if (ksg_OitMode == 2) {
+        // The revealage pass uses source=0 and destination=1-alpha. Only
+        // source alpha matters; the red channel is ignored by the blend.
+        fragColor = vec4(0.0, 0.0, 0.0, clamp(shadedColor.a, 0.0, 1.0));
+    } else {
+        fragColor = shadedColor;
+    }
 }
