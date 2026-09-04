@@ -169,6 +169,11 @@ public class BackendInstance implements AutoCloseable {
                     modelViewMatrix, projectionMatrix,
                     s -> setupShader(s, pose, emissiveStrength, ambientLightEnhancement, pass, oitMode)
             ).get();
+            // Iris shader programs bind their own gbuffer and may apply pack-
+            // supplied blend overrides in ShaderInstance.apply(). OIT must
+            // reclaim its attachment after that point and immediately before
+            // the draw call.
+            OitRenderer.rebindAfterShaderApply(oitMode);
             buffer.draw(modelViewMatrix, projectionMatrix, shader);
         } finally {
             context.exit(shader, renderType);

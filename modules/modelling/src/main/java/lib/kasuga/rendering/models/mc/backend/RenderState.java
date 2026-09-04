@@ -44,6 +44,10 @@ public class RenderState {
     /** Geometry states used by the two-pass weighted-blended OIT path. */
     public static RenderType OIT_ACCUMULATION_RENDER_TYPE;
     public static RenderType OIT_REVEALAGE_RENDER_TYPE;
+    /** Iris-shaded geometry variants. Their framebuffer/blend state is
+     * reasserted after Iris applies the shader pack program. */
+    public static RenderType IRIS_OIT_ACCUMULATION_RENDER_TYPE;
+    public static RenderType IRIS_OIT_REVEALAGE_RENDER_TYPE;
     public static final RenderStateShard.EmptyTextureStateShard UML_TEXTURE_STATE;
     /** The OIT target is bound by OitTarget; this state must not rebind MAIN_TARGET. */
     public static final RenderStateShard.OutputStateShard OIT_TARGET =
@@ -286,9 +290,13 @@ public class RenderState {
     }
 
     public static RenderType getOitRenderType(int oitMode) {
+        return getOitRenderType(oitMode, false);
+    }
+
+    public static RenderType getOitRenderType(int oitMode, boolean iris) {
         return switch (oitMode) {
-            case 1 -> OIT_ACCUMULATION_RENDER_TYPE;
-            case 2 -> OIT_REVEALAGE_RENDER_TYPE;
+            case 1 -> iris ? IRIS_OIT_ACCUMULATION_RENDER_TYPE : OIT_ACCUMULATION_RENDER_TYPE;
+            case 2 -> iris ? IRIS_OIT_REVEALAGE_RENDER_TYPE : OIT_REVEALAGE_RENDER_TYPE;
             default -> throw new IllegalArgumentException("Unknown OIT geometry mode: " + oitMode);
         };
     }

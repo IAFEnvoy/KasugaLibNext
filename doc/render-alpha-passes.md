@@ -17,7 +17,7 @@ glTF 的 `alphaMode` 和 `alphaCutoff` 由 `GltfMaterialData` 传到后端。没
 contract 的旧 loader 默认使用 `OPAQUE`；PMX loader 根据 diffuse alpha 和纹理 alpha
 推断 OPAQUE/MASK/BLEND。
 
-BLEND 的原生路径是两次几何子 pass 的 weighted-blended OIT（WBOIT）：第一遍把
+BLEND 的非 Iris 路径是两次几何子 pass 的 weighted-blended OIT（WBOIT）：第一遍把
 `color * alpha * weight` 与 `alpha * weight` 加到 `RGBA16F` accumulation，第二遍把
 `1 - alpha` 乘入 `R16F` revealage。两遍都使用从主 framebuffer 复制的场景深度，只测深度
 而不写深度；最后 fullscreen resolve 计算
@@ -25,10 +25,25 @@ BLEND 的原生路径是两次几何子 pass 的 weighted-blended OIT（WBOIT）
 straight-alpha source-over 合成回主目标。因此 KasugaLib 的 BLEND 几何在这条路径上
 不依赖远到近提交顺序。
 
+启用 Iris shaderpack 时也使用同一套 accumulation/revealage/resolve 目标，但保留 Iris 的
+`entities_translucent` shader 来产生材质、PBR、光照和雾化后的 straight-alpha 颜色。由于
+无法在不改 shaderpack 的情况下向其 fragment shader 注入 Kasuga 的深度权重，Iris 路径
+使用权重为 1 的常权重 WBOIT：RGB 以 `SRC_ALPHA, ONE` 累积，A 以 `ONE, ONE` 累积，
+revealage 仍为 `ZERO, ONE_MINUS_SRC_ALPHA`。Iris 1.8.12 的 translucent entity shader
+自带 0.1 alpha test，低于 MASK 常用的 0.5 cutoff。
+
+Iris 会在每次 `ShaderInstance.apply()` 中绑定 shaderpack gbuffer 并可覆盖 blend state，
+所以 Kasuga 在 apply 后、draw 前重新绑定 OIT attachment，并显式恢复 blend equation、
+blend factors、color/depth mask。场景深度从 Iris 的 after-translucent default framebuffer
+复制，resolve 也回写同一个 framebuffer；只允许专用的 OIT composite shader 绕过 Iris
+unknown-shader guard，不放宽其他 mod shader 的兼容策略。
+
 WBOIT 是近似算法，不是精确的任意层 source-over，也不把 vanilla 水面或 shaderpack
 的透明片元纳入同一个 OIT 方程；当前阶段仍是 `AFTER_TRANSLUCENT_BLOCKS`，所以它的
-作用域是“KasugaLib BLEND 层叠加到已经完成的场景”。开启 Iris shaderpack、浮点目标
-或 framebuffer 不可用时，安全回退到旧的远到近排序路径。
+作用域是“KasugaLib BLEND 层叠加到已经完成的场景”。浮点目标不可用、Iris pipeline
+没有可绑定的 world framebuffer 或运行时 framebuffer 操作失败时，安全回退到旧的
+远到近排序路径。Iris OIT 只 resolve 主颜色；依赖自定义额外 gbuffer 通道表达透明材质的
+shaderpack 仍可能需要 pack 专用集成。
 
 MASK 的材质 `alphaCutoff` 与 BLEND 的 `1/255` 近零工作 cutoff 是两个独立概念：前者
 决定是否写入深度，后者只移除几乎不可见的 OIT 工作项。

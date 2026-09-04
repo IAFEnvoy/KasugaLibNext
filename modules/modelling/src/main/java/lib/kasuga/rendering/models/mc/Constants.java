@@ -25,6 +25,7 @@ import lib.kasuga.rendering.effect.shader.ShaderParameterPersistence;
 import lib.kasuga.rendering.models.mc.backend.*;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaGlobalBatchShaderInstance;
+import lib.kasuga.rendering.models.mc.backend.data_type.OitCompositeShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.ui.UIBackend;
 import lib.kasuga.rendering.models.mc.compat.iris.IrisCompat;
 import lib.kasuga.rendering.models.mc.registry.PipelineRegistry;
@@ -183,7 +184,11 @@ public class Constants {
             throw new RuntimeException("Failed to load shader 'ksglib_global_batch'", e);
         }
         try {
-            ShaderInstance shaderInstance = new ShaderInstance(
+            // Iris normally suppresses unknown core shaders while a shader
+            // pack owns world rendering. Register this one narrow exception:
+            // the OIT resolve explicitly targets Iris' active world buffer.
+            IrisCompat.allowOitCompositeShader();
+            ShaderInstance shaderInstance = new OitCompositeShaderInstance(
                     provider, ResourceLocation.tryBuild("kasuga_lib", "ksglib_oit_composite"),
                     DefaultVertexFormat.BLIT_SCREEN
             );
@@ -225,6 +230,10 @@ public class Constants {
                 "kasuga_lib:uml_oit_accumulation_render_type", RenderState.OIT_ACCUMULATION_TRANSPARENCY);
         RenderState.OIT_REVEALAGE_RENDER_TYPE = createOitRenderType(
                 "kasuga_lib:uml_oit_revealage_render_type", RenderState.OIT_REVEALAGE_TRANSPARENCY);
+        RenderState.IRIS_OIT_ACCUMULATION_RENDER_TYPE = createIrisOitRenderType(
+                "kasuga_lib:iris_oit_accumulation_render_type", RenderState.OIT_ACCUMULATION_TRANSPARENCY);
+        RenderState.IRIS_OIT_REVEALAGE_RENDER_TYPE = createIrisOitRenderType(
+                "kasuga_lib:iris_oit_revealage_render_type", RenderState.OIT_REVEALAGE_TRANSPARENCY);
 
         // Compatibility aliases for integrations that still request the old
         // single render type. New model rendering uses pass-specific lookups.
@@ -243,6 +252,8 @@ public class Constants {
         event.registerRenderBuffer(RenderState.IRIS_TRANSLUCENT_RENDER_TYPE);
         event.registerRenderBuffer(RenderState.OIT_ACCUMULATION_RENDER_TYPE);
         event.registerRenderBuffer(RenderState.OIT_REVEALAGE_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.IRIS_OIT_ACCUMULATION_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.IRIS_OIT_REVEALAGE_RENDER_TYPE);
     }
 
     private static RenderType createModelRenderType(String name,
@@ -314,6 +325,27 @@ public class Constants {
                         .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
                         // The copied scene depth is read-only for both OIT
                         // geometry passes; the color attachment remains writable.
+                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                        .setLineState(RenderStateShard.DEFAULT_LINE)
+                        .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
+                        .createCompositeState(false));
+    }
+
+    private static RenderType createIrisOitRenderType(
+            String name, RenderStateShard.TransparencyStateShard transparency) {
+        return RenderType.create(name, DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS,
+                64 * 1024 * 1024, true, false,
+                RenderType.CompositeState.builder()
+                        .setTextureState(RenderState.UML_TEXTURE_STATE)
+                        .setShaderState(RenderStateShard.RENDERTYPE_ENTITY_TRANSLUCENT_SHADER)
+                        .setTransparencyState(transparency)
+                        .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
+                        .setCullState(RenderStateShard.CULL)
+                        .setLightmapState(RenderStateShard.LIGHTMAP)
+                        .setOverlayState(RenderStateShard.OVERLAY)
+                        .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
+                        .setOutputState(RenderState.OIT_TARGET)
+                        .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
                         .setWriteMaskState(RenderStateShard.COLOR_WRITE)
                         .setLineState(RenderStateShard.DEFAULT_LINE)
                         .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)

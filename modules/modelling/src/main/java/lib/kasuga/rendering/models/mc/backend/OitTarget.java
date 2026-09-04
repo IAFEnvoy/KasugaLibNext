@@ -27,13 +27,8 @@ final class OitTarget implements AutoCloseable {
     private int width;
     private int height;
 
-    void ensureSize(RenderTarget mainTarget) {
+    void ensureSize(int targetWidth, int targetHeight) {
         RenderSystem.assertOnRenderThread();
-        // Use the physical target size: it is the size of the attached color
-        // and depth images used by the blit operation. The normal world target
-        // has viewWidth/viewHeight equal to these values.
-        int targetWidth = mainTarget.width;
-        int targetHeight = mainTarget.height;
         if (targetWidth <= 0 || targetHeight <= 0) {
             throw new IllegalArgumentException("OIT target dimensions must be positive");
         }
@@ -70,9 +65,13 @@ final class OitTarget implements AutoCloseable {
     }
 
     void prepare(RenderTarget mainTarget) {
+        prepare(mainTarget.frameBufferId, mainTarget.width, mainTarget.height);
+    }
+
+    void prepare(int sourceFramebufferId, int sourceWidth, int sourceHeight) {
         RenderSystem.assertOnRenderThread();
-        ensureSize(mainTarget);
-        copyDepth(mainTarget);
+        ensureSize(sourceWidth, sourceHeight);
+        copyDepth(sourceFramebufferId, sourceWidth, sourceHeight);
         clearColorAttachments();
     }
 
@@ -96,11 +95,11 @@ final class OitTarget implements AutoCloseable {
         return depthTextureId;
     }
 
-    private void copyDepth(RenderTarget mainTarget) {
-        GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, mainTarget.frameBufferId);
+    private void copyDepth(int sourceFramebufferId, int sourceWidth, int sourceHeight) {
+        GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, sourceFramebufferId);
         GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, framebufferId);
         GlStateManager._glBlitFrameBuffer(
-                0, 0, mainTarget.width, mainTarget.height,
+                0, 0, sourceWidth, sourceHeight,
                 0, 0, width, height,
                 GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST
         );
