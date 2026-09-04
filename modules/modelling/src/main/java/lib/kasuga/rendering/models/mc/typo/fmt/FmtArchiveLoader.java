@@ -165,14 +165,15 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
             Vector3f windingVertex = face[1];
             face[1] = face[3];
             face[3] = windingVertex;
-            Vector3f normal = new Vector3f(face[1]).sub(face[0]).cross(new Vector3f(face[2]).sub(face[0]));
-            if (normal.lengthSquared() < 1e-10f) continue;
-            normal.normalize();
-            Mesh mesh = new Mesh(new Vertex[4], normal, new Transform(), new Material[]{material}, null);
             Vector2f[] faceUvs = atlasUvs(box, faceIndex, (int) material.getTextures()[0].getWidth(), (int) material.getTextures()[0].getHeight());
             Vector2f windingUv = faceUvs[1];
             faceUvs[1] = faceUvs[3];
             faceUvs[3] = windingUv;
+            collapseTriangleFace(face, faceUvs);
+            Vector3f normal = new Vector3f(face[1]).sub(face[0]).cross(new Vector3f(face[2]).sub(face[0]));
+            if (normal.lengthSquared() < 1e-10f) continue;
+            normal.normalize();
+            Mesh mesh = new Mesh(new Vertex[4], normal, new Transform(), new Material[]{material}, null);
             for (int n = 0; n < 4; n++) {
                 Vertex v = new Vertex(new Vector3f(face[n]), null);
                 v.addUV(mesh, material, faceUvs[n]);
@@ -182,6 +183,40 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
             }
             meshes.add(mesh);
         }
+    }
+
+    /**
+     * ShapeBox encodes a triangular end cap by collapsing two of its four
+     * corner positions. The backend renders QUADS, so preserve that triangle
+     * as {@code vec0, vec1, vec2, vec2} instead of submitting a malformed
+     * four-corner polygon.
+     */
+    private static void collapseTriangleFace(Vector3f[] face, Vector2f[] uvs) {
+        Vector3f[] uniquePositions = new Vector3f[3];
+        Vector2f[] uniqueUvs = new Vector2f[3];
+        int uniqueCount = 0;
+        for (int i = 0; i < face.length; i++) {
+            boolean duplicate = false;
+            for (int j = 0; j < uniqueCount; j++) {
+                if (face[i].distanceSquared(uniquePositions[j]) <= 1e-10f) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                if (uniqueCount == uniquePositions.length) return;
+                uniquePositions[uniqueCount] = face[i];
+                uniqueUvs[uniqueCount] = uvs[i];
+                uniqueCount++;
+            }
+        }
+        if (uniqueCount != 3) return;
+        for (int i = 0; i < 3; i++) {
+            face[i] = uniquePositions[i];
+            uvs[i] = uniqueUvs[i];
+        }
+        face[3] = new Vector3f(uniquePositions[2]);
+        uvs[3] = new Vector2f(uniqueUvs[2]);
     }
 
     private static Vector3f[][] standardFaces(Vector3f min, Vector3f max) {
@@ -208,18 +243,24 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
     private static Vector2f[] atlasUvs(BoxDef box, int face, int textureWidth, int textureHeight) {
         float w = Math.abs(box.size.x), h = Math.abs(box.size.y), d = Math.abs(box.size.z);
         float u = box.uv.x, v = box.uv.y;
-        float x0, y0, x1, y1;
+        float x, y, ex, ey;
         switch (face) {
-            case 0 -> { x0 = u + d + w; y0 = v; x1 = x0 + w; y1 = y0 + d; } // bottom
-            case 1 -> { x0 = u + d; y0 = v; x1 = x0 + w; y1 = y0 + d; } // top
-            case 2 -> { x0 = u + d; y0 = v + d; x1 = x0 + w; y1 = y0 + h; } // front
-            case 3 -> { x0 = u + d + w + d; y0 = v + d; x1 = x0 + w; y1 = y0 + h; } // back
-            case 4 -> { x0 = u; y0 = v + d; x1 = x0 + d; y1 = y0 + h; } // left
-            default -> { x0 = u + d + w; y0 = v + d; x1 = x0 + d; y1 = y0 + h; } // right
+            // This is the same net and face order as FMT's
+            // Generators.genBox/genBoxFace implementation.
+            case 0 -> { x = d + w; y = d; ex = d; ey = h; } // v5,v1,v2,v6
+            case 1 -> { x = 0;     y = d; ex = d; ey = h; } // v0,v4,v7,v3
+            case 2 -> { x = d;     y = 0; ex = w; ey = d; } // v5,v4,v0,v1
+            case 3 -> { x = d + w; y = 0; ex = w; ey = d; } // v2,v3,v7,v6
+            case 4 -> { x = d;     y = d; ex = w; ey = h; } // v1,v0,v3,v2
+            default -> { x = d + w + d; y = d; ex = w; ey = h; } // v4,v5,v6,v7
         }
+        float x0 = u + x, y0 = v + y, x1 = x0 + ex, y1 = y0 + ey;
         float sx = 1f / Math.max(1, textureWidth), sy = 1f / Math.max(1, textureHeight);
-        return new Vector2f[]{new Vector2f(x0 * sx, y0 * sy), new Vector2f(x1 * sx, y0 * sy),
-                new Vector2f(x1 * sx, y1 * sy), new Vector2f(x0 * sx, y1 * sy)};
+        // genBoxFace assigns UVs as (xe,ys), (xs,ys), (xs,ye), (xe,ye)
+        // to match its face vertex order. Keep that pairing before the
+        // winding correction in appendBox().
+        return new Vector2f[]{new Vector2f(x1 * sx, y0 * sy), new Vector2f(x0 * sx, y0 * sy),
+                new Vector2f(x0 * sx, y1 * sy), new Vector2f(x1 * sx, y1 * sy)};
     }
 
     private record BoxDef(Vector3f position, Vector3f size, Vector3f offset, Vector3f rotation, Vector3f scale, Vector2i uv, Vector3f[] corners) {}
