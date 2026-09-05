@@ -43,6 +43,9 @@ public class FlatModelData implements AutoCloseable {
 
     public static final boolean IS_LITTLE_ENDIAN = ByteOrder.nativeOrder().equals(ByteOrder.LITTLE_ENDIAN);
 
+    @Nullable
+    private final ModelRenderPass renderPass;
+
     @Getter
     protected final int vertexCount;
 
@@ -55,7 +58,7 @@ public class FlatModelData implements AutoCloseable {
             overlayOffset, lightmapOffset,
             bindingTypeOffset, bindingBoneOffset, bindingWeightOffset,
             sdefR0Offset, sdefR1Offset, sdefCOffset,
-            textureUvOffset, textureBoundsOffset;
+            textureUvOffset, textureBoundsOffset, alphaCutoffOffset;
 
     @Getter
     protected final ByteBuffer buffer;
@@ -143,7 +146,19 @@ public class FlatModelData implements AutoCloseable {
                          @Nullable BiConsumer<Sprite, Vector4f> materialColorBlender,
                          float brightness, boolean readAlpha, boolean cpuSkinning,
                          int overlay, int lightmap) {
+        this(model, vertexSize, bufOffsets, materialColorBlender, brightness, readAlpha,
+                cpuSkinning, overlay, lightmap, null);
+    }
+
+    public FlatModelData(ModelInstance model,
+                         int vertexSize,
+                         Map<VertexFormatElement, Integer> bufOffsets,
+                         @Nullable BiConsumer<Sprite, Vector4f> materialColorBlender,
+                         float brightness, boolean readAlpha, boolean cpuSkinning,
+                         int overlay, int lightmap,
+                         @Nullable ModelRenderPass renderPass) {
         this.model = model;
+        this.renderPass = renderPass;
         this.meshMode = model.getModel().getMeshMode();
         this.instanceMeshMode = model.getMeshMode();
         this.vertexSize = vertexSize;
@@ -170,6 +185,7 @@ public class FlatModelData implements AutoCloseable {
         this.sdefCOffset = bufOffsets.getOrDefault(RenderState.SDEF_C, -1);
         this.textureUvOffset = bufOffsets.getOrDefault(RenderState.TEXTURE_UV, -1);
         this.textureBoundsOffset = bufOffsets.getOrDefault(RenderState.TEXTURE_BOUNDS, -1);
+        this.alphaCutoffOffset = bufOffsets.getOrDefault(RenderState.ALPHA_CUTOFF, -1);
 
         this.materials = model.getModel().getMaterialSet().getMaterials();
         this.materialUvBounds = new float[materials.length * 8];
@@ -234,7 +250,9 @@ public class FlatModelData implements AutoCloseable {
 
             // 每个纹理分别处理为一个面，每一层纹理稍微往外凸一点点
             vCount += calculateVertexCount(mesh.getVertices().length) *
-                    mesh.getMaterials().length;
+                    (renderPass == null ? mesh.getMaterials().length :
+                            (int) Arrays.stream(mesh.getMaterials())
+                                    .filter(renderPass::matches).count());
         }
 
         this.vertexCount = vCount;
@@ -302,6 +320,7 @@ public class FlatModelData implements AutoCloseable {
                     computeIfAbsent(mesh, m -> new ArrayList<>());
 
             for (Material mat :  materials) {
+                if (renderPass != null && !renderPass.matches(mat)) continue;
                 currentMaterialIndices = buildingMaterialIndices.
                         computeIfAbsent(mat, m -> new ArrayList<>());
                 for (Vertex vertex : vertices) {
@@ -383,7 +402,8 @@ public class FlatModelData implements AutoCloseable {
         List<Integer[]> updatedVertices = new ArrayList<>();
         if (!morphInstance.getDirtyVertices().isEmpty()) {
             for (int i = dirtyVertices.nextSetBit(0); i >= 0; i = dirtyVertices.nextSetBit(i + 1)) {
-                updatedVertices.add(vertexByIndex.get(model.getModel().getVertices()[i]));
+                Integer[] indices = vertexByIndex.get(model.getModel().getVertices()[i]);
+                if (indices != null) updatedVertices.add(indices);
             }
         }
         Vector3f pos = new Vector3f(),
@@ -664,6 +684,7 @@ public class FlatModelData implements AutoCloseable {
             fillTangentToBuffer(vertex, bufOrg);
         }
         fillColorToBuffer(vertex, bufOrg);
+        fillAlphaCutoffToBuffer(vertex, bufOrg);
         fillUvToBuffer(vertex, bufOrg, v2fCache);
 
         fillBoneAndWeightToBuffer(vertex, bufOrg);
@@ -878,19 +899,26 @@ public class FlatModelData implements AutoCloseable {
         float r = colors[posPos] * materialColors[matIndex] * meshColors[meshIndex] * brightness;
         float g = colors[posPos + 1] * materialColors[matIndex + 1] * meshColors[meshIndex + 1] * brightness;
         float b = colors[posPos + 2] * materialColors[matIndex + 2] * meshColors[meshIndex + 2] * brightness;
-        float a = colors[posPos + 3] * materialColors[matIndex + 3] * meshColors[meshIndex + 3] * brightness;
+        // Lighting changes RGB, never material coverage. Applying brightness
+        // to alpha would make a fully opaque MASK texel fail its cutoff in a
+        // dark area and create artificial holes.
+        float a = colors[posPos + 3] * materialColors[matIndex + 3] * meshColors[meshIndex + 3];
 
-        int af, bf, gf, rf;
-        if (a < 0.05f && readAlpha) {
-            af = bf = gf = rf = 0;
-        } else {
-            af = readAlpha ? Math.round(a * 255f) : 255;
-            bf = Math.round(b * 255f);
-            gf = Math.round(g * 255f);
-            rf = Math.round(r * 255f);
-        }
+        // Preserve RGB even for low-alpha BLEND texels. The shader owns the
+        // independent near-zero discard; zeroing RGB here would turn visible
+        // alpha values such as 0.02 into black weighted-OIT contributions.
+        int af = readAlpha ? Math.round(Math.clamp(a, 0f, 1f) * 255f) : 255;
+        int bf = Math.round(b * 255f);
+        int gf = Math.round(g * 255f);
+        int rf = Math.round(r * 255f);
         int colorFinal = af << 24 | bf << 16 | gf << 8 | rf;
         buffer.putInt(bufPos, IS_LITTLE_ENDIAN ?  colorFinal : Integer.reverseBytes(colorFinal));
+    }
+
+    protected void fillAlphaCutoffToBuffer(int index, int bufPos) {
+        if (alphaCutoffOffset < 0) return;
+        Material material = materials[vertexMaterials[index]];
+        buffer.putFloat(bufPos + alphaCutoffOffset, ModelRenderPass.alphaCutoff(material));
     }
 
     protected void fillUvToBuffer(int index, int bufPos, Vector2f cache) {

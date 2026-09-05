@@ -92,6 +92,7 @@ public class VanillaVertexBuffer implements IVertexBuffer {
             return;
         }
         int count = dirtyVertices.cardinality();
+        if (count == 0) return;
         if (count * 4 >= vertexCount * 3) {
             uploadGpuBuffer();
             return;

@@ -117,8 +117,12 @@ neoForge {
     runs {
         client {
             client()
-            gameDirectory = file('run/client')
+            gameDirectory = file(providers.gradleProperty('kasugaClientDirectory').getOrElse('run/client'))
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            def quickPlayWorld = providers.gradleProperty('kasugaQuickPlayWorld')
+            if (quickPlayWorld.isPresent()) {
+                programArguments.addAll '--quickPlaySingleplayer', quickPlayWorld.get()
+            }
         }
 
         clientProfile {
@@ -168,6 +172,30 @@ neoForge {
             }
             if (kasugaTestBbmodel.isPresent()) {
                 systemProperty 'kasuga.testBbmodel', kasugaTestBbmodel.get()
+            }
+            def transparencyProfile = providers.gradleProperty('kasugaProfileTransparency')
+            if (transparencyProfile.isPresent()) {
+                systemProperty 'kasuga.profileTransparency', transparencyProfile.get()
+            }
+            def transparencyDebug = providers.gradleProperty('kasugaDebugTransparency')
+            if (transparencyDebug.isPresent()) {
+                systemProperty 'kasuga.debugTransparency', transparencyDebug.get()
+            }
+            def stopAfterCapture = providers.gradleProperty('kasugaStopAfterCapture')
+            if (stopAfterCapture.isPresent()) {
+                systemProperty 'kasuga.debugTransparency.stopAfterCapture', stopAfterCapture.get()
+            }
+            def captureFrame = providers.gradleProperty('kasugaCaptureFrame')
+            if (captureFrame.isPresent()) {
+                systemProperty 'kasuga.debugTransparency.frame', captureFrame.get()
+            }
+            def cloudCapture = providers.gradleProperty('kasugaCloudCapture')
+            if (cloudCapture.isPresent()) {
+                systemProperty 'kasuga.debugCloudCapture', cloudCapture.get()
+            }
+            def modelCaptureFrame = providers.gradleProperty('kasugaModelCaptureFrame')
+            if (modelCaptureFrame.isPresent()) {
+                systemProperty 'kasuga.captureModelFrame', modelCaptureFrame.get()
             }
 
             logLevel = org.slf4j.event.Level.DEBUG

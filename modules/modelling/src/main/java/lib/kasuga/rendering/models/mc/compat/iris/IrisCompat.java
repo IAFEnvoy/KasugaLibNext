@@ -2,6 +2,7 @@ package lib.kasuga.rendering.models.mc.compat.iris;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import lib.kasuga.rendering.models.mc.backend.data_type.OitCompositeShaderInstance;
 import lombok.Getter;
 import net.irisshaders.iris.api.v0.IrisApi;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
@@ -60,7 +61,7 @@ public class IrisCompat {
     }
 
     public static boolean isIrisPresent() {
-        return irisModContainer.isPresent();
+        return irisModContainer != null && irisModContainer.isPresent();
     }
 
     public static void onIrisPresentOrElse(Consumer<ModContainer> onPresent, Runnable onAbsent) {
@@ -99,5 +100,17 @@ public class IrisCompat {
 
     public static VertexFormat getIrisFormat(VertexFormat format, boolean iris) {
         return iris && isIrisPresent() ? IrisConstants.forceIrisFormat(format) : format;
+    }
+
+    /** Allows only Kasuga's framebuffer-aware OIT resolve through Iris' unknown-shader guard. */
+    public static void allowOitCompositeShader() {
+        if (isIrisPresent()) {
+            IrisConstants.allowShaderClass(OitCompositeShaderInstance.class);
+        }
+    }
+
+    /** Binds Iris' current before/after-translucent world framebuffer. */
+    public static boolean bindWorldFramebuffer() {
+        return isUsingShaderPack() && IrisConstants.bindWorldFramebuffer();
     }
 }

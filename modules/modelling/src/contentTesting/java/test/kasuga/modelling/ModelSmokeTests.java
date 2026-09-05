@@ -14,6 +14,7 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import org.joml.Quaternionf;
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -46,6 +47,7 @@ public final class ModelSmokeTests {
             case "obj" -> testObj();
             case "be" -> testBe();
             case "je" -> testJe();
+            case "ling", "ling_singer" -> testLingSinger();
             default -> testMmd();
         }
     }
@@ -93,8 +95,17 @@ public final class ModelSmokeTests {
     }
 
     private static void testMmd() {
-        String fileName = "test3.mmd.zip";
-        String modelName = "tda bunny miku 2.0.pmx";
+        testMmdModel("test3.mmd.zip", "tda bunny miku 2.0.pmx", "test_mmd", new Transform(), true);
+        testLingSinger();
+    }
+
+    private static void testLingSinger() {
+        testMmdModel("ling_singer.mmd.zip", "ling_singer.pmx", "test_mmd_ling_singer",
+                new Transform().translate(2.5f, 0.0f, 0.0f), false);
+    }
+
+    private static void testMmdModel(String fileName, String modelName, String instanceName,
+                                     Transform rootTransform, boolean enablePhysics) {
         ResourceLocation modelLoc = PipelineRegistry.pmxLoader().getLocByFileAndName(
                 ResourceLocation.tryBuild(KasugaLib.MODID, "models/pmx/" + fileName), modelName);
         if (modelLoc == null) {
@@ -106,16 +117,27 @@ public final class ModelSmokeTests {
             return;
         }
         missingMmdLogged = false;
-        ResourceLocation instanceLoc = ResourceLocation.tryBuild(KasugaLib.MODID, "test_mmd");
+        ResourceLocation instanceLoc = ResourceLocation.tryBuild(KasugaLib.MODID, instanceName);
         ModelPipeLine<?, ?, ResourceLocation, ResourceLocation, ?> pipeline = PipelineRegistry.pmx();
         if (pipeline.hasInstance(modelLoc, instanceLoc)) {
-            attachMmdPhysics(pipeline.getInstance(modelLoc, instanceLoc));
+            if (enablePhysics) attachMmdPhysics(pipeline.getInstance(modelLoc, instanceLoc));
             return;
         }
-        ModelInstance instance = pipeline.createInstance(modelLoc, instanceLoc, new Transform(), null, null);
+        ModelInstance instance = pipeline.createInstance(modelLoc, instanceLoc, rootTransform, null, null);
         if (instance == null) return;
-        attachMmdPhysics(instance);
+        if ("ling_singer.pmx".equals(modelName)) applyLingSingerTpose(instance);
+        if (enablePhysics) attachMmdPhysics(instance);
         pipeline.addToRenderer(modelLoc, instanceLoc, "mc_bridge", "mc_backend");
+    }
+
+    /** The supplied Ling Singer PMX is authored in a relaxed pose; keep this smoke instance static and T-shaped. */
+    private static void applyLingSingerTpose(ModelInstance instance) {
+        float shoulderAngle = (float) Math.toRadians(38.65f);
+        var skeleton = instance.getSkeletonInstance();
+        boolean right = skeleton.rotate("右肩P", new Quaternionf().rotateZ(-shoulderAngle));
+        boolean left = skeleton.rotate("左肩P", new Quaternionf().rotateZ(shoulderAngle));
+        instance.updateImmediate();
+        LOGGER.info("Applied static Ling Singer T-pose (right shoulder={}, left shoulder={})", right, left);
     }
 
     private static void attachMmdPhysics(ModelInstance instance) {

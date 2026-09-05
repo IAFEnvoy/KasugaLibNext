@@ -35,6 +35,7 @@ import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.PmxTail;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.bone.PmxBoneBinding;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.header.PmxHeader;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.material.PmxMaterial;
+import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.material.PmxMaterialData;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.mesh.PmxMesh;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.data.vertex.PmxVertex;
 import lib.kasuga.rendering.models.uml.typo.miku_miku_dance.pmd.PmdToPmxConverter;
@@ -112,13 +113,15 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
         int index = material.textureIndex.intValue();
         int materialIndex = loadingMaterialIndex++;
         Object identifier = getDefaultTextureIdentifier(index, loadedTextures);
+        BufferedImage sourceImage = null;
         if (index >= 0 && index < loadedTextures.size()) {
             ZipResource sourceResource = loadedTextures.get(index).getFirst();
             Texture texture = loadedTextures.get(index).getSecond();
             if (texture.getData() instanceof MCTextureData data
                     && data.getIdentifier() instanceof Pair<?, ?> source
-                    && source.getFirst() instanceof ResourceLocation textureId
-                    && source.getSecond() instanceof BufferedImage image) {
+                && source.getFirst() instanceof ResourceLocation textureId
+                && source.getSecond() instanceof BufferedImage image) {
+                sourceImage = image;
                 PbrBakeProfile automatic = PbrBakeProfile.from(material);
                 PbrMaterialContext conversionContext = new PbrMaterialContext(
                         Objects.requireNonNull(loadingModelLocation), textureId, materialIndex,
@@ -144,6 +147,7 @@ public class KsgPmxLoader extends PMXLoader<ZipHelper, ResourceLocation, ZipReso
                 identifier = variantKey;
             }
         }
+        builder.setMaterialData(PmxMaterialData.from(material, sourceImage));
         if (identifier == null) {
             identifier = loadedTextures.get(index).getFirst();
         }

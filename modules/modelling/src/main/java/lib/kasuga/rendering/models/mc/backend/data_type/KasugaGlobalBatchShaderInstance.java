@@ -38,6 +38,11 @@ public class KasugaGlobalBatchShaderInstance extends KasugaShaderInstance {
         safeGetUniform("ksg_ParallaxSamples").set(getParallaxSamplerTimes());
         safeGetUniform("ksg_AmbientLightEnhancement").set(getAmbientLightEnhancement());
         safeGetUniform("ksg_StylizedShadingStrength").set(getStylizedShadingStrength());
+        safeGetUniform("ksg_AlphaMode").set(getAlphaMode());
+        // Global batches are currently restricted to OPAQUE/MASK. Explicitly
+        // reset this value so a reused shader instance can never leak an OIT
+        // output mode into the ordinary batch draw.
+        safeGetUniform("ksg_OitMode").set(0);
         setSampler("ksg_NormalMap", Constants.TEXTURE_BASIC.getNormalMap().getId());
         setSampler("ksg_SpecularMap", Constants.TEXTURE_BASIC.getSpecularMap().getId());
     }
