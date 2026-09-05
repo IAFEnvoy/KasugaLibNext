@@ -61,11 +61,12 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
     private Material buildMaterial() {
         ZipResource texture = firstTexture();
         int width = 16, height = 16;
+        java.awt.image.BufferedImage image = null;
         Object source = MissingTextureAtlasSprite.getLocation();
         ResourceLocation location = MissingTextureAtlasSprite.getLocation();
         if (texture != null) {
             try {
-                var image = ImageIO.read(new ByteArrayInputStream(bytes(texture.buffer())));
+                image = ImageIO.read(new ByteArrayInputStream(bytes(texture.buffer())));
                 if (image != null) {
                     width = image.getWidth(); height = image.getHeight();
                     location = ResourceLocation.fromNamespaceAndPath(identifier.getNamespace(), "fmt/" + Integer.toHexString(identifier.hashCode()));
@@ -76,7 +77,8 @@ public final class FmtArchiveLoader implements ModelLoader<ZipHelper, ResourceLo
         final ResourceLocation textureLocation = location;
         MCTexture textureData = new MCTexture("main", () -> new net.minecraft.client.resources.model.Material(RenderState.KSG_LAYER_0, textureLocation), width, height,
                 new MCTextureData(source, Constants.TEXTURE_BASIC));
-        materials.beginMaterial().registerTexture(0, textureData).useTexture(0)
+        materials.beginMaterial().setMaterialData(FmtMaterialData.from(image))
+                .registerTexture(0, textureData).useTexture(0)
                 .addSpriteBuildingFunc((builder, sprites, material) -> sprites.textureId(0).endSprite())
                 .endMaterial(0);
         return materials.getNamedMaterial(0);
