@@ -1,8 +1,10 @@
 package lib.kasuga.rendering.models.mc.backend;
 
+import com.mojang.blaze3d.vertex.VertexFormat;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class GlobalModelBatcherTest {
@@ -30,5 +32,15 @@ class GlobalModelBatcherTest {
                 () -> GlobalModelBatcher.nextChunkEnd(1, 0, 8, ignored -> 0));
         assertThrows(IllegalStateException.class,
                 () -> GlobalModelBatcher.nextChunkEnd(1, 0, 100, ignored -> 101));
+    }
+
+    @Test
+    void keepsOpaqueAndMaskSectionsInDifferentBatches() {
+        GlobalModelBatcher.BatchKey opaque = new GlobalModelBatcher.BatchKey(
+                ModelRenderPass.OPAQUE, VertexFormat.Mode.QUADS, 0, 0);
+        GlobalModelBatcher.BatchKey mask = new GlobalModelBatcher.BatchKey(
+                ModelRenderPass.MASK, VertexFormat.Mode.QUADS, 0, 0);
+
+        assertNotEquals(opaque, mask);
     }
 }

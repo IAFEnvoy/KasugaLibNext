@@ -25,6 +25,7 @@ import lib.kasuga.rendering.effect.shader.ShaderParameterPersistence;
 import lib.kasuga.rendering.models.mc.backend.*;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.data_type.KasugaGlobalBatchShaderInstance;
+import lib.kasuga.rendering.models.mc.backend.data_type.OitCompositeShaderInstance;
 import lib.kasuga.rendering.models.mc.backend.ui.UIBackend;
 import lib.kasuga.rendering.models.mc.compat.iris.IrisCompat;
 import lib.kasuga.rendering.models.mc.registry.PipelineRegistry;
@@ -97,13 +98,24 @@ public class Constants {
         );
         BillboardEffects.initialize(pipelines);
         BlackHoleEffects.initialize(pipelines);
-        RenderPipelineDescriptor descriptor = RenderPipelineDescriptor.builder(
-                        ResourceLocation.fromNamespaceAndPath(KasugaLib.MODID, "models"),
-                        RenderPhase.AFTER_ENTITIES
-                )
+        RenderPipelineDescriptor opaque = RenderPipelineDescriptor.builder(
+                        ResourceLocation.fromNamespaceAndPath(KasugaLib.MODID, "models_opaque"),
+                        RenderPhase.AFTER_ENTITIES)
                 .priority(0)
                 .build();
-        pipelines.world(descriptor, Constants::renderModels);
+        RenderPipelineDescriptor mask = RenderPipelineDescriptor.builder(
+                        ResourceLocation.fromNamespaceAndPath(KasugaLib.MODID, "models_mask"),
+                        RenderPhase.AFTER_ENTITIES)
+                .priority(1)
+                .build();
+        RenderPipelineDescriptor translucent = RenderPipelineDescriptor.builder(
+                        ResourceLocation.fromNamespaceAndPath(KasugaLib.MODID, "models_translucent"),
+                        RenderPhase.AFTER_TRANSLUCENT_BLOCKS)
+                .priority(0)
+                .build();
+        pipelines.world(opaque, context -> renderModels(context, ModelRenderPass.OPAQUE, true, false));
+        pipelines.world(mask, context -> renderModels(context, ModelRenderPass.MASK, false, false));
+        pipelines.world(translucent, context -> renderModels(context, ModelRenderPass.TRANSLUCENT, false, true));
     }
 
     @SubscribeEvent
@@ -171,89 +183,173 @@ public class Constants {
         } catch (IOException e) {
             throw new RuntimeException("Failed to load shader 'ksglib_global_batch'", e);
         }
+        try {
+            // Iris normally suppresses unknown core shaders while a shader
+            // pack owns world rendering. Register this one narrow exception:
+            // the OIT resolve explicitly targets Iris' active world buffer.
+            IrisCompat.allowOitCompositeShader();
+            ShaderInstance shaderInstance = new OitCompositeShaderInstance(
+                    provider, ResourceLocation.tryBuild("kasuga_lib", "ksglib_oit_composite"),
+                    DefaultVertexFormat.BLIT_SCREEN
+            );
+            event.registerShader(shaderInstance,
+                    instance -> RenderState.OIT_COMPOSITE_SHADER_INSTANCE = instance);
+        } catch (IOException e) {
+            // OIT is an optional acceleration/quality path. Keep the ordinary
+            // sorted translucent renderer usable when a resource pack or
+            // platform rejects the resolve shader.
+            LOGGER.warn("Weighted OIT composite shader is unavailable; using sorted translucent fallback", e);
+        }
         RenderShaderRegistry.registerShaders(event);
     }
 
     @SubscribeEvent
     public static void onRegisterRenderBuffers(RegisterRenderBuffersEvent event) {
-        RenderType typeDefault = RenderType.create(
-                "kasuga_lib:uml_render_type",
-                UML_VERTEX_FORMAT,
-                VertexFormat.Mode.QUADS,
-                64 * 1024 * 1024,
-                true,
-                true,
+        RenderState.OPAQUE_RENDER_TYPE = createModelRenderType(
+                "kasuga_lib:uml_opaque_render_type", RenderState.UML_SHADER, false);
+        RenderState.CUTOUT_RENDER_TYPE = createModelRenderType(
+                "kasuga_lib:uml_cutout_render_type", RenderState.UML_SHADER, false);
+        RenderState.TRANSLUCENT_RENDER_TYPE = createModelRenderType(
+                "kasuga_lib:uml_translucent_render_type", RenderState.UML_SHADER, true);
+
+        RenderState.GLOBAL_OPAQUE_RENDER_TYPE = createModelRenderType(
+                "kasuga_lib:uml_global_opaque_render_type", RenderState.GLOBAL_BATCH_SHADER, false);
+        RenderState.GLOBAL_CUTOUT_RENDER_TYPE = createModelRenderType(
+                "kasuga_lib:uml_global_cutout_render_type", RenderState.GLOBAL_BATCH_SHADER, false);
+        RenderState.GLOBAL_TRANSLUCENT_RENDER_TYPE = createModelRenderType(
+                "kasuga_lib:uml_global_translucent_render_type", RenderState.GLOBAL_BATCH_SHADER, true);
+
+        RenderState.IRIS_OPAQUE_RENDER_TYPE = createIrisRenderType(
+                "kasuga_lib:iris_opaque_render_type", RenderStateShard.RENDERTYPE_ENTITY_SOLID_SHADER, false);
+        RenderState.IRIS_CUTOUT_RENDER_TYPE = createIrisRenderType(
+                "kasuga_lib:iris_cutout_render_type", RenderStateShard.RENDERTYPE_ENTITY_CUTOUT_SHADER, false);
+        RenderState.IRIS_TRANSLUCENT_RENDER_TYPE = createIrisRenderType(
+                "kasuga_lib:iris_translucent_render_type", RenderStateShard.RENDERTYPE_ENTITY_TRANSLUCENT_SHADER, true);
+
+        RenderState.OIT_ACCUMULATION_RENDER_TYPE = createOitRenderType(
+                "kasuga_lib:uml_oit_accumulation_render_type", RenderState.OIT_ACCUMULATION_TRANSPARENCY);
+        RenderState.OIT_REVEALAGE_RENDER_TYPE = createOitRenderType(
+                "kasuga_lib:uml_oit_revealage_render_type", RenderState.OIT_REVEALAGE_TRANSPARENCY);
+        RenderState.IRIS_OIT_ACCUMULATION_RENDER_TYPE = createIrisOitRenderType(
+                "kasuga_lib:iris_oit_accumulation_render_type", RenderState.OIT_ACCUMULATION_TRANSPARENCY);
+        RenderState.IRIS_OIT_REVEALAGE_RENDER_TYPE = createIrisOitRenderType(
+                "kasuga_lib:iris_oit_revealage_render_type", RenderState.OIT_REVEALAGE_TRANSPARENCY);
+
+        // Compatibility aliases for integrations that still request the old
+        // single render type. New model rendering uses pass-specific lookups.
+        RenderState.RENDER_TYPE = RenderState.TRANSLUCENT_RENDER_TYPE;
+        RenderState.GLOBAL_BATCH_RENDER_TYPE = RenderState.GLOBAL_TRANSLUCENT_RENDER_TYPE;
+        RenderState.IRIS_COMPAT_RENDER_TYPE = RenderState.IRIS_TRANSLUCENT_RENDER_TYPE;
+
+        event.registerRenderBuffer(RenderState.OPAQUE_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.CUTOUT_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.TRANSLUCENT_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.GLOBAL_OPAQUE_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.GLOBAL_CUTOUT_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.GLOBAL_TRANSLUCENT_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.IRIS_OPAQUE_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.IRIS_CUTOUT_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.IRIS_TRANSLUCENT_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.OIT_ACCUMULATION_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.OIT_REVEALAGE_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.IRIS_OIT_ACCUMULATION_RENDER_TYPE);
+        event.registerRenderBuffer(RenderState.IRIS_OIT_REVEALAGE_RENDER_TYPE);
+    }
+
+    private static RenderType createModelRenderType(String name,
+                                                     RenderStateShard.ShaderStateShard shader,
+                                                     boolean translucent) {
+        return RenderType.create(name, UML_VERTEX_FORMAT, VertexFormat.Mode.QUADS,
+                64 * 1024 * 1024, true, translucent,
+                RenderType.CompositeState.builder()
+                        .setTextureState(RenderState.UML_TEXTURE_STATE)
+                        .setShaderState(shader)
+                        .setTransparencyState(translucent
+                                ? RenderStateShard.TRANSLUCENT_TRANSPARENCY
+                                : RenderStateShard.NO_TRANSPARENCY)
+                        .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
+                        .setCullState(RenderStateShard.CULL)
+                        .setLightmapState(RenderStateShard.LIGHTMAP)
+                        .setOverlayState(RenderStateShard.OVERLAY)
+                        .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
+                        .setOutputState(RenderStateShard.MAIN_TARGET)
+                        .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
+                        .setWriteMaskState(translucent
+                                ? RenderStateShard.COLOR_WRITE
+                                : RenderStateShard.COLOR_DEPTH_WRITE)
+                        .setLineState(RenderStateShard.DEFAULT_LINE)
+                        .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
+                        .createCompositeState(false));
+    }
+
+    private static RenderType createIrisRenderType(String name,
+                                                    RenderStateShard.ShaderStateShard shader,
+                                                    boolean translucent) {
+        return RenderType.create(name, DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS,
+                64 * 1024 * 1024, true, translucent,
+                RenderType.CompositeState.builder()
+                        .setTextureState(RenderState.UML_TEXTURE_STATE)
+                        .setShaderState(shader)
+                        .setTransparencyState(translucent
+                                ? RenderStateShard.TRANSLUCENT_TRANSPARENCY
+                                : RenderStateShard.NO_TRANSPARENCY)
+                        .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
+                        .setCullState(RenderStateShard.CULL)
+                        .setLightmapState(RenderStateShard.LIGHTMAP)
+                        .setOverlayState(RenderStateShard.OVERLAY)
+                        .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
+                        .setOutputState(RenderStateShard.MAIN_TARGET)
+                        .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
+                        .setWriteMaskState(translucent
+                                ? RenderStateShard.COLOR_WRITE
+                                : RenderStateShard.COLOR_DEPTH_WRITE)
+                        .setLineState(RenderStateShard.DEFAULT_LINE)
+                        .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
+                        .createCompositeState(false));
+    }
+
+    private static RenderType createOitRenderType(
+            String name, RenderStateShard.TransparencyStateShard transparency) {
+        return RenderType.create(name, UML_VERTEX_FORMAT, VertexFormat.Mode.QUADS,
+                64 * 1024 * 1024, true, false,
                 RenderType.CompositeState.builder()
                         .setTextureState(RenderState.UML_TEXTURE_STATE)
                         .setShaderState(RenderState.UML_SHADER)
-                        .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                        .setTransparencyState(transparency)
                         .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
                         .setCullState(RenderStateShard.CULL)
                         .setLightmapState(RenderStateShard.LIGHTMAP)
                         .setOverlayState(RenderStateShard.OVERLAY)
                         .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
-                        .setOutputState(RenderStateShard.MAIN_TARGET)
+                        .setOutputState(RenderState.OIT_TARGET)
                         .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
-                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
+                        // The copied scene depth is read-only for both OIT
+                        // geometry passes; the color attachment remains writable.
+                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
                         .setLineState(RenderStateShard.DEFAULT_LINE)
                         .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
-                        .createCompositeState(false)
-        );
-        RenderState.RENDER_TYPE = typeDefault;
+                        .createCompositeState(false));
+    }
 
-        RenderType globalBatch = RenderType.create(
-                "kasuga_lib:uml_global_batch_render_type",
-                UML_VERTEX_FORMAT,
-                VertexFormat.Mode.QUADS,
-                64 * 1024 * 1024,
-                true,
-                true,
-                RenderType.CompositeState.builder()
-                        .setTextureState(RenderState.UML_TEXTURE_STATE)
-                        .setShaderState(RenderState.GLOBAL_BATCH_SHADER)
-                        .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
-                        .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
-                        .setCullState(RenderStateShard.CULL)
-                        .setLightmapState(RenderStateShard.LIGHTMAP)
-                        .setOverlayState(RenderStateShard.OVERLAY)
-                        .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
-                        .setOutputState(RenderStateShard.MAIN_TARGET)
-                        .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
-                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
-                        .setLineState(RenderStateShard.DEFAULT_LINE)
-                        .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
-                        .createCompositeState(false)
-        );
-        RenderState.GLOBAL_BATCH_RENDER_TYPE = globalBatch;
-
-        RenderType typeIris = RenderType.create(
-                "kasuga_lib:iris_compat_render_type",
-                DefaultVertexFormat.NEW_ENTITY,
-                VertexFormat.Mode.QUADS,
-                64 * 1024 * 1024,
-                true,
-                true,
+    private static RenderType createIrisOitRenderType(
+            String name, RenderStateShard.TransparencyStateShard transparency) {
+        return RenderType.create(name, DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS,
+                64 * 1024 * 1024, true, false,
                 RenderType.CompositeState.builder()
                         .setTextureState(RenderState.UML_TEXTURE_STATE)
                         .setShaderState(RenderStateShard.RENDERTYPE_ENTITY_TRANSLUCENT_SHADER)
-                        .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                        .setTransparencyState(transparency)
                         .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
                         .setCullState(RenderStateShard.CULL)
                         .setLightmapState(RenderStateShard.LIGHTMAP)
                         .setOverlayState(RenderStateShard.OVERLAY)
                         .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
-                        .setOutputState(RenderStateShard.MAIN_TARGET)
+                        .setOutputState(RenderState.OIT_TARGET)
                         .setTexturingState(RenderStateShard.DEFAULT_TEXTURING)
-                        .setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
+                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
                         .setLineState(RenderStateShard.DEFAULT_LINE)
                         .setColorLogicState(RenderStateShard.NO_COLOR_LOGIC)
-                        .createCompositeState(false)
-        );
-        RenderState.IRIS_COMPAT_RENDER_TYPE = typeIris;
-
-        event.registerRenderBuffer(typeDefault);
-        event.registerRenderBuffer(globalBatch);
-        event.registerRenderBuffer(typeIris);
+                        .createCompositeState(false));
     }
 
     @SubscribeEvent
@@ -342,16 +438,16 @@ public class Constants {
         AccessorOnRegisterRenderTypesEvent accessor = (AccessorOnRegisterRenderTypesEvent) event;
         accessor.getRenderTypes().put(
                 RenderState.KSG_RENDER_TYPE, new RenderTypeGroup(
-                        RenderState.RENDER_TYPE,
-                        RenderState.RENDER_TYPE,
-                        RenderState.RENDER_TYPE
+                        RenderState.OPAQUE_RENDER_TYPE,
+                        RenderState.CUTOUT_RENDER_TYPE,
+                        RenderState.TRANSLUCENT_RENDER_TYPE
                 )
         );
         accessor.getRenderTypes().put(
                 RenderState.KSG_IRIS_RENDER_TYPE, new RenderTypeGroup(
-                        RenderState.IRIS_COMPAT_RENDER_TYPE,
-                        RenderState.IRIS_COMPAT_RENDER_TYPE,
-                        RenderState.IRIS_COMPAT_RENDER_TYPE
+                        RenderState.IRIS_OPAQUE_RENDER_TYPE,
+                        RenderState.IRIS_CUTOUT_RENDER_TYPE,
+                        RenderState.IRIS_TRANSLUCENT_RENDER_TYPE
                 )
         );
 
@@ -363,7 +459,8 @@ public class Constants {
         WorldRenderPipelineDispatcher.dispatch(event);
     }
 
-    private static void renderModels(WorldRenderPipelineContext pipelineContext) {
+    private static void renderModels(WorldRenderPipelineContext pipelineContext,
+                                     ModelRenderPass pass, boolean frameStart, boolean frameEnd) {
         // Resource reload builds models before their new atlas sprites exist.
         // Keep the currently published generation untouched and skip custom
         // rendering until textures and models are atomically swapped.
@@ -374,7 +471,7 @@ public class Constants {
         PoseStack poseStack = pipelineContext.poseStack();
         RenderBuffers renderBuffers = pipelineContext.renderBuffers();
         MultiBufferSource.BufferSource source = pipelineContext.bufferSource();
-        RenderType renderType = RenderState.getRenderType();
+        RenderType renderType = RenderState.getRenderType(pass);
         VertexConsumer consumer = source.getBuffer(renderType);
         MCBackendContext context = new MCBackendContext(
                 consumer, poseStack, renderBuffers,
@@ -383,7 +480,7 @@ public class Constants {
                 pipelineContext.level()
         );
         try {
-            mcBackend.renderAllObjects(context);
+            mcBackend.renderAllObjects(context, pass, frameStart, frameEnd);
         } finally {
             source.endBatch(renderType);
         }
