@@ -7,6 +7,15 @@ final class OitMath {
 
     private OitMath() {}
 
+    /** Mirrors the native shader's split, after texture/vertex/modulator alpha. */
+    static boolean writesOpaqueCoverage(float effectiveAlpha) {
+        return effectiveAlpha >= 1f;
+    }
+
+    static boolean contributesToOit(float effectiveAlpha) {
+        return effectiveAlpha > 1f / 255f && effectiveAlpha < 1f;
+    }
+
     static float accumulateColor(float accumulated, float color, float alpha, float weight) {
         return accumulated + color * alpha * weight;
     }

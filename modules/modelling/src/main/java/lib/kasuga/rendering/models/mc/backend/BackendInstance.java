@@ -145,6 +145,29 @@ public class BackendInstance implements AutoCloseable {
                               Matrix4f modelViewMatrix, Matrix4f projectionMatrix,
                               float emissiveStrength, float ambientLightEnhancement,
                               int oitMode) {
+        if (!prepareDraw(pass)) return;
+        drawPreparedBuffer(pass, pose, renderType, modelViewMatrix, projectionMatrix,
+                emissiveStrength, ambientLightEnhancement, oitMode);
+    }
+
+    /** Upload once before replaying immutable geometry through the peel layers. */
+    boolean prepareDraw(ModelRenderPass pass) {
+        RenderPart part = parts.get(pass);
+        if (part == null) return false;
+        GLContext context = part.getContext();
+        IVertexBuffer buffer = part.getBuffer();
+        if (context == null || buffer == null) return false;
+        boolean updated = part.data.updateModel();
+        if (!cpuSkinning && tbo != null && updated) tbo.updateForVersion();
+        buffer.updateGpuBuffer(part.data.getDirtyVertices(), false);
+        part.data.getDirtyVertices().clear();
+        context.dispatchSkinning(part.data.getVertexCount());
+        return true;
+    }
+
+    void drawPreparedBuffer(ModelRenderPass pass, PoseStack.Pose pose, RenderType renderType,
+                            Matrix4f modelViewMatrix, Matrix4f projectionMatrix,
+                            float emissiveStrength, float ambientLightEnhancement, int oitMode) {
         RenderPart part = parts.get(pass);
         if (part == null) return;
 
@@ -154,14 +177,6 @@ public class BackendInstance implements AutoCloseable {
 
         ShaderInstance shader = null;
         try {
-            boolean updated = part.data.updateModel();
-            if (!cpuSkinning && tbo != null && updated) {
-                tbo.updateForVersion();
-            }
-            buffer.updateGpuBuffer(part.data.getDirtyVertices(), false);
-            part.data.getDirtyVertices().clear();
-            context.dispatchSkinning(part.data.getVertexCount());
-
             if (isIrisEnabled()) {
                 modelViewMatrix = matrixCache.set(modelViewMatrix).mul(pose.pose());
             }
@@ -174,7 +189,10 @@ public class BackendInstance implements AutoCloseable {
             // reclaim its attachment after that point and immediately before
             // the draw call.
             OitRenderer.rebindAfterShaderApply(oitMode);
-            buffer.draw(modelViewMatrix, projectionMatrix, shader);
+            // Every context's enter() sets default/custom uniforms, applies
+            // the shader and binds the VAO (including Iris' skinned attributes).
+            // Reapplying here repeats that work and can undo the OIT rebind.
+            buffer.getVertexBuffer().draw();
         } finally {
             context.exit(shader, renderType);
         }

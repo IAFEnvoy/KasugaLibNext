@@ -77,7 +77,7 @@ public class IrisVertexBuffer implements IVertexBuffer {
                 if (multiBufferBuilders == null || multiBufferBuilders.length != taskCount) {
                     if (multiBufferBuilders != null) {
                         for (ByteBufferBuilder bbb : multiBufferBuilders) {
-                            bbb.close();
+                            if (bbb != null) bbb.close();
                         }
                     }
                     multiBufferBuilders = new ByteBufferBuilder[taskCount];
@@ -156,6 +156,7 @@ public class IrisVertexBuffer implements IVertexBuffer {
             return;
         }
         int count = dirtyVertices.cardinality();
+        if (count == 0) return;
         if (count * 4 >= vertexCount * 3) {
             uploadGpuBuffer();
             return;

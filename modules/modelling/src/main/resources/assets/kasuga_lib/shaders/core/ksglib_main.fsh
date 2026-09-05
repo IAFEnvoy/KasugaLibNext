@@ -24,6 +24,11 @@ uniform float ksg_AmbientLightEnhancement;
 uniform float ksg_StylizedShadingStrength;
 uniform int ksg_AlphaMode;
 uniform int ksg_OitMode;
+uniform int ksg_PeelEnabled;
+uniform sampler2D ksg_PeelPrevious;
+uniform sampler2D ksg_PeelScene;
+uniform sampler2D ksg_PeelCoverage;
+uniform sampler2D ksg_PeelFootprint;
 
 in float vertexDistance;
 in vec4 vertexColor;
@@ -157,6 +162,10 @@ vec2 steepParallaxMapping(float depth, vec2 texCoords, vec3 viewDir) {
 
 
 void main() {
+    // Keep sampled depth identical to the value used by the peel comparison.
+    // The fixed-function write can round down by one ULP on macOS. An explicit
+    // write must be defined on every path, not only the peel/footprint paths.
+    gl_FragDepth = gl_FragCoord.z;
     vec2 boundsSize = textureBounds.zw - textureBounds.xy;
     vec2 originalTexCoord = texCoord0;
     if (abs(boundsSize.x) > 0.000001 && abs(boundsSize.y) > 0.000001) {
@@ -175,6 +184,20 @@ void main() {
     // are depth-writing only after rejection; BLEND keeps its effective alpha
     // for conventional source-over blending and only removes invisible texels.
     float effectiveAlpha = albedo.a * vertexColor.a * ColorModulator.a;
+    // Sample the material before per-pixel peel rejection. The atlas/parallax
+    // lookups use implicit derivatives; early divergent discard made the
+    // native macOS shader lose the model behind the first water layer.
+    // Keep the expensive lighting below both transparency and alpha rejection.
+    if (ksg_PeelEnabled == 2) {
+        if (gl_FragCoord.z > texelFetch(ksg_PeelScene, ivec2(gl_FragCoord.xy), 0).r) discard;
+    }
+    if (ksg_PeelEnabled == 1) {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        if (texelFetch(ksg_PeelFootprint, pixel, 0).r == 0.0) discard;
+        if (texelFetch(ksg_PeelCoverage, pixel, 0).a >= 1.0) discard;
+        if (gl_FragCoord.z <= texelFetch(ksg_PeelPrevious, pixel, 0).r
+            || gl_FragCoord.z > texelFetch(ksg_PeelScene, pixel, 0).r) discard;
+    }
     if (ksg_AlphaMode == 1) {
         if (effectiveAlpha < alphaCutoff) discard;
         effectiveAlpha = 1.0;
@@ -183,8 +206,31 @@ void main() {
         // material MASK cutoff. A translucent material must retain alpha
         // values such as 0.25 rather than inheriting the usual 0.5 mask rule.
         if (effectiveAlpha <= (1.0 / 255.0)) discard;
+        if (ksg_OitMode == 3) {
+            // Solid coverage is rendered with color/depth writes before world
+            // translucency. Use effective alpha (including vertex fades), not
+            // texture alpha alone. Do not turn almost-opaque texels into masks.
+            if (effectiveAlpha < 1.0) discard;
+            effectiveAlpha = 1.0;
+        } else if (ksg_OitMode == 1 || ksg_OitMode == 2 || ksg_OitMode == 4 || ksg_OitMode == 5) {
+            // These texels already contributed color and depth. Including
+            // them again would average hidden layers into an opaque surface.
+            if (effectiveAlpha >= 1.0) discard;
+        }
     } else {
         effectiveAlpha = 1.0;
+    }
+    if (ksg_OitMode == 5) {
+        // Exact alpha footprint, including parallax and material fades, but
+        // without evaluating lighting. Scene depth was tested above.
+        fragColor = vec4(1.0);
+        return;
+    }
+    if (ksg_OitMode == 2) {
+        // Revealage consumes only alpha. Vanilla linear_fog preserves alpha,
+        // so normal/specular sampling and the entire lighting pass are unused.
+        fragColor = vec4(0.0, 0.0, 0.0, clamp(effectiveAlpha, 0.0, 1.0));
+        return;
     }
     vec3 normalTexture = texture(ksg_NormalMap, texCoord).rgb;
     vec4 specularTexture = texture(ksg_SpecularMap, texCoord);
@@ -294,10 +340,8 @@ void main() {
                 0.01, 8.0);
         fragColor = vec4(shadedColor.rgb * shadedColor.a * oitWeight,
                 shadedColor.a * oitWeight);
-    } else if (ksg_OitMode == 2) {
-        // The revealage pass uses source=0 and destination=1-alpha. Only
-        // source alpha matters; the red channel is ignored by the blend.
-        fragColor = vec4(0.0, 0.0, 0.0, clamp(shadedColor.a, 0.0, 1.0));
+    } else if (ksg_OitMode == 4) {
+        fragColor = vec4(shadedColor.rgb * shadedColor.a, shadedColor.a);
     } else {
         fragColor = shadedColor;
     }

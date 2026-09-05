@@ -141,7 +141,9 @@ public class KasugaShaderInstance extends ShaderInstance {
     }
 
     public void setOitMode(int oitMode) {
-        this.oitMode = Math.clamp(oitMode, 0, 2);
+        // 3 is the depth-writing opaque coverage of a BLEND material.
+        // 5 marks the visible translucent footprint for local depth peeling.
+        this.oitMode = Math.clamp(oitMode, 0, 5);
     }
 
     public int getOitMode() {
@@ -177,6 +179,7 @@ public class KasugaShaderInstance extends ShaderInstance {
         applyAdditionalData();
         super.apply();
         applyGpuSkinningTexture();
+        lib.kasuga.rendering.models.mc.backend.LayeredTransparency.bindShader(getId());
     }
 
     private void applyGpuSkinningTexture() {

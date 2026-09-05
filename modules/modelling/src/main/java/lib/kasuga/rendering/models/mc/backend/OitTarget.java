@@ -26,19 +26,22 @@ final class OitTarget implements AutoCloseable {
     private int depthTextureId;
     private int width;
     private int height;
+    private OitDepthFormat depthFormat;
 
-    void ensureSize(int targetWidth, int targetHeight) {
+    private void ensureSize(int targetWidth, int targetHeight, OitDepthFormat targetDepthFormat) {
         RenderSystem.assertOnRenderThread();
         if (targetWidth <= 0 || targetHeight <= 0) {
             throw new IllegalArgumentException("OIT target dimensions must be positive");
         }
-        if (targetWidth == width && targetHeight == height && framebufferId != 0) {
+        if (targetWidth == width && targetHeight == height && framebufferId != 0
+                && targetDepthFormat.equals(depthFormat)) {
             return;
         }
 
         destroyBuffers();
         width = targetWidth;
         height = targetHeight;
+        depthFormat = targetDepthFormat;
 
         framebufferId = GL30.glGenFramebuffers();
         accumulationTextureId = createColorTexture(GL30.GL_RGBA16F);
@@ -70,7 +73,18 @@ final class OitTarget implements AutoCloseable {
 
     void prepare(int sourceFramebufferId, int sourceWidth, int sourceHeight) {
         RenderSystem.assertOnRenderThread();
-        ensureSize(sourceWidth, sourceHeight);
+        GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, sourceFramebufferId);
+        // Query the actual attachment, not a guessed format: on Apple GL an
+        // unsized Minecraft depth texture is float32, while DEPTH_COMPONENT24
+        // becomes fixed32. Blitting between them silently fails without an
+        // explicit glGetError check, leaving OIT with unrelated scene depth.
+        int bits = GL30.glGetFramebufferAttachmentParameteri(GL30.GL_READ_FRAMEBUFFER,
+                GL30.GL_DEPTH_ATTACHMENT, GL30.GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE);
+        int type = GL30.glGetFramebufferAttachmentParameteri(GL30.GL_READ_FRAMEBUFFER,
+                GL30.GL_DEPTH_ATTACHMENT, GL30.GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE);
+        int stencil = GL30.glGetFramebufferAttachmentParameteri(GL30.GL_READ_FRAMEBUFFER,
+                GL30.GL_DEPTH_ATTACHMENT, GL30.GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE);
+        ensureSize(sourceWidth, sourceHeight, OitDepthFormat.matching(bits, type, stencil));
         copyDepth(sourceFramebufferId, sourceWidth, sourceHeight);
         clearColorAttachments();
     }
@@ -103,6 +117,11 @@ final class OitTarget implements AutoCloseable {
                 0, 0, width, height,
                 GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST
         );
+        int error = GL11.glGetError();
+        if (error != GL11.GL_NO_ERROR) {
+            throw new IllegalStateException("OIT scene depth copy failed (GL error 0x"
+                    + Integer.toHexString(error) + ", depth format " + depthFormat + ")");
+        }
         GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebufferId);
     }
 
@@ -155,8 +174,8 @@ final class OitTarget implements AutoCloseable {
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12_CLAMP_TO_EDGE);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12_CLAMP_TO_EDGE);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12_COMPARE_MODE, GL11.GL_NONE);
-        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT24, width, height,
-                0, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, (ByteBuffer) null);
+        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, depthFormat.internalFormat(), width, height,
+                0, depthFormat.pixelFormat(), depthFormat.pixelType(), (ByteBuffer) null);
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
         return texture;
     }
@@ -171,6 +190,7 @@ final class OitTarget implements AutoCloseable {
         if (framebufferId != 0) GL30.glDeleteFramebuffers(framebufferId);
         framebufferId = accumulationTextureId = revealageTextureId = depthTextureId = 0;
         width = height = 0;
+        depthFormat = null;
     }
 
     @Override

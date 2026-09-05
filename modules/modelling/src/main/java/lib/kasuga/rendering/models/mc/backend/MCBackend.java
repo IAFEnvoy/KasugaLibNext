@@ -55,6 +55,7 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
     private float t = 0;
     private final GlobalModelBatcher globalBatcher = new GlobalModelBatcher();
     private final OitRenderer oitRenderer = new OitRenderer();
+    private final LayeredTransparency layeredTransparency = new LayeredTransparency(this);
     private final Set<ModelInstance> sampledThisFrame = Collections.newSetFromMap(new IdentityHashMap<>());
     /** Static bounding radius per instance, computed on first frustum test. */
     private final Map<ModelInstance, Float> boundsCache = new IdentityHashMap<>();
@@ -79,6 +80,12 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
     private void render(BackendContext<MCBridge, BackendInstance, MCBackendContext, BackendTransform> renderable,
                         MCBackendContext context, ModelRenderPass pass, RenderType renderType,
                         int oitMode) {
+        render(renderable, context, pass, renderType, oitMode, null);
+    }
+
+    private void render(BackendContext<MCBridge, BackendInstance, MCBackendContext, BackendTransform> renderable,
+                        MCBackendContext context, ModelRenderPass pass, RenderType renderType,
+                        int oitMode, @Nullable List<PreparedModelDraw> prepared) {
         // Scheduling gate, mirroring vanilla's "renderer not called" semantics:
         // schedule mode → view distance → frustum. Culled instances neither
         // sample animation nor touch GPU buffers this frame.
@@ -124,7 +131,12 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         float ambientLightEnhancement = effectiveAmbientLightEnhancement(
                 model, BackendInstance.isIrisEnabled());
         instance.updateLightData(lightData.packedLight(), overlay, lightData.brightness());
-        if (pass != ModelRenderPass.TRANSLUCENT && globalBatcher.isCollecting()
+        if (prepared != null) {
+            if (instance.prepareDraw(pass)) {
+                prepared.add(new PreparedModelDraw(instance, poseStack.last().copy(),
+                        emissive, ambientLightEnhancement));
+            }
+        } else if (pass != ModelRenderPass.TRANSLUCENT && globalBatcher.isCollecting()
                 && globalBatcher.submit(instance, pass, poseStack.last().pose(), poseStack.last().normal(),
                 emissive, ambientLightEnhancement)) {
             // The opaque/mask batch is flushed before any translucent pass.
@@ -137,6 +149,31 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
         }
 
         poseStack.popPose();
+    }
+
+    /** Frame-local capture: callbacks, culling, lighting, morphs and uploads run once. */
+    List<PreparedModelDraw> prepareTranslucent(MCBackendContext context) {
+        List<PreparedModelDraw> draws = new ArrayList<>();
+        for (var renderable : new ArrayList<>(getRenderingObjects().values())) {
+            if (renderable.isRender()) {
+                render(renderable, context, ModelRenderPass.TRANSLUCENT,
+                        RenderState.getRenderType(ModelRenderPass.TRANSLUCENT), OitRenderer.NORMAL, draws);
+            }
+        }
+        return draws;
+    }
+
+    record PreparedModelDraw(BackendInstance instance, PoseStack.Pose pose,
+                             float emissive, float ambientLightEnhancement) {
+        void draw(MCBackendContext context, int mode) {
+            draw(context, RenderState.getRenderType(false, ModelRenderPass.OPAQUE), mode);
+        }
+
+        void draw(MCBackendContext context, RenderType renderType, int mode) {
+            instance.drawPreparedBuffer(ModelRenderPass.TRANSLUCENT, pose, renderType,
+                    context.getModelViewMatrix(), context.getProjectionMatrix(),
+                    emissive, ambientLightEnhancement, mode);
+        }
     }
 
     static float effectiveAmbientLightEnhancement(ModelInstance model, boolean irisEnabled) {
@@ -257,25 +294,40 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
     public void renderAllObjects(MCBackendContext context, ModelRenderPass pass,
                                  boolean frameStart, boolean frameEnd) {
         if (frameStart) {
+            layeredTransparency.beginFrame();
             sampledThisFrame.clear();
             ModelRenderScheduler.flipFrame();
         }
 
         try {
+            if (pass == ModelRenderPass.TRANSLUCENT && layeredTransparency.handled()) return;
             if (pass == ModelRenderPass.TRANSLUCENT && oitRenderer.render(this, context)) {
                 return;
             }
 
             renderObjectsInternal(context, pass, RenderState.getRenderType(pass),
-                    OitRenderer.NORMAL, pass != ModelRenderPass.TRANSLUCENT);
+                    OitRenderer.NORMAL, pass == ModelRenderPass.TRANSLUCENT);
+
+            if (pass == ModelRenderPass.MASK && !BackendInstance.isIrisEnabled()) {
+                // A PMX texture can contain both opaque skin/cloth and soft
+                // alpha edges. Reuse the BLEND geometry, rejecting everything
+                // except fully opaque fragments in the native shader. Do this
+                // before translucent world blocks and before OIT copies depth,
+                // so surfaces behind solid texels never enter the OIT average.
+                // Iris shader-pack programs do not implement our alpha split.
+                renderObjectsInternal(context, ModelRenderPass.TRANSLUCENT,
+                        RenderState.getRenderType(false, ModelRenderPass.OPAQUE),
+                        OitRenderer.OPAQUE_COVERAGE, false);
+                layeredTransparency.arm(context);
+            }
         } finally {
             if (frameEnd) sampledThisFrame.clear();
         }
     }
 
     /**
-     * Draws a pass without touching the frame scheduler. OitRenderer invokes
-     * this twice for the same BLEND queue, once for each accumulation target.
+     * Draws a pass without touching the frame scheduler. OIT instead prepares
+     * the BLEND queue once and replays it into both accumulation targets.
      */
     void renderObjectsInternal(MCBackendContext context, ModelRenderPass pass,
                                RenderType renderType, int oitMode, boolean sortTranslucent) {
@@ -334,6 +386,7 @@ public class MCBackend extends Backend<MCBridge, BackendInstance, MCBackendConte
 
     @Override
     public void close() throws Exception {
+        layeredTransparency.close();
         oitRenderer.close();
         globalBatcher.close();
         boundsCache.clear();

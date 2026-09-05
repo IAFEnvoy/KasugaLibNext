@@ -19,6 +19,8 @@ import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL30;
 import org.slf4j.Logger;
 
+import java.util.List;
+
 /**
  * Owns the weighted-blended OIT target and the two geometry subpasses used to
  * fill it. The ordinary sorted translucent path remains the caller's fallback.
@@ -28,6 +30,8 @@ final class OitRenderer implements AutoCloseable {
     static final int NORMAL = 0;
     static final int ACCUMULATION = 1;
     static final int REVEALAGE = 2;
+    /** Native BLEND geometry, but only alpha=1 fragments, with color/depth writes. */
+    static final int OPAQUE_COVERAGE = 3;
 
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final ThreadLocal<GeometryBinding> ACTIVE_GEOMETRY = new ThreadLocal<>();
@@ -60,16 +64,22 @@ final class OitRenderer implements AutoCloseable {
         boolean resolveAttempted = false;
         Destination destination = null;
         try {
+            // Both subpasses must see the same pose, lighting and uploaded
+            // geometry. In particular, Iris transform feedback runs only once.
+            List<MCBackend.PreparedModelDraw> models = backend.prepareTranslucent(context);
+            if (models.isEmpty()) return true;
             destination = captureDestination(mainTarget, iris);
             if (destination == null) return false;
             if (target == null) target = new OitTarget();
             target.prepare(destination.framebufferId(), destination.width(), destination.height());
 
-            // The target owns a copy of the scene depth. Both geometry passes
+            // On the native path, opaque coverage has already written the
+            // solid texels of BLEND materials into scene depth. The target
+            // owns a copy of scene depth. Both geometry passes
             // test it, but their COLOR_WRITE-only states leave that depth
             // unchanged so translucent fragments never hide one another.
-            renderGeometryPass(backend, context, ACCUMULATION, iris);
-            renderGeometryPass(backend, context, REVEALAGE, iris);
+            renderGeometryPass(models, context, ACCUMULATION, iris);
+            renderGeometryPass(models, context, REVEALAGE, iris);
 
             // The resolve samples only the two OIT textures and writes to the
             // captured world target. It therefore never reads a color
@@ -83,7 +93,7 @@ final class OitRenderer implements AutoCloseable {
                         destination.width(), destination.height());
             } else if (!iris && !nativeActivationLogged) {
                 nativeActivationLogged = true;
-                LOGGER.info("Kasuga native weighted OIT active ({}x{})",
+                LOGGER.info("Kasuga native weighted OIT active with opaque coverage ({}x{})",
                         destination.width(), destination.height());
             }
             return true;
@@ -119,15 +129,16 @@ final class OitRenderer implements AutoCloseable {
         }
     }
 
-    private void renderGeometryPass(MCBackend backend, MCBackendContext context,
+    private void renderGeometryPass(List<MCBackend.PreparedModelDraw> models, MCBackendContext context,
                                     int oitMode, boolean iris) {
         RenderType renderType = RenderState.getOitRenderType(oitMode, iris);
         GeometryBinding binding = new GeometryBinding(target, oitMode, iris);
         ACTIVE_GEOMETRY.set(binding);
         try {
             binding.bind();
-            backend.renderObjectsInternal(context, ModelRenderPass.TRANSLUCENT,
-                    renderType, oitMode, false);
+            for (MCBackend.PreparedModelDraw model : models) {
+                model.draw(context, renderType, oitMode);
+            }
         } finally {
             ACTIVE_GEOMETRY.remove();
         }
@@ -136,7 +147,7 @@ final class OitRenderer implements AutoCloseable {
     /** Called immediately after ShaderInstance.apply(), which is where Iris
      * binds its gbuffer and applies shader-pack blend overrides. */
     static void rebindAfterShaderApply(int oitMode) {
-        if (oitMode == NORMAL) return;
+        if (oitMode == NORMAL || oitMode == OPAQUE_COVERAGE) return;
         GeometryBinding binding = ACTIVE_GEOMETRY.get();
         if (binding != null && binding.oitMode() == oitMode) {
             binding.bind();

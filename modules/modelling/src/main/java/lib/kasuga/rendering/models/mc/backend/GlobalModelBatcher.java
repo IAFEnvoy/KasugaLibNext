@@ -197,6 +197,13 @@ final class GlobalModelBatcher implements AutoCloseable {
         private int boneBufferId;
         private int boneTextureId;
         private FloatBuffer instanceUpload;
+        /** Reused render-thread staging storage; bone layouts usually stay stable across frames. */
+        private FloatBuffer boneUpload;
+        private final float[] matrix4 = new float[16];
+        private final float[] matrix3 = new float[9];
+        private final BitSet mergedDirty = new BitSet();
+        private final Set<BackendInstance> clearedInstances =
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 
         void draw(List<BatchItem> items, BatchKey key,
                   Matrix4f modelViewMatrix, Matrix4f projectionMatrix) {
@@ -265,7 +272,7 @@ final class GlobalModelBatcher implements AutoCloseable {
         }
 
         private void updateDirtyVertices(List<BatchItem> items) {
-            BitSet mergedDirty = new BitSet(vertexCount);
+            mergedDirty.clear();
             for (int objectIndex = 0; objectIndex < items.size(); objectIndex++) {
                 BackendInstance instance = items.get(objectIndex).instance();
                 FlatModelData data = instance.getData(entryPass);
@@ -290,10 +297,13 @@ final class GlobalModelBatcher implements AutoCloseable {
         }
 
         private void clearDirtyVertices(List<BatchItem> items) {
-            Set<BackendInstance> cleared = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            clearedInstances.clear();
             for (BatchItem item : items) {
-                if (cleared.add(item.instance())) item.instance().clearBatchDirtyVertices(entryPass);
+                if (clearedInstances.add(item.instance())) {
+                    item.instance().clearBatchDirtyVertices(entryPass);
+                }
             }
+            clearedInstances.clear();
         }
 
         private void patchObjectIndices(int firstVertex, int count, int overlayOffset,
@@ -369,7 +379,13 @@ final class GlobalModelBatcher implements AutoCloseable {
             if (!changed) return;
 
             ensureBoneObjects();
-            FloatBuffer merged = MemoryUtil.memAllocFloat(Math.max(1, totalBones * FLOATS_PER_BONE));
+            int requiredFloats = Math.max(1, totalBones * FLOATS_PER_BONE);
+            if (boneUpload == null || boneUpload.capacity() < requiredFloats) {
+                if (boneUpload != null) MemoryUtil.memFree(boneUpload);
+                boneUpload = MemoryUtil.memAllocFloat(requiredFloats);
+            }
+            FloatBuffer merged = boneUpload;
+            merged.clear();
             try {
                 for (int itemIndex = 0; itemIndex < items.size(); itemIndex++) {
                     BatchItem item = items.get(itemIndex);
@@ -389,7 +405,6 @@ final class GlobalModelBatcher implements AutoCloseable {
             } finally {
                 GL11.glBindTexture(GL31.GL_TEXTURE_BUFFER, 0);
                 GL15.glBindBuffer(GL31.GL_TEXTURE_BUFFER, 0);
-                MemoryUtil.memFree(merged);
             }
         }
 
@@ -402,8 +417,6 @@ final class GlobalModelBatcher implements AutoCloseable {
             }
             FloatBuffer data = instanceUpload;
             data.clear();
-            float[] matrix4 = new float[16];
-            float[] matrix3 = new float[9];
             try {
                 for (int itemIndex = 0; itemIndex < items.size(); itemIndex++) {
                     BatchItem item = items.get(itemIndex);
@@ -484,6 +497,7 @@ final class GlobalModelBatcher implements AutoCloseable {
             if (vertexBuffer != null) vertexBuffer.close();
             if (mergedVertices != null) MemoryUtil.memFree(mergedVertices);
             if (instanceUpload != null) MemoryUtil.memFree(instanceUpload);
+            if (boneUpload != null) MemoryUtil.memFree(boneUpload);
             if (instanceBufferId != 0) GL15.glDeleteBuffers(instanceBufferId);
             if (instanceTextureId != 0) GL11.glDeleteTextures(instanceTextureId);
             if (boneBufferId != 0) GL15.glDeleteBuffers(boneBufferId);
@@ -491,6 +505,7 @@ final class GlobalModelBatcher implements AutoCloseable {
             vertexBuffer = null;
             mergedVertices = null;
             instanceUpload = null;
+            boneUpload = null;
             instanceBufferId = instanceTextureId = boneBufferId = boneTextureId = 0;
         }
     }
