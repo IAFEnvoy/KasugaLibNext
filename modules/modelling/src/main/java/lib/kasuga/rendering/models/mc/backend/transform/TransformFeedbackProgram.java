@@ -198,7 +198,7 @@ public class TransformFeedbackProgram implements AutoCloseable {
         setupByteNormalAttribute(5, bufOffsets.get(VertexFormatElement.NORMAL));
         setupFloatAttribute(7, 4, bufOffsets.get(RenderState.TANGENT));
         setupIntAsFloatAttribute(8, 1, bufOffsets.get(RenderState.BONE_BINDING_TYPE));
-        setupIntAsFloatAttribute(9, 4, bufOffsets.get(RenderState.BONE_INDICES));
+        setupFloatAttribute(9, 4, bufOffsets.get(RenderState.BONE_INDICES));
         setupFloatAttribute(10, 4, bufOffsets.get(RenderState.BONE_WEIGHTS));
         setupFloatAttribute(11, 3, bufOffsets.get(RenderState.SDEF_R0));
         setupFloatAttribute(12, 3, bufOffsets.get(RenderState.SDEF_R1));

@@ -5,9 +5,10 @@
 in vec3 Position;
 in vec3 Normal;
 in vec4 Tangent;
-// BoneBindingType and BoneIndices are Type.INT in vertex format; must use integer types in GLSL
+// BoneBindingType is Type.INT in the vertex format; BoneIndices is stored as
+// floats and rounded to int here to avoid integer-vertex-attribute issues.
 in int BoneBindingType;
-in ivec4 BoneIndices;
+in vec4 BoneIndices;
 in vec4 BoneWeights;
 in vec3 sdefR0;
 in vec3 sdefR1;
@@ -133,7 +134,7 @@ void ksg_applyBdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 ta
         if (weight <= 0.0) {
             continue;
         }
-        int boneIndex = BoneIndices[i];
+        int boneIndex = int(BoneIndices[i] + 0.5);
         mat4 invTransform = ksg_readBoneInverseTransform(boneIndex);
         mat4 absTransform = ksg_readBoneAbsTransform(boneIndex);
         vec4 localPos = invTransform * vec4(position, 1.0);
@@ -167,7 +168,7 @@ void ksg_applyQdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 ta
     for (int i = 0; i < 4; i++) {
         float weight = BoneWeights[i];
         if (weight <= 0.0) continue;
-        int boneIndex = BoneIndices[i];
+        int boneIndex = int(BoneIndices[i] + 0.5);
         mat4 invTransform = ksg_readBoneInverseTransform(boneIndex);
         mat4 absTransform = ksg_readBoneAbsTransform(boneIndex);
         // Build skinning composite M = T_anim * T_bind^(-1)
@@ -201,10 +202,10 @@ void ksg_applySdefSkinning(inout vec3 position, inout vec3 normal, inout vec4 ta
 
     float w0 = BoneWeights.x / totalWeight;
     float w1 = BoneWeights.y / totalWeight;
-    mat4 skin0 = ksg_readBoneAbsTransform(BoneIndices.x)
-            * ksg_readBoneInverseTransform(BoneIndices.x);
-    mat4 skin1 = ksg_readBoneAbsTransform(BoneIndices.y)
-            * ksg_readBoneInverseTransform(BoneIndices.y);
+    mat4 skin0 = ksg_readBoneAbsTransform(int(BoneIndices.x + 0.5))
+            * ksg_readBoneInverseTransform(int(BoneIndices.x + 0.5));
+    mat4 skin1 = ksg_readBoneAbsTransform(int(BoneIndices.y + 0.5))
+            * ksg_readBoneInverseTransform(int(BoneIndices.y + 0.5));
 
     // PMX stores C/R0/R1 in model space. SDEF rotates the point around the
     // weighted pivot with the spherical interpolation of both skin rotations.

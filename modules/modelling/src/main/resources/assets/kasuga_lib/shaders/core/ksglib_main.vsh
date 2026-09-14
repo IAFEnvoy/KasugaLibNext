@@ -11,7 +11,7 @@ in ivec2 UV1;
 in ivec2 UV2;
 in vec4 Tangent;
 in int BoneBindingType;
-in ivec4 BoneIndices;
+in vec4 BoneIndices;
 in vec4 BoneWeights;
 in vec3 sdefR0;
 in vec3 sdefR1;

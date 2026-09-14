@@ -964,10 +964,10 @@ public class FlatModelData implements AutoCloseable {
         int weightPos = bufPos + bindingWeightOffset;
         for (int i = 0; i < 4; i++) {
             if (i >= weightCount) {
-                buffer.putInt(indexPos + 4 * i, 0);
+                buffer.putFloat(indexPos + 4 * i, 0f);
                 buffer.putFloat(weightPos + 4 * i, 0f);
             } else {
-                buffer.putInt(indexPos + 4 * i, vertexBones[weightOffset + i]);
+                buffer.putFloat(indexPos + 4 * i, vertexBones[weightOffset + i]);
                 buffer.putFloat(weightPos + 4 * i, weights[weightOffset + i]);
             }
         }

@@ -139,7 +139,7 @@ public class RenderState {
         );
         BONE_INDICES = VertexFormatElement.register(
                 VertexFormatElement.findNextId(), 0,
-                VertexFormatElement.Type.INT,
+                VertexFormatElement.Type.FLOAT,
                 VertexFormatElement.Usage.GENERIC,
                 4
         );
@@ -196,7 +196,6 @@ public class RenderState {
                 .add("UV0", VertexFormatElement.UV0)
                 .add("UV1", VertexFormatElement.UV1)
                 .add("UV2", VertexFormatElement.UV2)
-                .add("Normal", VertexFormatElement.NORMAL)
                 .add("Tangent", TANGENT)
                 .add("BoneBindingType", BONE_BINDING_TYPE)
                 .add("BoneIndices", BONE_INDICES)
@@ -207,6 +206,9 @@ public class RenderState {
                 .add("TextureUV", TEXTURE_UV)
                 .add("TextureBounds", TEXTURE_BOUNDS)
                 .add("AlphaCutoff", ALPHA_CUTOFF)
+                // Keep the 3-byte Normal last so the attributes above retain
+                // 4-byte-aligned offsets.
+                .add("Normal", VertexFormatElement.NORMAL)
                 .build();
 
         UML_TEXTURE_STATE = new KasugaTextureStateShard(() -> Constants.TEXTURE_BASIC);
