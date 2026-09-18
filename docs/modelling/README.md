@@ -124,7 +124,9 @@ The `bbmodel` pipeline supports native Blockbench JSON with cube and mesh elemen
 
 Use `face.texture` as the texture-array index written by Blockbench. For external texture sources, resource locations may be written with or without `textures/` and `.png`; the loader normalizes them to atlas identifiers. For example, both `examplemod:textures/vehicles/engine.png` and `examplemod:vehicles/engine` resolve to the sprite `examplemod:vehicles/engine`.
 
-Blockbench records UV coordinates in texture pixels. `KsgBbModelLoader` converts them to normalized UVs using the selected texture's actual dimensions while it creates vertices. This conversion is intentionally local to the bbmodel loader. Do not add pixel-UV normalization in `FlatModelData` or another shared backend path, because those paths are also used by OBJ, PMX, glTF, Bedrock, and Java Edition models.
+Blockbench records UV coordinates in texture pixels. `KsgBbModelLoader` converts them to normalized UVs using the texture's **UV canvas**: `uv_width`/`uv_height` when the file declares them, otherwise the declared texture size, otherwise the project `resolution`. The canvas is deliberately independent of the decoded image, because Blockbench stretches an image over its canvas — `qj_bogey_main.bbmodel` keeps 64×64 pngs on a 128×128 canvas whose face UVs reach 128, so dividing by the image size would sample the wrong region. This conversion is intentionally local to the bbmodel loader. Do not add pixel-UV normalization in `FlatModelData` or another shared backend path, because those paths are also used by OBJ, PMX, glTF, Bedrock, and Java Edition models.
+
+Cube faces follow Blockbench's `CubeFace.UVToLocal` convention: the `uv` rectangle is mapped so that `u` points to the viewer's right and `v` downward as seen from outside the cube (top face `u=+X, v=+Z`; bottom face `u=+X, v=-Z`), and `rotation` turns the texture clockwise. Each face is emitted top-left → bottom-left → bottom-right → top-right, which is also the winding the backend needs for outward normals.
 
 The repository has runnable content-testing examples in:
 
@@ -193,7 +195,8 @@ Inspect `logs/latest.log` after a resource reload or client run.
 | Model is absent | Confirm the exact `ResourceLocation`, make sure `model_proxy.json` matches it, then restart/reload resources. Look for the warning `Test bbmodel ... is unavailable after resource reload`. |
 | Wrong model appears | Ensure the `kasugaTestModel` and `kasugaTestBbmodel` Gradle properties are both set. A short bbmodel name always resolves under the test Blockbench directory. |
 | Green/missing texture | Verify external texture namespace/path, check that the texture exists below `assets/<namespace>/textures`, and search the log for atlas/sprite errors. |
-| Texture appears tiled or granular | Check the `.bbmodel` texture width/height and its face UVs. The loader expects Blockbench pixel UVs and normalizes them once. Do not compensate by changing shared backend UV logic. |
+| Texture appears tiled or granular | Check the texture's UV canvas, not just the image: the loader normalizes pixel UVs by `uv_width`/`uv_height` (falling back to the declared size and the project `resolution`), so a texture whose image is smaller than its canvas must still have all face UVs inside the canvas. Do not compensate by changing shared backend UV logic. |
+| Faces are mirrored, rotated, or lit from the wrong side | Face `uv` rectangles are mapped Blockbench-style (`u` = viewer's right, `v` = down, viewed from outside; `rotation` is clockwise) and emitted in outward-wound corner order. Compare against `KsgBbModelLoaderFaceUvTest`, and do not reorder a single face's corners without moving its UVs with them. |
 | Model exists but is not visible | Check `pipeline.hasModel`, `pipeline.hasInstance`, then `pipeline.isRendering(modelKey, instanceKey, "mc_backend")`. Confirm the transform is in front of the camera and use `removeInstance` before recreating a changed instance. |
 | Loader error | Search `latest.log` for `Invalid Blockbench model`, `Unable to decode embedded texture`, and the model's resource path. |
 
