@@ -124,7 +124,9 @@ pipeline.removeInstance(modelKey, instanceKey);
 
 `face.texture` 必须使用 Blockbench 写入的纹理数组索引。外部纹理资源位置可带或不带 `textures/` 和 `.png`，loader 会将其规范化为图集标识。例如 `examplemod:textures/vehicles/engine.png` 与 `examplemod:vehicles/engine` 都会解析为 sprite `examplemod:vehicles/engine`。
 
-Blockbench 的 UV 坐标单位是纹理像素。`KsgBbModelLoader` 在创建顶点时按所选纹理实际宽高将其转换到标准化 UV。此转换刻意限制在 bbmodel loader 内部。不要在 `FlatModelData` 或其他共享后端路径中加入像素 UV 归一化，因为 OBJ、PMX、glTF、Bedrock 和 Java Edition 模型同样会经过这些路径。
+Blockbench 的 UV 坐标单位是纹理像素。`KsgBbModelLoader` 在创建顶点时按纹理的 **UV 画布** 将其转换到标准化 UV：优先 `uv_width`/`uv_height`，其次文件声明的纹理尺寸，最后退回项目 `resolution`。画布刻意与解码后的图片尺寸无关，因为 Blockbench 会把图片拉伸到画布上——`qj_bogey_main.bbmodel` 的 64×64 png 位于 128×128 画布上，其面 UV 最大到 128，若除以图片尺寸就会取到错误的区域。此转换刻意限制在 bbmodel loader 内部。不要在 `FlatModelData` 或其他共享后端路径中加入像素 UV 归一化，因为 OBJ、PMX、glTF、Bedrock 和 Java Edition 模型同样会经过这些路径。
+
+立方体面遵循 Blockbench 的 `CubeFace.UVToLocal` 约定：从立方体外侧观察时，`uv` 矩形的 `u` 指向观察者右手方向、`v` 向下（顶面 `u=+X, v=+Z`；底面 `u=+X, v=-Z`），`rotation` 表示纹理顺时针旋转。loader 按左上 → 左下 → 右下 → 右上输出每个面，这同时也是后端生成朝外法线所需的绕序。
 
 仓库中的可运行内容测试示例位于：
 
@@ -193,7 +195,8 @@ modules/modelling/run/client/
 | 模型未显示 | 确认精确的 `ResourceLocation`，检查 `model_proxy.json` 是否匹配，随后重启/重载资源。查找 `Test bbmodel ... is unavailable after resource reload` 警告。 |
 | 出现了错误模型 | 同时确认 `kasugaTestModel` 和 `kasugaTestBbmodel` Gradle 属性。bbmodel 简写始终会从测试 Blockbench 目录解析。 |
 | 绿色或缺失贴图 | 检查外部纹理的命名空间和路径，确认纹理存在于 `assets/<命名空间>/textures` 下，并搜索图集/sprite 错误。 |
-| 贴图呈颗粒状或平铺 | 检查 `.bbmodel` 的纹理宽高和面 UV。loader 预期 Blockbench 像素 UV，并且只会归一化一次；不要通过修改共享后端 UV 来补偿。 |
+| 贴图呈颗粒状或平铺 | 检查纹理的 UV 画布而不只是图片：loader 按 `uv_width`/`uv_height`（退回声明尺寸、再退回项目 `resolution`）归一化像素 UV，因此图片小于画布时，所有面 UV 仍必须落在画布内。不要通过修改共享后端 UV 来补偿。 |
+| 面出现镜像、旋转错误或受光方向相反 | 面 `uv` 矩形按 Blockbench 约定映射（从外侧看 `u` 指向右手、`v` 向下；`rotation` 为顺时针），并按朝外绕序输出。可与 `KsgBbModelLoaderFaceUvTest` 对照；不要单独调整某个面的角点顺序而不连带移动其 UV。 |
 | 模型已加载但不可见 | 依次检查 `pipeline.hasModel`、`pipeline.hasInstance` 和 `pipeline.isRendering(modelKey, instanceKey, "mc_backend")`。确认变换位置在相机前方；重建变更过的实例前先使用 `removeInstance`。 |
 | loader 报错 | 在 `latest.log` 中搜索 `Invalid Blockbench model`、`Unable to decode embedded texture` 和模型资源路径。 |
 
